@@ -1,0 +1,141 @@
+# Waypoint Delivery Planning System — full stack.
+#
+# The competition requires that `docker compose up` start everything, including
+# the database and its seed data, from a fresh clone. Keep it that way: if a
+# judge has to run a second command, that is a bug.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#
+#   web   → http://localhost:3000
+#   api   → http://localhost:8080/healthz
+#   queue → http://localhost:15672  (RabbitMQ management UI)
+
+name: waypoint
+
+services:
+  # -------------------------------------------------------------------------
+  # PostgreSQL — the authoritative store of operational facts.
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-waypoint}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-waypoint}
+      POSTGRES_DB: ${POSTGRES_DB:-waypoint}
+      TZ: ${TZ:-Asia/Colombo}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Anything in here runs once, in filename order, on an EMPTY volume only.
+      # After the first start it is ignored — use `docker compose down -v` to
+      # force a re-seed. Migrations belong in the API's own migrate step; this
+      # directory is for extensions and bootstrap SQL.
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # The dbname is given explicitly: without it pg_isready checks a database
+      # named after the user, which may not exist, and reports a false failure.
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-waypoint} -d ${POSTGRES_DB:-waypoint}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # -------------------------------------------------------------------------
+  # RabbitMQ — long-running planning jobs, so an HTTP request never blocks on
+  # a full-depot allocation run.
+  # -------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-waypoint}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-waypoint}
+    ports:
+      - '${RABBITMQ_PORT:-5672}:5672'
+      - '${RABBITMQ_MANAGEMENT_PORT:-15672}:15672'
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # -------------------------------------------------------------------------
+  # Go REST API.
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      # Context is the workspace root; the Dockerfile lives under apps/api.
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      PORT: 8080
+      TZ: ${TZ:-Asia/Colombo}
+      # Hostnames here are compose service names, resolved on the internal
+      # network. They are not reachable from the judge's browser.
+      DATABASE_URL: postgres://${POSTGRES_USER:-waypoint}:${POSTGRES_PASSWORD:-waypoint}@postgres:5432/${POSTGRES_DB:-waypoint}?sslmode=disable
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-waypoint}:${RABBITMQ_PASSWORD:-waypoint}@rabbitmq:5672/
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
+      TOKEN_TTL_MINUTES: ${TOKEN_TTL_MINUTES:-720}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+    ports:
+      - '${API_PORT:-8080}:8080'
+
+  # -------------------------------------------------------------------------
+  # Planning worker — same binary, started in worker mode.
+  #
+  # Uncomment once cmd/worker exists. Until then the API handles suggestions
+  # synchronously and the queue sits idle.
+  # -------------------------------------------------------------------------
+  # worker:
+  #   build:
+  #     context: .
+  #     dockerfile: apps/api/Dockerfile
+  #   restart: unless-stopped
+  #   depends_on:
+  #     postgres: { condition: service_healthy }
+  #     rabbitmq: { condition: service_healthy }
+  #   environment:
+  #     # Copy the same DATABASE_URL / RABBITMQ_URL / JWT_SECRET block as `api`.
+  #   entrypoint: ['/app/waypoint-worker']
+
+  # -------------------------------------------------------------------------
+  # Next.js web app — all four role workspaces.
+  # -------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the client bundle at build time. Must be the URL the
+        # JUDGE'S BROWSER can reach, which is the published host port — not
+        # http://api:8080, which only resolves inside this network.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080/api/v1}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Colombo}
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

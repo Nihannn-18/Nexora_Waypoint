@@ -1,0 +1,124 @@
+/* ============================================================================
+   Waypoint Delivery Planning System — global stylesheet
+   Design tokens are transcribed from the Nexora Designathon style guide.
+   Do not hard-code hex values in components; use the tokens below.
+   ========================================================================== */
+
+@import 'tailwindcss';
+
+/* Tailwind v4 auto-detects classes by scanning outward from this file, which
+   finds apps/web but NOT the shared libraries — so a class used only inside
+   @waypoint/ui would silently compile to nothing. These paths are explicit for
+   that reason. Add a line here whenever a new lib renders markup. */
+@source '../../src/**/*.{ts,tsx}';
+@source '../../../../libs/ui/src/**/*.{ts,tsx}';
+
+/* Self-hosted fonts. Kept local (not Google Fonts CDN) so the Driver PWA
+   renders correctly while offline — see docs/architecture.md, DG-B. */
+@import '@fontsource-variable/inter/index.css';
+@import '@fontsource/cousine/400.css';
+@import '@fontsource/cousine/700.css';
+
+@theme {
+  /* --- Typeface ---------------------------------------------------------- */
+  --font-sans:
+    'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  /* Mono is used for IDs, registrations and 24-hour times (OUT001, VEH014,
+     07:34) so digits align in tables. */
+  --font-mono: 'Cousine', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* --- Surface & text --------------------------------------------------- */
+  --color-page: #f2f4f6;
+  --color-card: #ffffff;
+  --color-ink: #191c1e; /* primary text   */
+  --color-ink-muted: #505f76; /* secondary text */
+
+  /* --- Brand & interaction ---------------------------------------------- */
+  --color-brand: #019eff; /* Waypoint sky   */
+  --color-link: #1e40af;
+  --color-action: #0f172a; /* primary button */
+
+  /* --- Status. Never signal status by colour alone (style guide rule);
+         always pair with an icon or a text label. --------------------------*/
+  --color-success: #28794b; /* delivered, received, feasible   */
+  --color-warning: #d97706; /* degradation + offline + deferred-pending */
+  --color-error: #ba1a1a; /* constraint violation, failed    */
+
+  /* Offline is deliberately NEUTRAL, not red (DG-B rule): being offline is
+     an expected condition on hill-country routes, not an error. */
+  --color-offline: #505f76;
+
+  /* --- Brand accents for Fresh / Style / Tech --------------------------- */
+  --color-fresh: #28794b;
+  --color-style: #7c3aed;
+  --color-tech: #0f766e;
+
+  /* --- Radii (style guide: 2 / 8–12 / 999) ------------------------------ */
+  --radius-chip: 2px;
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-pill: 999px;
+
+  /* --- Layout rails ----------------------------------------------------- */
+  --spacing-sidebar: 252px; /* dispatcher sidebar @1440 */
+  --spacing-topbar: 60px;
+
+  /* --- Breakpoints (402 phone / 1024 tablet / 1440 desktop) ------------- */
+  --breakpoint-phone: 402px;
+  --breakpoint-tablet: 1024px;
+  --breakpoint-desk: 1440px;
+}
+
+/* Minimum touch targets. 48px everywhere, 56px for Driver primary actions —
+   the Driver taps these one-handed while safely stopped. */
+@utility tap-target {
+  min-height: 48px;
+  min-width: 48px;
+}
+@utility tap-target-driver {
+  min-height: 56px;
+  min-width: 56px;
+}
+
+/* Monospace numeric treatment for IDs, registrations and times. */
+@utility tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    tab-size: 4;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-page);
+    color: var(--color-ink);
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /* Visible focus for keyboard users — the dispatcher works a 1440 screen
+     all day and leans on the keyboard. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  /* Respect reduced-motion: the live trip tracker animates on refresh. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

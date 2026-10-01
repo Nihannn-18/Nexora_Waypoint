@@ -1,0 +1,363 @@
+/**
+ * Read models as the API returns them.
+ *
+ * These are API shapes, not database rows: the Go side exposes DTOs and never
+ * leaks persistence structs. Field names are camelCase on the wire.
+ *
+ * Derived quantities (remaining capacity, remaining minutes) are returned by
+ * the server but never *stored* as authoritative — they are recomputed from the
+ * route and its current orders so a route edit cannot leave a stale number.
+ */
+
+import type {
+  Brand,
+  DepotCode,
+  DockType,
+  IssueType,
+  LegStatus,
+  OrderStatus,
+  PlanningDecision,
+  PlanningJobStatus,
+  PodType,
+  ReceiptStatus,
+  Role,
+  RouteStatus,
+  TempRequirement,
+  TripNumber,
+  VehicleStatus,
+  VehicleTempClass,
+  VehicleType,
+} from './domain';
+import type { ConstraintCode, DeferralReasonType } from './constraints';
+
+/** ISO-8601 date, `YYYY-MM-DD`. */
+export type IsoDate = string;
+/** ISO-8601 timestamp with offset, e.g. `2026-09-26T07:42:00+05:30`. */
+export type IsoDateTime = string;
+/** Local wall-clock time, 24-hour `HH:mm`. */
+export type ClockTime = string;
+/** ISO week label, e.g. `2026-W41`. */
+export type IsoWeek = string;
+
+/* -------------------------------------------------------------------------- */
+/* Identity                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export interface AuthenticatedUser {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly role: Role;
+  /** Set for Dispatcher and Loader; scopes every query server-side. */
+  readonly depotId: string | null;
+  /** Set for Store Manager; scopes every query server-side. */
+  readonly outletId: string | null;
+}
+
+export interface LoginResponse {
+  readonly token: string;
+  readonly user: AuthenticatedUser;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Master data                                                                */
+/* -------------------------------------------------------------------------- */
+
+export interface Depot {
+  readonly depotId: string;
+  readonly code: DepotCode;
+  readonly name: string;
+}
+
+export interface Outlet {
+  readonly outletId: string; // OUT001 … OUT120
+  readonly code: string;
+  readonly name: string;
+  readonly brand: Brand;
+  readonly district: string;
+  readonly depotId: string;
+  readonly dockType: DockType;
+  /** Trucks cannot serve a van-only outlet. */
+  readonly vanOnly: boolean;
+  readonly windowOpenTime: ClockTime;
+  readonly windowCloseTime: ClockTime;
+  /** True when the outlet sits inside a mall with a fixed access window. */
+  readonly mallWindow: boolean;
+}
+
+export interface Vehicle {
+  readonly vehicleId: string; // VEH001 … VEH060
+  readonly registrationNo: string;
+  readonly type: VehicleType;
+  readonly tempClass: VehicleTempClass;
+  readonly weightCapKg: number;
+  readonly volumeCapM3: number;
+  readonly kmPerL: number;
+  readonly weeklyFuelQuotaL: number;
+  readonly depotId: string;
+  readonly status: VehicleStatus;
+}
+
+export interface Item {
+  readonly itemId: string;
+  readonly sku: string;
+  readonly name: string;
+  readonly brand: Brand;
+  readonly unitWeightKg: number;
+  readonly unitVolumeM3: number;
+  readonly temperatureRequirement: TempRequirement;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Orders                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface OrderLine {
+  readonly orderItemId: string;
+  readonly itemId: string;
+  readonly sku: string;
+  readonly name: string;
+  readonly quantity: number;
+  /** Dimensions are snapshotted at order time so later catalogue edits
+      cannot retroactively change a historical order's totals. */
+  readonly unitWeightKgSnapshot: number;
+  readonly unitVolumeM3Snapshot: number;
+  readonly totalWeightKg: number;
+  readonly totalVolumeM3: number;
+}
+
+export interface CustomerOrder {
+  readonly orderId: string;
+  readonly orderNumber: string; // ORD-2026-000153
+  readonly outletId: string;
+  readonly brand: Brand;
+  readonly orderDate: IsoDate;
+  readonly requestedDeliveryDate: IsoDate;
+  readonly totalUnits: number;
+  readonly totalWeightKg: number;
+  readonly totalVolumeM3: number;
+  /** CHILLED or FROZEN if *any* line requires it, else AMBIENT. */
+  readonly temperatureRequirement: TempRequirement;
+  readonly status: OrderStatus;
+  /** True when the order arrived after the 16:00 cutoff and waits for the next run. */
+  readonly afterCutoff: boolean;
+  readonly notes?: string;
+  readonly lines?: readonly OrderLine[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Routes and legs                                                            */
+/* -------------------------------------------------------------------------- */
+
+export interface RouteLeg {
+  readonly legId: string;
+  readonly routeId: string;
+  readonly orderId: string;
+  /** Stop position within the trip, starting at 0. */
+  readonly seq: number;
+  /** `DEPOT` for the first leg, otherwise the previous outlet's id. */
+  readonly fromPoint: string;
+  readonly toOutletId: string;
+  readonly distanceKm: number;
+  readonly plannedArrival: ClockTime;
+  readonly actualArrival?: ClockTime;
+  readonly serviceTimeMin: number;
+  readonly status: LegStatus;
+}
+
+/** One vehicle, one trip, one brand, one district, one day. */
+export interface Route {
+  readonly routeId: string;
+  readonly vehicleId: string;
+  readonly depotId: string;
+  readonly routeDate: IsoDate;
+  readonly tripNo: TripNumber;
+  readonly brand: Brand;
+  readonly district: string;
+  readonly status: RouteStatus;
+  /** Optimistic-lock token. A stale version is rejected so the Loader never
+      works silently from an outdated picking list. */
+  readonly routeVersion: number;
+  readonly outboundMin: number;
+  readonly interStopMin: number;
+  readonly handlingMin: number;
+  readonly totalTripMin: number;
+  readonly totalWeightKg: number;
+  readonly totalVolumeM3: number;
+  readonly distanceKm: number;
+  readonly legs?: readonly RouteLeg[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Feasibility results                                                        */
+/* -------------------------------------------------------------------------- */
+
+export interface ConstraintResult {
+  readonly code: ConstraintCode;
+  readonly passed: boolean;
+  /** Filled when `passed` is false: the binding quantity, e.g. `"2 840 / 2 500 kg"`. */
+  readonly detail?: string;
+}
+
+/** Response of POST /allocations/validate. */
+export interface ValidationResponse {
+  readonly valid: boolean;
+  readonly results: readonly ConstraintResult[];
+  readonly violations: readonly ConstraintCode[];
+  readonly remainingWeightKg: number;
+  readonly remainingVolumeM3: number;
+  readonly remainingFreshMinutes: number;
+  readonly remainingStyleTechMinutes: number;
+  readonly eta?: ClockTime;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Planning                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export interface PlanningJob {
+  readonly jobId: string;
+  readonly planningDate: IsoDate;
+  readonly depotId: string;
+  readonly status: PlanningJobStatus;
+  readonly requestedBy: string;
+  readonly createdAt: IsoDateTime;
+  readonly startedAt?: IsoDateTime;
+  readonly completedAt?: IsoDateTime;
+  readonly errorMessage?: string;
+}
+
+/** One proposed row. Never a final allocation — the dispatcher confirms. */
+export interface PlanningResultRow {
+  readonly resultId: string;
+  readonly jobId: string;
+  readonly orderId: string;
+  readonly decision: PlanningDecision;
+  readonly vehicleId?: string;
+  readonly tripNo?: TripNumber;
+  readonly seq?: number;
+  readonly eta?: ClockTime;
+  readonly weightKg: number;
+  readonly volumeM3: number;
+  readonly tripMinutes?: number;
+  /** Why this row looks the way it does — shown in "Why this plan". */
+  readonly explanation: string;
+  readonly constraintResults: readonly ConstraintResult[];
+}
+
+export interface PlanningResults {
+  readonly job: PlanningJob;
+  readonly served: readonly PlanningResultRow[];
+  readonly deferred: readonly PlanningResultRow[];
+  readonly summary: {
+    readonly ordersTotal: number;
+    readonly ordersServed: number;
+    readonly ordersDeferred: number;
+    readonly vehiclesUsed: number;
+    readonly tripsPlanned: number;
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Deferrals                                                                 */
+/* -------------------------------------------------------------------------- */
+
+export interface DeferralLogEntry {
+  readonly deferralId: string;
+  readonly orderId: string;
+  readonly orderNumber: string;
+  readonly outletId: string;
+  readonly outletName: string;
+  readonly brand: Brand;
+  readonly reasonType: DeferralReasonType;
+  readonly constraintCode?: ConstraintCode;
+  readonly reasonText: string;
+  readonly decidedBy: string;
+  readonly decidedAt: IsoDateTime;
+  readonly deferredToDate?: IsoDate;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Loading                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Loader's count for one order line. loaded + damaged + missing === ordered. */
+export interface LoadItemRecord {
+  readonly orderItemId: string;
+  readonly orderedQty: number;
+  readonly loadedQty: number;
+  readonly damagedQty: number;
+  readonly missingQty: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Delivery                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export interface ProofOfDelivery {
+  readonly type: PodType;
+  readonly fileRef?: string;
+}
+
+export interface DeliveryEvent {
+  readonly eventId: string;
+  readonly legId: string;
+  /** Generated on the device *before* the network call, so a retry is idempotent. */
+  readonly clientEventId: string;
+  readonly outcome: 'DELIVERED' | 'FAILED' | 'DELAYED';
+  readonly occurredAt: IsoDateTime;
+  readonly createdOffline: boolean;
+  readonly syncedAt?: IsoDateTime;
+  readonly notes?: string;
+  readonly proofOfDelivery?: ProofOfDelivery;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Receipt                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface ReceiptIssue {
+  readonly type: IssueType;
+  readonly quantity: number;
+  readonly notes?: string;
+}
+
+export interface Receipt {
+  readonly receiptId: string;
+  readonly orderId: string;
+  readonly status: ReceiptStatus;
+  readonly receivedAt: IsoDateTime;
+  readonly receivedBy: string;
+  readonly issues: readonly ReceiptIssue[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Live view and forecast                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface LiveRouteState {
+  readonly routeId: string;
+  readonly vehicleId: string;
+  readonly driverName: string;
+  readonly brand: Brand;
+  readonly district: string;
+  readonly status: RouteStatus;
+  readonly stopsTotal: number;
+  readonly stopsCompleted: number;
+  readonly currentLegSeq: number | null;
+  readonly nextEta: ClockTime | null;
+  /** Minutes behind plan; negative means ahead. */
+  readonly deltaMin: number;
+  /** Set when the driver's device has unsynced events. Neutral, not an error. */
+  readonly driverOffline: boolean;
+  readonly problems: readonly string[];
+}
+
+export interface DemandForecastPoint {
+  readonly depotId: string;
+  readonly brand: Brand;
+  readonly isoWeek: IsoWeek;
+  readonly predTotalVolumeM3: number;
+  /** Only Fresh carries chilled demand; 0 for Style and Tech. */
+  readonly predChilledVolumeM3: number;
+}

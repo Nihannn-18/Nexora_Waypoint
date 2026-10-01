@@ -1,0 +1,89 @@
+{
+  "name": "api",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/api",
+  "tags": ["scope:api", "lang:go"],
+  "//": "Nx has no official Go plugin, so these targets shell out to the Go toolchain. That is deliberate: no third-party plugin to break, and `go test ./...` behaves exactly as it does when you run it by hand in apps/api. Nx still gives you caching, `nx affected` and one command across the whole workspace.",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "go run ./cmd/api",
+        "cwd": "apps/api"
+      },
+      "//": "Not cached and never cacheable: it is a long-running process."
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["go"],
+      "outputs": ["{workspaceRoot}/dist/apps/api"],
+      "options": {
+        "command": "go build -trimpath -o ../../dist/apps/api/waypoint-api ./cmd/api",
+        "cwd": "apps/api"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["go"],
+      "options": {
+        "command": "go test ./...",
+        "cwd": "apps/api"
+      }
+    },
+    "test-cover": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "go test -race -coverprofile=coverage.out ./...",
+          "go tool cover -func=coverage.out | tail -1"
+        ],
+        "cwd": "apps/api",
+        "parallel": false
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["go"],
+      "options": {
+        "command": "go vet ./...",
+        "cwd": "apps/api"
+      },
+      "//": "go vet only. Add golangci-lint as a second command here once the team installs it."
+    },
+    "fmt": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "gofmt -w .",
+        "cwd": "apps/api"
+      }
+    },
+    "fmt-check": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["go"],
+      "options": {
+        "command": "test -z \"$(gofmt -l .)\" || { echo 'These files need gofmt:'; gofmt -l .; exit 1; }",
+        "cwd": "apps/api"
+      },
+      "//": "gofmt -l exits 0 even when it lists files, so the exit code is forced here. Used by CI."
+    },
+    "tidy": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "go mod tidy",
+        "cwd": "apps/api"
+      }
+    },
+    "docker-build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker build -f apps/api/Dockerfile -t waypoint-api:local .",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  }
+}

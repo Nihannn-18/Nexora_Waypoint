@@ -1,0 +1,39 @@
+# Keep the build context small. The web image copies the whole workspace, so
+# anything listed here is work the daemon does not have to transfer.
+
+node_modules
+**/node_modules
+
+# Build output — regenerated inside the image.
+dist
+.next
+**/.next
+out
+
+# Nx local cache and daemon state.
+.nx
+**/.nx
+
+# Go build artefacts.
+**/coverage.out
+
+# Local environment and editor state.
+.env
+.env.*
+!.env.example
+.vscode
+.idea
+.DS_Store
+
+# Git history is not needed to build.
+.git
+.github
+
+# Docs and datasets do not affect either image.
+docs
+*.md
+!apps/api/README.md
+
+# Test and coverage output.
+coverage
+**/coverage
