@@ -27,6 +27,8 @@ import (
 	// a five-and-a-half-hour error in the one calculation that matters most.
 	_ "time/tzdata"
 
+	"waypoint.lk/api/internal/auth"
+	"waypoint.lk/api/internal/catalog"
 	"waypoint.lk/api/internal/config"
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/media"
@@ -91,6 +93,23 @@ func run() error {
 	mediaHandler := media.NewHandler(storage, media.UnimplementedResolver{}, media.DenyAuthorizer{})
 	slog.Info("media storage ready", "backend", cfg.MediaStorage)
 
+	// Auth boundary. Better Auth owns sessions in the web app; the Go API
+	// verifies the authenticated request. The verification mechanism is TBD, so
+	// SessionTokenVerifier is wired deliberately: it authenticates no one and
+	// fails closed (500) rather than guessing or opening a backdoor. Every
+	// authenticated route therefore returns 500 until the real bridge lands —
+	// an honest "not configured", not a silent bypass.
+	authMiddleware := auth.NewMiddleware(
+		auth.NewIdentityLoader(auth.SessionTokenVerifier{}, nil),
+		auth.NewAuthorizer(),
+	)
+
+	// Catalog: read-only SKU lookup for order creation and planning. The service
+	// wraps the pgx repository over the existing `item` table (no migration).
+	catalogRepo := catalog.NewPGRepository(db.Pool())
+	catalogService := catalog.NewService(catalogRepo)
+	catalogHandler := catalog.NewHandler(catalogService, authMiddleware)
+
 	checks := []httpx.Check{
 		{Name: "database", Fn: db.Pool().Ping},
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
@@ -99,7 +118,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, started, checks, mediaHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
