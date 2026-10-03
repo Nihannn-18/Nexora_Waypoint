@@ -205,7 +205,19 @@ outcomes owned by later agents.
 | `POST` | `/allocations/confirm`           | Persist the final plan        | Reload authoritative state, **revalidate the whole plan inside the transaction**, persist routes, legs and allocations, update order states, write deferral logs, publish notifications |
 | `GET`  | `/allocations/{date}`            | Confirmed allocation summary  | —                                                                                                                                                                                       |
 
+**Implemented:** `POST /allocations/suggest`, `GET /planning-jobs/{jobId}` and
+`GET /planning-jobs/{jobId}/results` are mounted (dispatcher-only). The run is deterministic and
+constraint-driven; it writes **proposals only** (`planning_result`), never `route`, `route_leg`
+or `allocation`. `POST /allocations/validate`, `/recalculate`, `/confirm` and
+`GET /allocations/{date}` are **not** implemented — confirmation persists routes and allocations
+and is a later Routes/Planner concern (and depends on the unresolved allocation invariant below).
+
 ### `POST /allocations/suggest` → `202`
+
+`depotId` is the depot's internal UUID (the stable identifier; `depot.code` is a display/matching
+key, not the id). The suggestion runs in-process and completes before the response, but the job
+is still created and polled through the job endpoints, so the asynchronous contract holds and a
+future worker can replace the inline run without an API change.
 
 ```json
 { "planningDate": "2026-09-26", "depotId": "DEP-PELIYAGODA" }

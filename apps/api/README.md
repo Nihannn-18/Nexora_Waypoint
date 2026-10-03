@@ -29,12 +29,12 @@ internal/
 ├── catalog/              SKUs: lookup, filters, read API  ← tested
 ├── orders/               order intake, lifecycle, read API  ← tested
 ├── httpx/                router, JSON helpers, middleware
-└── planning/             trip time, budgets, windows, fuel  ← tested
+└── planning/             trip time, budgets + deterministic planning engine  ← tested
 ```
 
-Packages to add as the service grows: `clock` (injected demo clock), `store` (PostgreSQL),
-`seed`, `media`, `routes`, `deferrals`, `loading`, `delivery`, `forecast`, `queue` (RabbitMQ),
-and a second binary at `cmd/worker` for the planning worker.
+Packages to add as the service grows: `routes` (confirmation, route/leg persistence),
+`deferrals`, `loading`, `delivery`, `notify`, `forecast`, `queue` (RabbitMQ), and a second
+binary at `cmd/worker` for the planning worker.
 
 ---
 
