@@ -1,0 +1,103 @@
+package delivery
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// Service is the delivery business surface: it validates driver scope and event
+// shape, then delegates the transactional write to the repository. It also
+// implements the batch sync reconciliation, processing each event independently.
+type Service struct {
+	repo Repository
+}
+
+// NewService builds the delivery service.
+func NewService(repo Repository) *Service { return &Service{repo: repo} }
+
+// RecordOne validates and records a single delivery event for a leg. The caller
+// identity's depot must match the leg's route depot (the strongest available
+// driver-to-route scope; see the driver assignment note in the docs).
+func (s *Service) RecordOne(ctx context.Context, actor, actorDepot string, in EventInput) (EventResult, error) {
+	if err := ValidateEvent(in); err != nil {
+		return EventResult{}, err
+	}
+	leg, err := s.repo.LegContext(ctx, in.LegID)
+	if err != nil {
+		return EventResult{}, err
+	}
+	if !depotAllowed(actorDepot, leg.DepotID) {
+		// Out of scope is reported as not found so a driver cannot probe other
+		// depots' routes.
+		return EventResult{}, fmt.Errorf("%w: leg %s", ErrNotFound, in.LegID)
+	}
+	return s.repo.Record(ctx, actor, in, leg)
+}
+
+// SyncBatch processes offline events independently, in capture order. Each event
+// yields its own result; one bad event never discards the rest. The batch is not
+// itself transactional: a retry of the whole batch is safe because each event is
+// idempotent on client_event_id.
+func (s *Service) SyncBatch(ctx context.Context, actor, actorDepot string, events []EventInput) ([]EventResult, error) {
+	if len(events) == 0 {
+		return nil, ValidationError{Field: "events", Message: "at least one event is required"}
+	}
+	results := make([]EventResult, 0, len(events))
+	for _, in := range events {
+		res, err := s.RecordOne(ctx, actor, actorDepot, in)
+		if err != nil {
+			// Reconcile per event: a rejected event gets its own result and does
+			// not fail the batch.
+			results = append(results, EventResult{
+				ClientEventID: in.ClientEventID,
+				Status:        SyncRejected,
+				Reason:        rejectReason(err),
+			})
+			continue
+		}
+		results = append(results, res)
+	}
+	return results, nil
+}
+
+// LegContext returns a leg's operational context, scoped to the caller's depot.
+func (s *Service) LegContext(ctx context.Context, legID, actorDepot string) (LegContext, error) {
+	if strings.TrimSpace(legID) == "" {
+		return LegContext{}, ValidationError{Field: "legId", Message: "is required"}
+	}
+	leg, err := s.repo.LegContext(ctx, legID)
+	if err != nil {
+		return LegContext{}, err
+	}
+	if !depotAllowed(actorDepot, leg.DepotID) {
+		return LegContext{}, fmt.Errorf("%w: leg %s", ErrNotFound, legID)
+	}
+	return leg, nil
+}
+
+// SyncStatus returns the caller's synced/conflict counts.
+func (s *Service) SyncStatus(ctx context.Context, actor string) (SyncStatus, error) {
+	return s.repo.SyncStatus(ctx, actor)
+}
+
+// depotAllowed reports whether a depot-scoped driver may operate on a leg's
+// route. An empty caller depot is refused (fail closed).
+func depotAllowed(callerDepot, legDepot string) bool {
+	return callerDepot != "" && callerDepot == legDepot
+}
+
+// rejectReason maps an error to a short, non-sensitive reason string.
+func rejectReason(err error) string {
+	switch {
+	case errors.Is(err, ErrInvalid):
+		return "invalid event"
+	case errors.Is(err, ErrNotFound):
+		return "unknown or out-of-scope leg"
+	case errors.Is(err, ErrConflict):
+		return "leg changed; needs review"
+	default:
+		return "could not be applied"
+	}
+}
