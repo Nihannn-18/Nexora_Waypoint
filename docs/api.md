@@ -205,12 +205,25 @@ outcomes owned by later agents.
 | `POST` | `/allocations/confirm`           | Persist the final plan        | Reload authoritative state, **revalidate the whole plan inside the transaction**, persist routes, legs and allocations, update order states, write deferral logs, publish notifications |
 | `GET`  | `/allocations/{date}`            | Confirmed allocation summary  | —                                                                                                                                                                                       |
 
-**Implemented:** `POST /allocations/suggest`, `GET /planning-jobs/{jobId}` and
-`GET /planning-jobs/{jobId}/results` are mounted (dispatcher-only). The run is deterministic and
-constraint-driven; it writes **proposals only** (`planning_result`), never `route`, `route_leg`
-or `allocation`. `POST /allocations/validate`, `/recalculate`, `/confirm` and
-`GET /allocations/{date}` are **not** implemented — confirmation persists routes and allocations
-and is a later Routes/Planner concern (and depends on the unresolved allocation invariant below).
+**Implemented:** `POST /allocations/suggest`, `GET /planning-jobs/{jobId}`,
+`GET /planning-jobs/{jobId}/results` (planning, dispatcher-only) and, from the Routes/Allocation
+foundation, `POST /allocations/confirm`, `GET /routes`, `GET /routes/{id}`,
+`GET /routes/{id}/legs`, `GET /deferrals` (dispatcher-only). Planning writes **proposals only**
+(`planning_result`); confirmation is the only writer of `route`, `route_leg` and `allocation`.
+`POST /allocations/validate` and `/recalculate` remain **not** implemented. See
+[Confirmation](#confirmation) for the transaction, idempotency and allocation-invariant rules.
+
+### Confirmation
+
+`POST /api/v1/allocations/confirm` takes the dispatcher's chosen `routes` and `deferrals` for a
+planning job. It validates the choice against current state, then writes routes, legs,
+allocations, order-status transitions and deferral-log rows in **one transaction**. The orders in
+the confirmation are row-locked (`SELECT ... FOR UPDATE`, deterministic order); an order already
+actively allocated on the route date is rejected with `409 CONFLICT`. A retry of the same
+confirmation conflicts rather than duplicating. Every order that planning proposed to `SERVE`
+must be either allocated or deferred, or the request is `400 VALIDATION_FAILED`; every deferral
+must carry a reason. `route`/`route_leg`/`allocation` uniqueness constraints and the order row
+lock are the protections — no partial `(order_id, route_date)` index exists or is added.
 
 ### `POST /allocations/suggest` → `202`
 
