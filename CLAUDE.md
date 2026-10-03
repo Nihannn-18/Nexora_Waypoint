@@ -558,7 +558,7 @@ Adding or changing an endpoint is three edits in one commit: the Go handler, the
 
 ## 13. Git workflow
 
-- Branch from `main`: `feat/<area>-<thing>`, `fix/<area>-<thing>`. Small pull requests.
+- Branch from `development`: `feat/<area>-<thing>`, `fix/<area>-<thing>`. Small pull requests.
 - Commit messages: imperative summary, then why. Keep whatever attribution trailer your
   agent adds.
 - Never commit `.env`, secrets, `node_modules` or build output. Supplied data files are added
