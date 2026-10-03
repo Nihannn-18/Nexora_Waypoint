@@ -155,18 +155,22 @@ An order appearing on two routes for one date is prevented by the validator, bec
 cross-row rule the database cannot express cheaply. A partial unique index on the active
 allocation per `(order_id, route_date)` is the belt-and-braces version.
 
-> **Open decision — not yet enforced in the database (Planning/Routes owner).** History is
-> explicitly allowed: an order can be `DEFERRED` and re-enter a later run
-> (`DEFERRED → CONFIRMED`, `FAILED → DEFERRED`), so it can hold several `allocation` rows, and
-> `allocation` is described as the decision audit. A plain `UNIQUE (order_id)` would therefore
-> be wrong. The belt-and-braces index cannot be built yet because two things are undefined:
-> (1) what makes an allocation "active" — there is no status/superseded column, and a breakdown
-> re-plan (DG-C) intentionally creates a second allocation for the same order and date; and
-> (2) where `route_date` comes from, since it lives on `route` and a partial unique index cannot
-> reference another table. Until the owner decides both, `DUPLICATE_ASSIGNMENT` in the validator
-> plus transactional confirmation is the only protection; that needs a row lock on the order (or
-> `SERIALIZABLE`) so two concurrent confirms cannot both pass. The Orders foundation deliberately
-> leaves the `allocation` schema unchanged rather than guess.
+> **Allocation invariant — decided (Routes/Allocation foundation).** History is allowed: an
+> order can be `DEFERRED` and re-enter a later run, so `allocation` holds several rows per order
+> across dates and is a decision audit. A plain `UNIQUE (order_id)` would therefore be wrong,
+> and no partial index on `(order_id, route_date)` is added: `allocation` has no
+> "active"/superseded column, a breakdown re-plan (DG-C) intentionally creates a second
+> allocation for the same order and date, and `route_date` lives on `route` (a partial unique
+> index cannot reference another table). The enforceable invariants are instead:
+>
+> - **An order appears at most once on a route** — `UNIQUE (route_id, order_id)` (in the schema).
+> - **At most one route per vehicle/trip/day** — `UNIQUE (vehicle_id, route_date, trip_no)` (in
+>   the schema).
+> - **An order cannot be actively allocated twice on one operating day.** This cross-row rule is
+>   enforced by confirmation in `internal/routes`: the orders in a confirmation are locked with
+>   `SELECT ... FOR UPDATE` in a deterministic id order, then checked for an existing `ALLOCATED`
+>   allocation on the route date inside the same transaction. The row lock makes concurrent
+>   confirmations serialise instead of both passing; no speculative column was added.
 
 ---
 
