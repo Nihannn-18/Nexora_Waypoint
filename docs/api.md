@@ -5,9 +5,11 @@ Base path `/api/v1`. JWT bearer token on everything except `POST /auth/login`.
 Handlers stay thin: no planning arithmetic in a handler. Every calculation happens in
 `internal/planning` or the constraint validator, which are unit-tested without a server.
 
-**Scope is enforced server-side on every request.** A dispatcher's queries are restricted to
-their depot and a store manager's to their outlet, derived from the user record — never from
-a client-supplied parameter, and never from a token claim alone.
+**Scope is enforced server-side on every request.** A store manager's queries are restricted
+to their outlet, and a loader's and driver's to their depot and routes, derived from the user
+record — never from a client-supplied parameter, and never from a token claim alone. The
+dispatcher plans **both** depots from Peliyagoda, so dispatcher queries take a `depotId`
+filter rather than being pinned to one depot.
 
 ---
 
@@ -47,6 +49,20 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 | `GET`  | `/vehicles`   | dispatcher                | Availability, capacity, temperature, depot, fuel                                                             |
 | `GET`  | `/healthz`    | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API |
 | `GET`  | `/readyz`     | —                         | Readiness. Pings PostgreSQL and RabbitMQ; `503` names the failing dependency                                 |
+
+---
+
+## Demo mode
+
+The seeded delivery day is in the past and the judge walkthrough spans Friday 16:00 to Saturday
+morning, so the API runs on an injected clock rather than the wall clock. Enabled with
+`DEMO_MODE=true`; the clock starts at `DEMO_CLOCK_START` and ticks from there.
+
+| Method | Endpoint      | Role       | Purpose                                                                                                                                                                   |
+| ------ | ------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/meta`       | —          | Returns `now` (API clock, ISO-8601 with offset), `demoMode`, `timezone`. The web app derives every countdown and "today" from `now`, never from the browser clock         |
+| `POST` | `/demo/clock` | dispatcher | `{ "stage": "BEFORE_CUTOFF" \| "AFTER_CUTOFF" \| "LOADING" \| "ON_ROUTE" }` — jump the clock to Fri 15:40, Fri 16:05, Sat 03:30 or Sat 05:00. `404` when demo mode is off |
+| `POST` | `/demo/reset` | dispatcher | Re-seed the demo day and reset the clock. `404` when demo mode is off                                                                                                     |
 
 ---
 

@@ -310,14 +310,15 @@ screen sets, the planning engine and worker, the offline outbox, and realtime pr
 
 ## Documentation
 
-| Document                                                         | Contents                                            |
-| ---------------------------------------------------------------- | --------------------------------------------------- |
-| [`docs/architecture.md`](docs/architecture.md)                   | Components, request flows, degradation behaviour    |
-| [`docs/data-model.md`](docs/data-model.md)                       | Tables, relationships, the constraint catalogue     |
-| [`docs/api.md`](docs/api.md)                                     | Every endpoint with role, purpose and payload       |
-| [`docs/prioritisation-policy.md`](docs/prioritisation-policy.md) | The documented fairness ordering behind deferrals   |
-| [`docs/ai-disclosure.md`](docs/ai-disclosure.md)                 | Required AI tool disclosure                         |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md)                             | Conventions, branch naming, and the backend handoff |
+| Document                                                         | Contents                                                                      |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`docs/architecture.md`](docs/architecture.md)                   | Components, request flows, degradation behaviour                              |
+| [`docs/data-model.md`](docs/data-model.md)                       | Tables, relationships, the constraint catalogue                               |
+| [`docs/api.md`](docs/api.md)                                     | Every endpoint with role, purpose and payload                                 |
+| [`docs/prioritisation-policy.md`](docs/prioritisation-policy.md) | The documented fairness ordering behind deferrals                             |
+| [`docs/ai-disclosure.md`](docs/ai-disclosure.md)                 | Required AI tool disclosure                                                   |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md)                             | Conventions, branch naming, and the backend handoff                           |
+| [`CLAUDE.md`](CLAUDE.md)                                         | Guidance for coding agents: rules, architecture, domain, screens, build order |
 
 ---
 
