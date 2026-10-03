@@ -49,6 +49,21 @@
      an expected condition on hill-country routes, not an error. */
   --color-offline: #505f76;
 
+  /* --- Phone surfaces (Figma "Driver — phone" variables) ----------------- */
+  --color-mobile: #eef2f8; /* surface/mobile */
+  --color-muted: #eceef0; /* surface/muted — disabled button */
+  --color-line: #e2e8f0; /* border/default */
+  --color-line-strong: #cbd5e1; /* border/strong */
+  --color-ink-faint: #64748b; /* text/tertiary */
+  --color-accent: #2563eb; /* accent/blue — selected option, current stop */
+  --color-live: #35d50c; /* app bar "Live Sync ON" dot */
+  --color-info-bg: #eff6ff;
+  --color-success-bg: #e8f5ed;
+  --color-warning-bg: #fef3c7;
+  --color-warning-ink: #b45309; /* "Pending sync" badge text */
+  --color-error-bg: #ffdad6;
+  --color-error-strong: #93000a;
+
   /* --- Brand accents for Fresh / Style / Tech --------------------------- */
   --color-fresh: #28794b;
   --color-style: #7c3aed;
@@ -58,6 +73,7 @@
   --radius-chip: 2px;
   --radius-card: 12px;
   --radius-control: 8px;
+  --radius-tile: 4px; /* Driver phone cards and buttons */
   --radius-pill: 999px;
 
   /* --- Layout rails ----------------------------------------------------- */
