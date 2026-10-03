@@ -12,6 +12,8 @@ import type {
   AuditRecord,
   Brand,
   ClockTime,
+  CloseQueueRequest,
+  CloseQueueResponse,
   ConfirmAllocationRequest,
   ConfirmAllocationResponse,
   CreateOrderRequest,
@@ -34,10 +36,12 @@ import type {
   LoginResponse,
   MetaResponse,
   OrderPage,
+  OrderQueueQuery,
   Outlet,
   ParkingConstraint,
   PlanningJob,
   PlanningResults,
+  QueueResponse,
   RecordShortfallRequest,
   ReorderLegsRequest,
   Receipt,
@@ -201,17 +205,20 @@ export class WaypointClient {
 
   /* --- Dispatcher: queue ------------------------------------------------- */
 
-  getOrderQueue(
-    date: IsoDate,
-    depotId?: string,
-  ): Promise<readonly CustomerOrder[]> {
-    return this.http.get<readonly CustomerOrder[]>('/orders/queue', {
-      query: { date, depotId },
+  /** The closed-queue page of CONFIRMED orders for a date and depot. */
+  getOrderQueue(query: OrderQueueQuery): Promise<QueueResponse> {
+    return this.http.get<QueueResponse>('/orders/queue', {
+      query: { ...query },
     });
   }
 
-  closeQueue(date: IsoDate, depotId?: string): Promise<{ closed: number }> {
-    return this.http.post('/orders/close', { date, depotId });
+  /**
+   * Freeze the planning queue. `brands` narrows the close to the brands the
+   * dispatcher confirmed; omit it to close every brand. Idempotent: closing an
+   * already-closed brand writes nothing and is not an error.
+   */
+  closeQueue(body: CloseQueueRequest): Promise<CloseQueueResponse> {
+    return this.http.post<CloseQueueResponse>('/orders/close', body);
   }
 
   /* --- Dispatcher: planning --------------------------------------------- */

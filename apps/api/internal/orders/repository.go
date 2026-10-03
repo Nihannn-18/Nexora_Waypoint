@@ -33,6 +33,13 @@ type Repository interface {
 	// UpdateStatus sets a new status and returns the updated order, or
 	// ErrNotFound. The caller has already validated the transition.
 	UpdateStatus(ctx context.Context, orderID string, status string) (Order, error)
+	// CloseQueue records that the queue for (date, depot, brand) is closed. It is
+	// an upsert, so closing twice is idempotent. Returns how many closure rows
+	// were newly written (0 when already closed).
+	CloseQueue(ctx context.Context, date time.Time, depotID string, brands []string, actor string) (int, error)
+	// ClosedBrands returns the brands whose queue is already closed for a date
+	// and depot.
+	ClosedBrands(ctx context.Context, date time.Time, depotID string) ([]string, error)
 }
 
 // Filter narrows an order listing. Zero values mean "no filter".
@@ -321,6 +328,54 @@ func (r *PGRepository) UpdateStatus(ctx context.Context, orderID string, status 
 		WHERE order_id = $1
 		RETURNING `+orderColumns, orderID, status)
 	return r.loadWithLines(ctx, row, orderID)
+}
+
+// CloseQueue implements Repository. It upserts one closure row per (date,
+// depot, brand) and returns how many rows were newly inserted. Re-closing an
+// already-closed brand changes nothing and does not count, so the caller can
+// distinguish a first close from a repeat.
+func (r *PGRepository) CloseQueue(ctx context.Context, date time.Time, depotID string, brands []string, actor string) (int, error) {
+	closed := 0
+	for _, brand := range brands {
+		var inserted bool
+		err := r.pool.QueryRow(ctx, `
+			INSERT INTO order_queue_close (queue_date, depot_id, brand, closed_by)
+			VALUES ($1::date, $2, $3, $4)
+			ON CONFLICT (queue_date, depot_id, brand) DO NOTHING
+			RETURNING TRUE`, date, depotID, brand, nullableString(actor)).Scan(&inserted)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Already closed for this brand: idempotent no-op.
+			continue
+		}
+		if err != nil {
+			return closed, fmt.Errorf("close queue %s/%s: %w", depotID, brand, err)
+		}
+		if inserted {
+			closed++
+		}
+	}
+	return closed, nil
+}
+
+// ClosedBrands implements Repository.
+func (r *PGRepository) ClosedBrands(ctx context.Context, date time.Time, depotID string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT brand FROM order_queue_close
+		WHERE queue_date = $1::date AND depot_id = $2
+		ORDER BY brand`, date, depotID)
+	if err != nil {
+		return nil, fmt.Errorf("list closed brands: %w", err)
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return nil, fmt.Errorf("scan closed brand: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // nextOrderNumber returns the next ORD-YYYY-NNNNNN for the year. It reads the

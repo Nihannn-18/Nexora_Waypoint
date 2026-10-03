@@ -170,6 +170,29 @@ export interface OrderPage {
   readonly offset: number;
 }
 
+/** Response of GET /orders/queue: the closed queue plus per-brand closure state. */
+export interface QueueResponse {
+  readonly orders: readonly CustomerOrder[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+  /** Brands whose queue is already closed for the date and depot. */
+  readonly closedBrands: readonly string[];
+}
+
+/** Response of POST /orders/close: the closure state and the frozen queue. */
+export interface CloseQueueResponse {
+  readonly date: IsoDate;
+  readonly depotId: string;
+  readonly brands: readonly string[];
+  /** How many brand queues this call newly closed (0 on a repeat). */
+  readonly closed: number;
+  /** Brands that were already closed before this call. */
+  readonly alreadyClosed: readonly string[];
+  /** The confirmed orders now frozen in the queue. */
+  readonly queue: OrderPage;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Routes and legs                                                            */
 /* -------------------------------------------------------------------------- */

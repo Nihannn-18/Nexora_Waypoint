@@ -264,6 +264,50 @@ outcomes owned by later agents.
 | `POST` | `/orders/close`       | Freeze the planning queue for a date | Hold post-cutoff orders for the next run rather than rejecting them      |
 | `GET`  | `/orders/queue?date=` | Closed, confirmed orders             | Return current authoritative totals and the outlet fields the rules need |
 
+### `POST /orders/close`
+
+**Implemented**, dispatcher-only (`internal/orders/handler.go`). Freezes the planning queue for a
+delivery date and depot. Closing is **per brand** so one brand can be frozen while another keeps
+taking orders; `brands` omitted closes all three. It is idempotent: closing an already-closed
+brand writes nothing and is not an error, and the response reports which brands were already
+closed. The actor comes from the authenticated session, never the body.
+
+```json
+{ "date": "2026-09-26", "depotId": "2bcc…", "brands": ["FRESH", "STYLE"] }
+```
+
+```json
+{
+  "date": "2026-09-26",
+  "depotId": "2bcc…",
+  "brands": ["FRESH", "STYLE"],
+  "closed": 2,
+  "alreadyClosed": [],
+  "queue": { "orders": [], "total": 0, "limit": 200, "offset": 0 }
+}
+```
+
+A missing `date` or `depotId`, or an unknown `brand`, is `400 VALIDATION_FAILED`. A non-dispatcher
+caller is `400` (the route requires the dispatcher role). The closure is recorded in
+`order_queue_close` (PK `queue_date, depot_id, brand`); `GET /orders/queue` reads it back as
+`closedBrands`, so the board can go read-only and disable Close.
+
+### `GET /orders/queue`
+
+**Implemented**, dispatcher-only. Returns the CONFIRMED orders for a date and depot — the frozen
+queue — plus the brands whose queue is already closed. Query parameters: `date` (required),
+`depotId`, `brand`, `district`.
+
+```json
+{
+  "orders": [ { "orderId": "…", "status": "CONFIRMED", "…": "same shape as GET /orders/{id}" } ],
+  "total": 85,
+  "limit": 200,
+  "offset": 0,
+  "closedBrands": ["FRESH"]
+}
+```
+
 ---
 
 ## Dispatcher — planning

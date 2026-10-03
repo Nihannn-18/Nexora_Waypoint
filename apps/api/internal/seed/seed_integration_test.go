@@ -133,4 +133,30 @@ func TestSeedIntegration(t *testing.T) {
 	if users != second.Users {
 		t.Fatalf("app_user has %d seeded rows after two runs, want %d", users, second.Users)
 	}
+
+	// The supplied calendar.csv ends before the demo delivery day, so the seed
+	// extension must have filled the window: Sat 26 Sep 2026 is operating and
+	// Sun 27 Sep 2026 is not. This is what makes planning run on the demo day.
+	var operating bool
+	if err := db.Pool().QueryRow(ctx, `SELECT is_operating FROM calendar_day WHERE date = '2026-09-26'`).Scan(&operating); err != nil {
+		t.Fatalf("read demo delivery day calendar row: %v", err)
+	}
+	if !operating {
+		t.Fatal("demo delivery day 2026-09-26 must be an operating day for planning to run")
+	}
+	var sundayOperating bool
+	if err := db.Pool().QueryRow(ctx, `SELECT is_operating FROM calendar_day WHERE date = '2026-09-27'`).Scan(&sundayOperating); err != nil {
+		t.Fatalf("read demo Sunday calendar row: %v", err)
+	}
+	if sundayOperating {
+		t.Fatal("Sunday 2026-09-27 must not be operating")
+	}
+	// The order day is also present so a next-operating-day roll finds a row.
+	var orderDayRows int
+	if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM calendar_day WHERE date >= '2026-09-25' AND date <= '2026-10-03'`).Scan(&orderDayRows); err != nil {
+		t.Fatalf("count demo calendar window: %v", err)
+	}
+	if orderDayRows < 9 {
+		t.Fatalf("demo calendar window has %d rows, want at least 9", orderDayRows)
+	}
 }

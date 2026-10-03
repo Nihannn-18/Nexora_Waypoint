@@ -91,7 +91,7 @@ func (c *Confirmation) revalidateHardConstraints(ctx context.Context, planDate s
 		if !verdict.OK {
 			return ConstraintViolationError{
 				Results: verdict.Results,
-				Detail: fmt.Sprintf("%s trip %d: %s", choice.VehicleID, choice.TripNo, verdict.Reason),
+				Detail:  fmt.Sprintf("%s trip %d: %s", choice.VehicleID, choice.TripNo, verdict.Reason),
 			}
 		}
 		budget[vehicle.VehicleID] = addPlannedTrip(budget[vehicle.VehicleID], verdict.Trip)

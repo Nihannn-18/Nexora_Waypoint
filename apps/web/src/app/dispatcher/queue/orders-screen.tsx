@@ -33,6 +33,7 @@ import {
   buttonClass,
 } from '../_components/ui';
 import { OrderDetail } from './order-detail';
+import { CloseQueueButton } from './close-queue';
 
 const PAGE_SIZE = 25;
 
@@ -110,6 +111,33 @@ export function OrdersScreen() {
     () => api.listOrders(query),
   );
 
+  // Closure state and per-brand confirmed counts for the Close queue action.
+  // Only meaningful for a single delivery day at one depot.
+  const queueState = useApiQuery(
+    depot && deliveryDate && !allDays ? `queue:${depot.depotId}:${deliveryDate}` : null,
+    () =>
+      api.getOrderQueue({ date: deliveryDate as string, depotId: depot?.depotId }),
+  );
+  const confirmedCounts = useApiQuery(
+    depot && deliveryDate && !allDays
+      ? `qcounts:${depot.depotId}:${deliveryDate}`
+      : null,
+    async () => {
+      const base = {
+        deliveryDate: deliveryDate as string,
+        depotId: depot?.depotId,
+        status: 'CONFIRMED' as const,
+        limit: 1,
+      };
+      const [fresh, style, tech] = await Promise.all([
+        api.listOrders({ ...base, brand: 'FRESH' }),
+        api.listOrders({ ...base, brand: 'STYLE' }),
+        api.listOrders({ ...base, brand: 'TECH' }),
+      ]);
+      return { FRESH: fresh.total, STYLE: style.total, TECH: tech.total };
+    },
+  );
+
   const total = list.data?.total ?? 0;
   const first = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const last = Math.min(total, (page + 1) * PAGE_SIZE);
@@ -131,6 +159,26 @@ export function OrdersScreen() {
             . Only CONFIRMED orders are planned; PLACED orders wait for the
             store to confirm.
           </>
+        }
+        actions={
+          depot &&
+          deliveryDate &&
+          !allDays &&
+          queueState.data && (
+            <CloseQueueButton
+              date={deliveryDate}
+              depotId={depot.depotId}
+              counts={
+                confirmedCounts.data ?? { FRESH: 0, STYLE: 0, TECH: 0 }
+              }
+              closedBrands={queueState.data.closedBrands}
+              onClosed={() => {
+                queueState.reload();
+                confirmedCounts.reload();
+                list.reload();
+              }}
+            />
+          )
         }
       />
 

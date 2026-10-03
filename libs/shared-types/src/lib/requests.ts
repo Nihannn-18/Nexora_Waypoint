@@ -57,6 +57,11 @@ export interface ListOrdersQuery {
 export interface CloseQueueRequest {
   readonly date: IsoDate;
   readonly depotId?: string;
+  /**
+   * The brands the dispatcher confirmed. Omit to close every brand. Closing is
+   * per brand so one brand can be frozen while another keeps taking orders.
+   */
+  readonly brands?: readonly Brand[];
 }
 
 export interface OrderQueueQuery {

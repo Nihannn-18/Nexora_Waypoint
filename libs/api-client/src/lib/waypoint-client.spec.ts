@@ -106,4 +106,46 @@ describe('WaypointClient dispatcher reads', () => {
       client.confirmAllocation({ jobId: 'J', routes: [], deferrals: [] }),
     ).rejects.toMatchObject({ status: 409, code: 'CONFLICT' });
   });
+
+  it('closes the queue per brand and returns the frozen queue', async () => {
+    const body = {
+      date: '2026-09-26',
+      depotId: 'd1',
+      brands: ['FRESH'],
+      closed: 1,
+      alreadyClosed: [],
+      queue: { orders: [], total: 0, limit: 200, offset: 0 },
+    };
+    const { client, fetchImpl } = clientReturning(body);
+    await expect(
+      client.closeQueue({
+        date: '2026-09-26',
+        depotId: 'd1',
+        brands: ['FRESH'],
+      }),
+    ).resolves.toEqual(body);
+    expect(fetchImpl.mock.calls[0][1].method).toBe('POST');
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://api.test/api/v1/orders/close',
+    );
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      date: '2026-09-26',
+      depotId: 'd1',
+      brands: ['FRESH'],
+    });
+  });
+
+  it('reads the frozen queue for a date and depot', async () => {
+    const page = { orders: [], total: 85, limit: 200, offset: 0 };
+    const { client, fetchImpl } = clientReturning(page);
+    await expect(
+      client.getOrderQueue({ date: '2026-09-26', depotId: 'd1' }),
+    ).resolves.toEqual(page);
+    const url = new URL(fetchImpl.mock.calls[0][0]);
+    expect(url.pathname).toBe('/api/v1/orders/queue');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      date: '2026-09-26',
+      depotId: 'd1',
+    });
+  });
 });

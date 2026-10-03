@@ -86,6 +86,9 @@ func Run(ctx context.Context, pool *pgxpool.Pool) (Result, error) {
 	if res.CalendarDays, err = seedCalendar(ctx, tx); err != nil {
 		return res, err
 	}
+	if err := seedDemoCalendar(ctx, tx); err != nil {
+		return res, err
+	}
 
 	if res.Users, err = seedUsers(ctx, tx, depotIDs); err != nil {
 		return res, err
@@ -410,6 +413,62 @@ func seedCalendar(ctx context.Context, tx pgx.Tx) (int, error) {
 		n++
 	}
 	return n, nil
+}
+
+// seedDemoCalendar guarantees the demo day is operable even though the supplied
+// calendar.csv ends on 2026-06-28. It does not edit the supplied file; it
+// derives the missing operating-day facts from the weekday using the same
+// convention the file records (Monday–Saturday operating, Sunday not) and
+// inserts them only when the date is absent, so a supplied row always wins.
+//
+// The demo window is the S1 order day and delivery day, plus the surrounding
+// days so a late order rolled to the next operating day, or a follow-up
+// planning run, still finds operating calendar facts.
+func seedDemoCalendar(ctx context.Context, tx pgx.Tx) error {
+	orderDate, err := time.Parse("2006-01-02", demoOrderDate)
+	if err != nil {
+		return fmt.Errorf("demo order date: %w", err)
+	}
+	deliveryDate, err := time.Parse("2006-01-02", demoDeliveryDate)
+	if err != nil {
+		return fmt.Errorf("demo delivery date: %w", err)
+	}
+
+	// Seed from the order day through the following week so the demo's "next
+	// operating day" resolution always lands on a real calendar row.
+	days := make([]time.Time, 0, 9)
+	for d := orderDate; !d.After(deliveryDate.AddDate(0, 0, 7)); d = d.AddDate(0, 0, 1) {
+		days = append(days, d)
+	}
+
+	for _, d := range days {
+		isoYear, isoWeek := d.ISOWeek()
+		isWeekend := d.Weekday() == time.Saturday || d.Weekday() == time.Sunday
+		// The supplied file marks Saturday operating and Sunday not: operations
+		// run Monday–Saturday. Derive the same rule, never a weekday assumption
+		// baked into business logic (the calendar row remains the authority).
+		isOperating := demoOperatingDay(d)
+		_, err := tx.Exec(ctx, `
+			INSERT INTO calendar_day (
+				date, dow, dow_name, is_weekend, iso_year, iso_week,
+				is_payday, festival, festival_ramp, is_holiday, monsoon, is_operating
+			) VALUES ($1,$2,$3,$4,$5,$6,FALSE,NULL,NULL,FALSE,FALSE,$7)
+			ON CONFLICT (date) DO NOTHING`,
+			d.Format("2006-01-02"), int(d.Weekday()), d.Weekday().String()[:3],
+			isWeekend, isoYear, isoWeek, isOperating)
+		if err != nil {
+			return fmt.Errorf("seed demo calendar %s: %w", d.Format("2006-01-02"), err)
+		}
+	}
+	return nil
+}
+
+// demoOperatingDay reports whether a derived demo-window date is an operating
+// day. Operations run Monday–Saturday, matching the convention the supplied
+// calendar.csv records (every Sunday is is_operating=0). Kept as one named
+// function so the rule is unit-tested and never scattered.
+func demoOperatingDay(d time.Time) bool {
+	return d.Weekday() != time.Sunday
 }
 
 // readCSV reads an embedded CSV into a slice of header-keyed maps, dropping a
