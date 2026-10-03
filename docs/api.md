@@ -451,6 +451,8 @@ here; there is no separate "attach media" step.
 | `POST` | `/legs/{id}/events` | Record an outcome with proof of delivery | Check driver authorisation and leg ownership; enforce idempotency on `clientEventId`; update actual arrival and delay |
 | `POST` | `/sync/events`      | Batch upload of offline events           | Process each event **independently**; return accepted, duplicate, rejected or conflict without ever double-applying   |
 | `GET`  | `/sync/status`      | Pending, synced and failed counts        | —                                                                                                                     |
+| `GET`  | `/driver/routes?date=` | The depot's routes and stops on a date | Depot-scoped (no driver→vehicle link exists in the schema); `DRAFT`/`CANCELLED` routes excluded; `date` is `YYYY-MM-DD` |
+| `GET`  | `/legs/{id}`        | One stop: route, outlet window, orders and lines | Depot-scoped; another depot's leg is `404`, never its data                                                       |
 
 ### `POST /legs/{legId}/events`
 
@@ -471,6 +473,42 @@ which would race.
 
 `occurredAt` is the device's clock at capture time and is preserved through sync. An event
 recorded offline at 07:42 and uploaded at 11:15 is recorded as having happened at 07:42.
+
+A `FAILED` outcome **requires** `reasonCode`, one of `DELIVERY_FAILURE_REASONS`
+(`OUTLET_CLOSED`, `ACCESS_BLOCKED`, `REFUSED_BY_STORE`, `GOODS_DAMAGED`, `OTHER`); it is stored on
+`delivery_event.reason_code` and in the audit detail. Only a `FAILED` outcome may carry one. A
+missing, unknown, or misapplied code is a `400` validation error (or `REJECTED` inside
+`/sync/events`).
+
+### `GET /driver/routes?date=2026-09-26`
+
+```json
+[
+  {
+    "routeId": "R1", "routeDate": "2026-09-26", "vehicleId": "VEH014", "tripNo": 1,
+    "brand": "FRESH", "district": "Colombo", "status": "DISPATCHED",
+    "stops": [
+      { "legId": "LEG1", "seq": 0, "outletId": "OUT014", "outletName": "…",
+        "windowOpen": "05:00", "windowClose": "08:00", "status": "PENDING" }
+    ]
+  }
+]
+```
+
+### `GET /legs/{id}`
+
+The fields above (`legId`, `routeId`, `depotId`, `routeDate`, `toOutletId`, `status`, `orderIds`)
+plus `seq`, `route` (the summary above), `outlet` (`name`, `district`, `dockType`,
+`parkingConstraint`, `windowOpen`, `windowClose`, optional `mallWindowOpen`/`mallWindowClose`) and
+`orders` (`orderNumber`, `tempRequirement`, totals and `lines` of `sku`, `name`, `quantity`).
+`plannedArrival` is `route_leg.planned_arrival` and is omitted when unset. No ETA, distance or
+location is derived here.
+
+`GET /driver/routes` is depot-scoped and the schema links no driver to a vehicle, so the API
+cannot say which route is the caller's. The Driver PWA therefore remembers an explicit run choice
+on the device and, when the depot has more than one route, asks rather than guessing — a driver is
+never silently shown another vehicle's stops. A depot with exactly one live route is unambiguous
+and selected automatically.
 
 ### `POST /sync/events`
 

@@ -14,7 +14,8 @@ import {
   type SyncDeps,
 } from './outbox';
 
-const offline = () => new WaypointApiError('offline', { status: 0, isOffline: true });
+const offline = () =>
+  new WaypointApiError('offline', { status: 0, isOffline: true });
 
 /** Server stub answering every event with one status. */
 function server(status: SyncEventOutcome['status'], reason?: string) {
@@ -23,7 +24,13 @@ function server(status: SyncEventOutcome['status'], reason?: string) {
     uploadPod: jest.fn(async (legId: string) => `pod/${legId}/obj`),
     syncEvents: jest.fn(async ({ events }) => {
       calls.push(events.map((e) => e.clientEventId));
-      return { results: events.map((e) => ({ clientEventId: e.clientEventId, status, reason })) };
+      return {
+        results: events.map((e) => ({
+          clientEventId: e.clientEventId,
+          status,
+          reason,
+        })),
+      };
     }),
   };
   return { deps, calls };
@@ -38,7 +45,11 @@ beforeEach(async () => {
 });
 
 it('persists an outcome in IndexedDB as PENDING with a client event id', async () => {
-  const e = await enqueue({ legId: 'leg-1', outcome: 'FAILED', reasonCode: 'OUTLET_CLOSED' });
+  const e = await enqueue({
+    legId: 'leg-1',
+    outcome: 'FAILED',
+    reasonCode: 'OUTLET_CLOSED',
+  });
   await resetDbForTests(); // a fresh connection reads it back from storage
   expect(await getEvent(e.clientEventId)).toMatchObject({
     legId: 'leg-1',
@@ -67,7 +78,10 @@ it('keeps the same clientEventId across a failed and a successful retry', async 
   (deps.syncEvents as jest.Mock).mockRejectedValueOnce(offline());
 
   await expect(syncNow(deps)).rejects.toThrow('offline');
-  expect(await getEvent(e.clientEventId)).toMatchObject({ status: 'PENDING', retryCount: 1 });
+  expect(await getEvent(e.clientEventId)).toMatchObject({
+    status: 'PENDING',
+    retryCount: 1,
+  });
 
   await syncNow(deps);
   expect(calls).toEqual([[e.clientEventId]]);
@@ -126,14 +140,60 @@ it('uploads in capture order and sends nothing when the queue is empty', async (
   await syncNow(deps);
   await syncNow(deps);
   expect(calls).toEqual([[a.clientEventId, b.clientEventId]]);
-  expect((await listEvents()).map((e) => e.status)).toEqual(['SYNCED', 'SYNCED']);
+  expect((await listEvents()).map((e) => e.status)).toEqual([
+    'SYNCED',
+    'SYNCED',
+  ]);
+});
+
+it('keeps every event PENDING when the whole sync is refused 403', async () => {
+  const a = await enqueue({ legId: 'leg-1', outcome: 'DELAYED' });
+  const b = await enqueue({ legId: 'leg-2', outcome: 'DELAYED' });
+  const { deps } = server('ACCEPTED');
+  (deps.syncEvents as jest.Mock).mockRejectedValue(
+    new WaypointApiError('out of scope', { status: 403 }),
+  );
+
+  await expect(syncNow(deps)).rejects.toThrow();
+
+  expect((await getEvent(a.clientEventId))?.status).toBe('PENDING');
+  expect((await getEvent(b.clientEventId))?.status).toBe('PENDING');
+  expect((await getEvent(a.clientEventId))?.reason).toMatch(/authenticate/i);
+});
+
+it('keeps events PENDING when the sync is unauthenticated 401', async () => {
+  const a = await enqueue({ legId: 'leg-1', outcome: 'DELAYED' });
+  const { deps } = server('ACCEPTED');
+  (deps.syncEvents as jest.Mock).mockRejectedValue(
+    new WaypointApiError('unauthenticated', { status: 401 }),
+  );
+
+  await expect(syncNow(deps)).rejects.toThrow();
+  expect((await getEvent(a.clientEventId))?.status).toBe('PENDING');
+});
+
+it('rejects events only for a genuinely terminal batch error', async () => {
+  const a = await enqueue({ legId: 'leg-1', outcome: 'DELAYED' });
+  const { deps } = server('ACCEPTED');
+  (deps.syncEvents as jest.Mock).mockRejectedValue(
+    new WaypointApiError('malformed batch', { status: 400 }),
+  );
+
+  await syncNow(deps); // terminal, so it resolves rather than rethrowing
+  expect((await getEvent(a.clientEventId))?.status).toBe('REJECTED');
 });
 
 it('omits proofOfDelivery for an outcome without one', async () => {
-  const e = await enqueue({ legId: 'leg-1', outcome: 'FAILED', reasonCode: 'OTHER' });
+  const e = await enqueue({
+    legId: 'leg-1',
+    outcome: 'FAILED',
+    reasonCode: 'OTHER',
+  });
   expect(toRequest(e).proofOfDelivery).toBeUndefined();
 });
 
 it('backs off 5 s, doubling, capped at 5 minutes', () => {
-  expect([1, 2, 3, 10].map(backoffMs)).toEqual([5_000, 10_000, 20_000, 300_000]);
+  expect([1, 2, 3, 10].map(backoffMs)).toEqual([
+    5_000, 10_000, 20_000, 300_000,
+  ]);
 });

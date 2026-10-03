@@ -63,18 +63,26 @@ const DB_NAME = 'waypoint-driver';
 const EVENTS = 'outbox';
 const LEGS = 'legs';
 const ROUTES = 'routes';
+const SELECTION = 'selection';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDb(): Promise<IDBDatabase> {
   dbPromise ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 2);
+    const req = indexedDB.open(DB_NAME, 3);
     req.onupgradeneeded = (ev) => {
+      // Each version bump creates only the stores it introduced: the previous
+      // unconditional `createObjectStore(ROUTES)` threw on any upgrade past v1.
       if (ev.oldVersion < 1) {
         req.result.createObjectStore(EVENTS, { keyPath: 'clientEventId' });
         req.result.createObjectStore(LEGS, { keyPath: 'legId' });
       }
-      req.result.createObjectStore(ROUTES, { keyPath: 'date' });
+      if (ev.oldVersion < 2) {
+        req.result.createObjectStore(ROUTES, { keyPath: 'date' });
+      }
+      if (ev.oldVersion < 3) {
+        req.result.createObjectStore(SELECTION, { keyPath: 'date' });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -161,6 +169,36 @@ export async function latestCachedRoutes(): Promise<CachedRoutes | undefined> {
   return all.sort((a, b) => a.date.localeCompare(b.date)).at(-1);
 }
 
+/**
+ * The route this driver has explicitly chosen for a date. The schema has no
+ * driver→vehicle link, so the run cannot be derived server-side; the driver
+ * picks their own run and we remember it, rather than guessing from the
+ * depot's first unfinished route (which could be another vehicle's).
+ */
+interface RouteSelection {
+  readonly date: string;
+  readonly routeId: string;
+}
+export function setSelectedRoute(
+  date: string,
+  routeId: string,
+): Promise<IDBValidKey> {
+  return run(SELECTION, 'readwrite', (s) => s.put({ date, routeId }));
+}
+export async function getSelectedRoute(
+  date: string,
+): Promise<string | undefined> {
+  const row = await run<RouteSelection | undefined>(
+    SELECTION,
+    'readonly',
+    (s) => s.get(date),
+  );
+  return row?.routeId;
+}
+export function clearSelectedRoute(date: string): Promise<undefined> {
+  return run<undefined>(SELECTION, 'readwrite', (s) => s.delete(date));
+}
+
 /* --- Sync ----------------------------------------------------------------- */
 
 export interface SyncDeps {
@@ -171,9 +209,7 @@ export interface SyncDeps {
   ): Promise<{ results: readonly SyncEventOutcome[] }>;
 }
 
-export function toRequest(
-  e: OutboxEvent,
-): SyncEventsRequest['events'][number] {
+export function toRequest(e: OutboxEvent): SyncEventsRequest['events'][number] {
   const hasPod = Boolean(e.receiverName || e.photoRef || e.signatureRef);
   return {
     legId: e.legId,
@@ -201,7 +237,13 @@ export function toRequest(
  */
 export function applyResult(e: OutboxEvent, r: SyncEventOutcome): OutboxEvent {
   if (r.status === 'ACCEPTED' || r.status === 'DUPLICATE') {
-    return { ...e, status: 'SYNCED', syncedAt: new Date().toISOString() };
+    // Clear any transient note so a once-warned event reads clean once synced.
+    return {
+      ...e,
+      status: 'SYNCED',
+      syncedAt: new Date().toISOString(),
+      reason: undefined,
+    };
   }
   return { ...e, status: 'REJECTED', reason: r.reason ?? r.status };
 }
@@ -231,9 +273,10 @@ export function syncNow(deps: SyncDeps): Promise<void> {
 export const isSyncing = () => inFlight !== null;
 
 /**
- * A 4xx (other than auth/timeout/rate-limit) means this payload can never
- * succeed as-is, so retrying would loop forever. Everything else — offline,
- * 5xx, 401 (re-sign-in) — is transient and keeps the event PENDING.
+ * A per-event 4xx (other than auth/timeout/rate-limit) means this payload —
+ * usually one POD image the media endpoint refused — can never succeed as-is,
+ * so retrying would loop forever. Everything else (offline, 5xx, 401) stays
+ * PENDING. A 403 here is a refused image, not an auth problem.
  */
 function isPermanent(err: unknown): err is WaypointApiError {
   return (
@@ -245,12 +288,52 @@ function isPermanent(err: unknown): err is WaypointApiError {
   );
 }
 
+/**
+ * A terminal failure of the whole `/sync/events` call. It is deliberately
+ * narrower than isPermanent: `/sync/events` reports per-event verdicts as a
+ * 200, so a top-level 401/403 is an auth/scope problem that may resolve on
+ * retry and must never discard the driver's queued work. A top-level 400/422
+ * (a malformed batch) is terminal but still only marks events REJECTED — they
+ * remain visible, never silently lost.
+ */
+function isBatchTerminal(err: unknown): err is WaypointApiError {
+  return (
+    err instanceof WaypointApiError &&
+    !err.isOffline &&
+    err.status >= 400 &&
+    err.status < 500 &&
+    ![401, 403, 408, 429].includes(err.status)
+  );
+}
+
+/** A short, visible note for a transient auth/scope failure, else undefined. */
+function transientNote(err: unknown): string | undefined {
+  if (
+    err instanceof WaypointApiError &&
+    (err.status === 401 || err.status === 403)
+  ) {
+    return 'Couldn’t authenticate the upload — kept on this phone, will retry';
+  }
+  return undefined;
+}
+
+/** Wraps a thrown batch-sync error so the outer catch does not reconcile twice. */
+class BatchSyncError extends Error {
+  readonly source: unknown;
+  constructor(source: unknown) {
+    super(source instanceof Error ? source.message : 'sync failed');
+    this.source = source;
+  }
+}
+
 async function doSync(deps: SyncDeps): Promise<void> {
   const pending = (await listEvents()).filter((e) => e.status === 'PENDING');
   const ready: OutboxEvent[] = [];
   const refused = new Set<string>();
 
   try {
+    // 1. Upload POD images. A per-event permanent refusal rejects just that
+    //    event and lets the rest proceed.
     for (const e of pending) {
       try {
         if (e.photo && !e.photoRef) {
@@ -265,25 +348,53 @@ async function doSync(deps: SyncDeps): Promise<void> {
       } catch (err) {
         if (!isPermanent(err)) throw err;
         refused.add(e.clientEventId);
-        await put({ ...e, status: 'REJECTED', reason: 'POD image upload refused' });
+        await put({
+          ...e,
+          status: 'REJECTED',
+          reason: 'POD image upload refused',
+        });
       }
     }
     if (ready.length === 0) return;
 
-    const { results } = await deps.syncEvents({ events: ready.map(toRequest) });
+    // 2. Batch sync. A top-level auth/scope failure must never discard the
+    //    queue: transient errors keep every event PENDING for a later retry.
+    let results: readonly SyncEventOutcome[];
+    try {
+      ({ results } = await deps.syncEvents({ events: ready.map(toRequest) }));
+    } catch (err) {
+      const terminal = isBatchTerminal(err);
+      const note = transientNote(err);
+      for (const e of ready) {
+        await put(
+          terminal
+            ? {
+                ...e,
+                status: 'REJECTED',
+                reason: err instanceof Error ? err.message : String(err),
+              }
+            : { ...e, retryCount: e.retryCount + 1, reason: note },
+        );
+      }
+      if (!terminal) throw new BatchSyncError(err);
+      return;
+    }
+
     const byId = new Map(results.map((r) => [r.clientEventId, r]));
     for (const e of ready) {
       const r = byId.get(e.clientEventId);
       if (r) await put(applyResult(e, r));
     }
   } catch (err) {
+    // The batch path already reconciled; rethrow for the caller's backoff.
+    if (err instanceof BatchSyncError) throw err;
+
+    // A transient failure while uploading an image: keep the queue, bump the
+    // retry count so the UI shows the events are still trying.
+    const note = transientNote(err);
     for (const e of pending.filter((p) => !refused.has(p.clientEventId))) {
-      await put(
-        isPermanent(err)
-          ? { ...e, status: 'REJECTED', reason: err.message }
-          : { ...e, retryCount: e.retryCount + 1 },
-      );
+      await put({ ...e, retryCount: e.retryCount + 1, reason: note });
     }
-    if (!isPermanent(err)) throw err;
+    throw err;
   }
 }

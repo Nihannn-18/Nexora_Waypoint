@@ -1,11 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { DriverRoute, DriverRouteStop } from '@waypoint/api-client';
 import type { DockType, TempRequirement } from '@waypoint/shared-types';
 import { useLeg, useOutbox, useRoutes, prefetchLegs } from './_lib/use-outbox';
 import type { OutboxEvent } from './_lib/outbox';
+import {
+  clearSelectedRoute,
+  getSelectedRoute,
+  setSelectedRoute,
+} from './_lib/outbox';
+import { resolveSelectedRoute } from './_lib/route-selection';
 import {
   Alert,
   Body,
@@ -32,12 +38,21 @@ const TEMP_LABEL: Record<TempRequirement, string> = {
 const isDone = (s: DriverRouteStop, local: ReadonlyMap<string, OutboxEvent>) =>
   local.has(s.legId) || !['PENDING', 'IN_TRANSIT'].includes(s.status);
 
+const hasUnfinished = (
+  r: DriverRoute,
+  local: ReadonlyMap<string, OutboxEvent>,
+) => r.stops.some((s) => !isDone(s, local));
+
 /**
  * R-01 Cockpit (Figma 1:4306 online / 37:5584 offline): active run, current
  * stop with window and unloading bay, planned route with completed stops.
  *
- * GET /driver/routes is depot-scoped — the schema links no driver to a
- * vehicle — so the active run is the first route that still has stops to do.
+ * GET /driver/routes is depot-scoped and the schema links no driver to a
+ * vehicle, so the run cannot be derived server-side. The driver therefore
+ * chooses their own run explicitly (remembered on the phone); with more than
+ * one candidate and no choice yet we ask rather than guess, so a driver is
+ * never silently shown another vehicle's route. A single depot route is
+ * unambiguous and auto-selected.
  */
 export default function DriverCockpitPage() {
   const { online, events } = useOutbox();
@@ -45,20 +60,54 @@ export default function DriverCockpitPage() {
   const local = new Map(events.map((e) => [e.legId, e]));
   const latest = events.at(-1);
 
+  const date = state.status === 'ready' ? state.date : undefined;
   const routes = state.status === 'ready' ? state.routes : [];
-  const active = routes.find((r) => r.stops.some((s) => !isDone(s, local)));
 
-  // Save the whole run on the phone while there is signal — once per route,
-  // so `active` is deliberately keyed by its id.
-  const activeId = active?.routeId;
+  const [storedId, setStoredId] = useState<string | undefined>(undefined);
+  const [selectionLoaded, setSelectionLoaded] = useState(false);
   useEffect(() => {
-    if (active && online) prefetchLegs(active);
+    if (!date) return;
+    let live = true;
+    getSelectedRoute(date)
+      .then((id) => live && setStoredId(id))
+      .catch(() => live && setStoredId(undefined))
+      .finally(() => live && setSelectionLoaded(true));
+    return () => {
+      live = false;
+    };
+  }, [date]);
+
+  const selected = resolveSelectedRoute(routes, storedId);
+  const needsChoice =
+    selectionLoaded &&
+    !selected &&
+    routes.length > 1 &&
+    routes.some((r) => hasUnfinished(r, local));
+
+  const choose = (routeId: string) => {
+    setStoredId(routeId);
+    if (date) void setSelectedRoute(date, routeId);
+  };
+  const changeRun = () => {
+    setStoredId(undefined);
+    if (date) void clearSelectedRoute(date);
+  };
+
+  // Save the whole selected run on the phone while there is signal — once per
+  // route, so `active` is deliberately keyed by its id.
+  const activeId = selected?.routeId;
+  useEffect(() => {
+    if (selected && online) prefetchLegs(selected);
   }, [activeId, online]);
 
   return (
     <Body>
       {!online && (
-        <Alert tone="info" eyebrow="Everything still works" title="Keep delivering — nothing is lost">
+        <Alert
+          tone="info"
+          eyebrow="Everything still works"
+          title="Keep delivering — nothing is lost"
+        >
           Outcomes, signatures and photos are kept on this phone and upload in
           order when signal returns.
         </Alert>
@@ -76,26 +125,98 @@ export default function DriverCockpitPage() {
             {state.message}
           </p>
         </Card>
-      ) : !active ? (
+      ) : !selectionLoaded ? (
+        <p className="py-10 text-center text-sm text-ink-muted" role="status">
+          Loading your run…
+        </p>
+      ) : needsChoice ? (
+        <RoutePicker routes={routes} local={local} onSelect={choose} />
+      ) : selected && hasUnfinished(selected, local) ? (
+        <>
+          {routes.length > 1 && (
+            <button
+              type="button"
+              onClick={changeRun}
+              className="self-start text-xs font-semibold text-link underline"
+            >
+              Change run
+            </button>
+          )}
+          <ActiveRun
+            route={selected}
+            trips={
+              routes.filter((r) => r.vehicleId === selected.vehicleId).length
+            }
+            local={local}
+            cached={state.cached}
+          />
+        </>
+      ) : (
         <Card>
           <h2 className="text-base font-bold text-ink">
             {routes.length ? 'All stops done' : 'No route yet'}
           </h2>
           <p className="text-sm text-ink-muted">
             {routes.length
-              ? 'Every stop on today’s runs has an outcome. Check the log to see what has uploaded.'
+              ? 'Every stop on your run has an outcome. Check the log to see what has uploaded.'
               : `Nothing is dispatched from your depot for ${state.date}. The run appears here once dispatch publishes the plan.`}
           </p>
         </Card>
-      ) : (
-        <ActiveRun
-          route={active}
-          trips={routes.filter((r) => r.vehicleId === active.vehicleId).length}
-          local={local}
-          cached={state.cached}
-        />
       )}
     </Body>
+  );
+}
+
+/**
+ * Explicit run selection. Shows the depot's routes (server data) and asks the
+ * driver which one is theirs; nothing is shown as "current" until they pick.
+ */
+function RoutePicker({
+  routes,
+  local,
+  onSelect,
+}: {
+  routes: readonly DriverRoute[];
+  local: ReadonlyMap<string, OutboxEvent>;
+  onSelect: (routeId: string) => void;
+}) {
+  return (
+    <Card>
+      <Eyebrow>Choose your run</Eyebrow>
+      <h2 className="text-base font-bold text-ink">Which run is yours?</h2>
+      <p className="text-sm text-ink-muted">
+        Your depot has more than one route today. Pick the vehicle and trip you
+        are driving so you only see your own stops.
+      </p>
+      <ul className="flex flex-col gap-2">
+        {routes.map((r) => {
+          const done = r.stops.filter((s) => isDone(s, local)).length;
+          return (
+            <li key={r.routeId}>
+              <button
+                type="button"
+                onClick={() => onSelect(r.routeId)}
+                className="flex w-full items-center justify-between gap-2 rounded-tile border border-line-strong bg-white p-3 text-left focus-within:ring-2 focus-within:ring-brand"
+              >
+                <span className="flex flex-col gap-0.5 text-xs leading-[1.3]">
+                  <span className="text-sm font-bold text-ink">
+                    <span className="font-mono">{r.vehicleId}</span> · Trip{' '}
+                    {r.tripNo}
+                  </span>
+                  <span className="text-ink-muted">
+                    {r.brand.charAt(0) + r.brand.slice(1).toLowerCase()} ·{' '}
+                    {r.district}
+                  </span>
+                </span>
+                <span className="shrink-0 rounded-pill bg-page px-2.5 py-1 font-mono text-[11px] font-semibold text-ink-muted">
+                  {done}/{r.stops.length} stops
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }
 
@@ -150,13 +271,22 @@ function ActiveRun({
           </p>
         </div>
         <ol className="relative flex flex-col gap-5 pl-6">
-          <span aria-hidden="true" className="absolute top-3 bottom-3 left-3 w-0.5 bg-line-strong" />
+          <span
+            aria-hidden="true"
+            className="absolute top-3 bottom-3 left-3 w-0.5 bg-line-strong"
+          />
           {route.stops.map((s, i) => (
             <StopRow
               key={s.legId}
               stop={s}
               n={i + 1}
-              state={i < index || isDone(s, local) ? 'done' : i === index ? 'current' : 'next'}
+              state={
+                i < index || isDone(s, local)
+                  ? 'done'
+                  : i === index
+                    ? 'current'
+                    : 'next'
+              }
               event={local.get(s.legId)}
             />
           ))}
@@ -187,7 +317,9 @@ function ActiveRun({
 function CurrentStop({ stop }: { stop: DriverRouteStop }) {
   const leg = useLeg(stop.legId);
   const detail = leg.status === 'ready' ? leg.leg : undefined;
-  const temps = [...new Set(detail?.orders.map((o) => TEMP_LABEL[o.tempRequirement]))];
+  const temps = [
+    ...new Set(detail?.orders.map((o) => TEMP_LABEL[o.tempRequirement])),
+  ];
   const units = detail?.orders.reduce((n, o) => n + o.totalUnits, 0);
   const kg = detail?.orders.reduce((n, o) => n + o.totalWeightKg, 0);
 
@@ -200,7 +332,8 @@ function CurrentStop({ stop }: { stop: DriverRouteStop }) {
         <Eyebrow className="font-bold text-accent">Target waypoint</Eyebrow>
         {stop.plannedArrival && (
           <span className="rounded-chip border border-success/40 bg-success-bg px-2 py-0.5 text-[11px] font-medium text-success">
-            Planned <span className="font-mono">{time(stop.plannedArrival)}</span>
+            Planned{' '}
+            <span className="font-mono">{time(stop.plannedArrival)}</span>
           </span>
         )}
       </div>
@@ -226,8 +359,10 @@ function CurrentStop({ stop }: { stop: DriverRouteStop }) {
       </div>
       {detail && (
         <p className="text-xs text-ink-muted">
-          {units} units · {kg?.toLocaleString('en-GB', { maximumFractionDigits: 1 })} kg ·{' '}
-          {detail.orders.length} {detail.orders.length === 1 ? 'order' : 'orders'}
+          {units} units ·{' '}
+          {kg?.toLocaleString('en-GB', { maximumFractionDigits: 1 })} kg ·{' '}
+          {detail.orders.length}{' '}
+          {detail.orders.length === 1 ? 'order' : 'orders'}
         </p>
       )}
     </Link>
@@ -282,13 +417,19 @@ function StopRow({
             </span>
           )}
           <p className="truncate">
-            <span className={`font-bold ${state === 'done' ? 'text-success' : 'text-ink-muted'}`}>
+            <span
+              className={`font-bold ${state === 'done' ? 'text-success' : 'text-ink-muted'}`}
+            >
               STOP {n}
             </span>{' '}
-            <span className="font-mono font-semibold text-ink">{stop.outletId}</span>{' '}
+            <span className="font-mono font-semibold text-ink">
+              {stop.outletId}
+            </span>{' '}
             <span className="font-semibold text-ink">{stop.outletName}</span>
           </p>
-          <p className={state === 'done' ? 'text-success' : 'text-ink-muted'}>{status}</p>
+          <p className={state === 'done' ? 'text-success' : 'text-ink-muted'}>
+            {status}
+          </p>
         </div>
         {state === 'done' && (
           <span className="shrink-0 rounded-chip border border-success/40 bg-white px-2 py-0.5 text-[11px] font-bold uppercase text-success">
@@ -308,7 +449,8 @@ function LastAction({ event }: { event: OutboxEvent }) {
         <Icon name="circle-check" className="text-success" />
         <div className="flex flex-col gap-0.5">
           <p className="font-semibold text-ink">
-            {event.outletId ?? 'Stop'} · {OUTCOME_LABEL[event.outcome].toLowerCase()}{' '}
+            {event.outletId ?? 'Stop'} ·{' '}
+            {OUTCOME_LABEL[event.outcome].toLowerCase()}{' '}
             {time(event.occurredAt)}
           </p>
           <p className="text-ink-muted">

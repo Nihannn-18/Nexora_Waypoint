@@ -46,7 +46,9 @@ export const OUTCOME_LABEL: Record<DeliveryOutcome, string> = {
 
 /** "OUT019 · Delivered + signature + photo" */
 export function eventTitle(e: OutboxEvent): string {
-  const extras = [e.signature && 'signature', e.photo && 'photo'].filter(Boolean);
+  const extras = [e.signature && 'signature', e.photo && 'photo'].filter(
+    Boolean,
+  );
   return `${e.outletId ?? 'Stop'} · ${OUTCOME_LABEL[e.outcome]}${
     extras.length ? ` + ${extras.join(' + ')}` : ''
   }`;
@@ -59,8 +61,10 @@ export function DriverShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const rejected = events.filter((e) => e.status === 'REJECTED').length;
 
+  // Offline is a neutral operating state, never an error (DG-B): use the
+  // neutral `bg-offline` token, not `bg-error`.
   const sync = !online
-    ? { dot: 'bg-error', text: 'Offline · saving on this phone' }
+    ? { dot: 'bg-offline', text: 'Offline · saving on this phone' }
     : syncing || pending > 0
       ? { dot: 'bg-warning', text: 'Syncing…' }
       : { dot: 'bg-live', text: 'Live Sync ON' };
@@ -114,9 +118,19 @@ export function DriverShell({ children }: { children: ReactNode }) {
         className="relative flex h-16 shrink-0 border-t border-line bg-page"
       >
         <Tab label="Deliveries" icon="tab-deliveries" />
-        <Tab label="Cockpit" icon="tab-cockpit" href="/driver" active={path !== '/driver/log'} />
+        <Tab
+          label="Cockpit"
+          icon="tab-cockpit"
+          href="/driver"
+          active={path !== '/driver/log'}
+        />
         <Tab label="Vehicle" icon="tab-vehicle" />
-        <Tab label="Log" icon="tab-log" href="/driver/log" active={path === '/driver/log'} />
+        <Tab
+          label="Log"
+          icon="tab-log"
+          href="/driver/log"
+          active={path === '/driver/log'}
+        />
         {pending > 0 && (
           <span className="absolute top-1.5 left-[calc(87.5%+8px)] rounded-pill bg-error px-1.5 py-px text-[10px] font-semibold leading-[1.3] text-white">
             {pending}
@@ -128,7 +142,10 @@ export function DriverShell({ children }: { children: ReactNode }) {
 }
 
 function lastSyncedAt(events: readonly OutboxEvent[]) {
-  return events.map((e) => e.syncedAt ?? '').sort().at(-1);
+  return events
+    .map((e) => e.syncedAt ?? '')
+    .sort()
+    .at(-1);
 }
 
 function Bar({
@@ -185,7 +202,11 @@ function Tab({
   );
   // ponytail: Deliveries and Vehicle have no Figma screen or API yet — shown, not linked.
   return href ? (
-    <Link href={href} className={cls} aria-current={active ? 'page' : undefined}>
+    <Link
+      href={href}
+      className={cls}
+      aria-current={active ? 'page' : undefined}
+    >
       {body}
     </Link>
   ) : (
@@ -255,15 +276,27 @@ export function Alert({
 }) {
   const t =
     tone === 'info'
-      ? { box: 'border-link bg-info-bg', ink: 'text-link', chip: 'bg-brand/8', icon: 'info' }
-      : { box: 'border-success bg-success-bg', ink: 'text-success', chip: 'bg-success-bg', icon: 'circle-check' };
+      ? {
+          box: 'border-link bg-info-bg',
+          ink: 'text-link',
+          chip: 'bg-brand/8',
+          icon: 'info',
+        }
+      : {
+          box: 'border-success bg-success-bg',
+          ink: 'text-success',
+          chip: 'bg-success-bg',
+          icon: 'circle-check',
+        };
   return (
     <div className={`flex gap-3 rounded-tile border-l-4 p-4 ${t.box}`}>
       <span className={`self-start rounded-chip p-1.5 ${t.chip} ${t.ink}`}>
         <Icon name={t.icon} size={16} />
       </span>
       <div className="flex flex-1 flex-col gap-1 leading-[1.3]">
-        <p className={`text-[11px] font-semibold uppercase tracking-[0.44px] ${t.ink}`}>
+        <p
+          className={`text-[11px] font-semibold uppercase tracking-[0.44px] ${t.ink}`}
+        >
           {eyebrow}
         </p>
         <p className="text-base font-semibold text-ink">{title}</p>
@@ -275,9 +308,17 @@ export function Alert({
 
 export function SyncBadge({ status }: { status: OutboxEvent['status'] }) {
   const s = {
-    PENDING: ['bg-warning-bg text-warning-ink', 'bg-warning-ink', 'Pending sync'],
+    PENDING: [
+      'bg-warning-bg text-warning-ink',
+      'bg-warning-ink',
+      'Pending sync',
+    ],
     SYNCED: ['bg-success-bg text-success', 'bg-success', 'Synced'],
-    REJECTED: ['bg-error-bg text-error-strong', 'bg-error-strong', 'Not accepted'],
+    REJECTED: [
+      'bg-error-bg text-error-strong',
+      'bg-error-strong',
+      'Not accepted',
+    ],
   }[status];
   return (
     <span
@@ -291,7 +332,9 @@ export function SyncBadge({ status }: { status: OutboxEvent['status'] }) {
 
 /** Page body: 20px gutters, 12px rhythm, as every Figma Driver frame. */
 export function Body({ children }: { children: ReactNode }) {
-  return <div className="flex flex-1 flex-col gap-3 px-5 pt-3 pb-4">{children}</div>;
+  return (
+    <div className="flex flex-1 flex-col gap-3 px-5 pt-3 pb-4">{children}</div>
+  );
 }
 
 export function PageTitle({
@@ -316,7 +359,9 @@ export function PageTitle({
       )}
       <div className="flex min-w-0 flex-col gap-0.5 leading-[1.3]">
         <h1 className="text-lg font-bold text-ink">{title}</h1>
-        {subtitle && <p className="truncate text-xs text-ink-muted">{subtitle}</p>}
+        {subtitle && (
+          <p className="truncate text-xs text-ink-muted">{subtitle}</p>
+        )}
       </div>
     </div>
   );
@@ -338,7 +383,9 @@ export function PhotoInput({
   return (
     <label className="flex cursor-pointer items-center gap-2.5 rounded-tile border border-line-strong bg-white px-3.5 py-3 text-xs font-semibold leading-[1.3] text-ink focus-within:ring-2 focus-within:ring-brand">
       <Icon name="camera" />
-      <span className="flex-1">{photo ? `${label} attached` : `Add ${label.toLowerCase()}`}</span>
+      <span className="flex-1">
+        {photo ? `${label} attached` : `Add ${label.toLowerCase()}`}
+      </span>
       {photo && <Icon name="circle-check" size={18} className="text-success" />}
       <input
         type="file"

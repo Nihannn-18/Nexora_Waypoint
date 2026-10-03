@@ -3,6 +3,7 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useRef, useState, type PointerEvent } from 'react';
 import { enqueue } from '../../../_lib/outbox';
+import { podValidationError, signatureBlob } from '../../../_lib/pod';
 import { useLeg } from '../../../_lib/use-outbox';
 import {
   Body,
@@ -35,7 +36,10 @@ export default function PodPage() {
   function point(e: PointerEvent<HTMLCanvasElement>) {
     const c = e.currentTarget;
     const r = c.getBoundingClientRect();
-    return [((e.clientX - r.left) * c.width) / r.width, ((e.clientY - r.top) * c.height) / r.height] as const;
+    return [
+      ((e.clientX - r.left) * c.width) / r.width,
+      ((e.clientY - r.top) * c.height) / r.height,
+    ] as const;
   }
   function down(e: PointerEvent<HTMLCanvasElement>) {
     const ctx = e.currentTarget.getContext('2d');
@@ -62,15 +66,22 @@ export default function PodPage() {
   }
 
   async function finish() {
-    if (!receiver.trim()) return setError('Enter the name of the person receiving the goods.');
-    if (!signed && !photo) return setError('Add a signature or a photo as proof of delivery.');
     setError(null);
     setSaving(true);
     try {
-      const signature =
-        signed && canvas.current
-          ? await new Promise<Blob | null>((ok) => canvas.current?.toBlob(ok, 'image/png'))
-          : null;
+      // Capture the blob first: the pad may show ink but fail to produce one.
+      const signature = await signatureBlob(canvas.current, signed);
+      const problem = podValidationError({
+        receiverName: receiver,
+        signature,
+        photo,
+        signed,
+      });
+      if (problem) {
+        setError(problem);
+        setSaving(false);
+        return;
+      }
       const e = await enqueue({
         legId,
         outletId,
@@ -98,7 +109,9 @@ export default function PodPage() {
 
       <section className="flex flex-col gap-3.5 rounded-tile border border-line bg-white p-4">
         <label className="flex flex-col gap-1 rounded-chip border border-line bg-page p-3">
-          <span className="text-[11px] font-semibold uppercase text-ink-faint">Deliver to</span>
+          <span className="text-[11px] font-semibold uppercase text-ink-faint">
+            Deliver to
+          </span>
           <input
             value={receiver}
             onChange={(e) => setReceiver(e.target.value)}
@@ -110,10 +123,17 @@ export default function PodPage() {
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
-            <p id="sig-label" className="text-[11px] font-semibold tracking-[0.22px] text-ink">
+            <p
+              id="sig-label"
+              className="text-[11px] font-semibold tracking-[0.22px] text-ink"
+            >
               Recipient Digital Signature
             </p>
-            <button type="button" onClick={clear} className="text-xs font-semibold text-error">
+            <button
+              type="button"
+              onClick={clear}
+              className="text-xs font-semibold text-error"
+            >
               Clear Pad
             </button>
           </div>
@@ -153,7 +173,12 @@ export default function PodPage() {
           </p>
         )}
 
-        <button type="button" onClick={finish} disabled={saving} className={buttonClass('ink')}>
+        <button
+          type="button"
+          onClick={finish}
+          disabled={saving}
+          className={buttonClass('ink')}
+        >
           <Icon name="check" />
           Finish Delivery
         </button>

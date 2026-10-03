@@ -40,10 +40,21 @@ const (
 
 // Failure reasons, mirroring DELIVERY_FAILURE_REASONS in libs/shared-types and
 // delivery_event.reason_code's CHECK. Required on a FAILED outcome (R-02).
-var failureReasons = map[string]bool{
-	"OUTLET_CLOSED": true, "ACCESS_BLOCKED": true, "REFUSED_BY_STORE": true,
-	"GOODS_DAMAGED": true, "OTHER": true,
+// One list drives both the lookup and the validation message, so they cannot
+// drift apart.
+var failureReasonList = []string{
+	"OUTLET_CLOSED", "ACCESS_BLOCKED", "REFUSED_BY_STORE", "GOODS_DAMAGED", "OTHER",
 }
+
+var failureReasons = func() map[string]bool {
+	m := make(map[string]bool, len(failureReasonList))
+	for _, r := range failureReasonList {
+		m[r] = true
+	}
+	return m
+}()
+
+var failureReasonMessage = "must be one of " + strings.Join(failureReasonList, ", ")
 
 // ValidFailureReason reports whether r is a canonical failure reason code.
 func ValidFailureReason(r string) bool { return failureReasons[r] }
@@ -175,7 +186,7 @@ func ValidPodRef(legID, ref string) bool {
 //     signature), exactly as delivery_event's CHECK and the POD contract state;
 //   - POD references are pod/<legID>/ keys (photo and signature), never another
 //     purpose or leg;
-//   - FAILED carries a reasonCode; any reasonCode is a canonical value;
+//   - FAILED carries a canonical reasonCode; other outcomes carry none;
 //   - item quantities are non-negative.
 //
 // Ordered-quantity reconciliation for items is enforced in the repository, which
@@ -205,8 +216,11 @@ func ValidateEvent(e EventInput) error {
 	if e.Outcome == OutcomeFailed && e.ReasonCode == "" {
 		return ValidationError{Field: "reasonCode", Message: "a failed delivery requires a reason"}
 	}
-	if e.ReasonCode != "" && !ValidFailureReason(e.ReasonCode) {
-		return ValidationError{Field: "reasonCode", Message: "must be OUTLET_CLOSED, ACCESS_BLOCKED, REFUSED_BY_STORE, GOODS_DAMAGED or OTHER"}
+	if e.Outcome != OutcomeFailed && e.ReasonCode != "" {
+		return ValidationError{Field: "reasonCode", Message: "is only valid on a failed delivery"}
+	}
+	if !ValidFailureReason(e.ReasonCode) && e.ReasonCode != "" {
+		return ValidationError{Field: "reasonCode", Message: failureReasonMessage}
 	}
 	for i, it := range e.Items {
 		if strings.TrimSpace(it.OrderItemID) == "" {
