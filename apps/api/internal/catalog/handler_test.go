@@ -13,7 +13,7 @@ import (
 )
 
 // fakeVerifier authenticates as a fixed identity so handler tests exercise the
-// real auth middleware without the (TBD) Better Auth bridge.
+// real auth middleware without a database.
 type fakeVerifier struct{ id auth.Identity }
 
 func (f fakeVerifier) Verify(context.Context, *auth.RequestHeader) (auth.Identity, error) {

@@ -23,12 +23,12 @@ and an AI tool disclosure.
 │                                                                    │
 │  Driver only: IndexedDB outbox ──► POST /sync/events               │
 └───────────────────────────────┬────────────────────────────────────┘
-                                │ HTTPS · Better Auth session · /api/v1
+                                │ HTTPS · opaque bearer session · /api/v1
 ┌───────────────────────────────┴────────────────────────────────────┐
 │                          Go 1.24 REST API                          │
 │                                                                    │
 │  httpx         router, strict JSON decoding, one error shape       │
-│  auth          verify session (TBD), RBAC, depot/outlet scope       │
+│  auth          verify bearer session, RBAC, depot/outlet scope     │
 │  orders        lifecycle, 16:00 cutoff, aggregate totals           │
 │  planning      ▸ ConstraintValidator — the only feasibility rule   │
 │                ▸ TripTimeCalculator — the official formula         │
@@ -49,6 +49,25 @@ and an AI tool disclosure.
 │  audit_log (immutable)   │          │  QUEUED→RUNNING→COMPLETED    │
 └──────────────────────────┘          └──────────────────────────────┘
 ```
+
+---
+
+## Authentication
+
+The Go API owns authentication with opaque, database-backed sessions. `POST /api/v1/auth/login`
+verifies the submitted password against `app_user.password_hash` (Argon2id, constant-time) and
+mints a random 256-bit session token; only its SHA-256 hash is stored in `session`. The web
+client keeps the raw token and sends it as `Authorization: Bearer <token>` on every request.
+
+`internal/auth` extracts the bearer token and `internal/authstore` hashes it, looks up a live,
+unexpired session and loads role and depot/outlet scope from `app_user`. The same RBAC middleware
+every handler uses then enforces scope. Missing/invalid/expired → `401`; authenticated but no
+active `app_user` → `403`. Client-supplied identity headers are never trusted. `POST
+/api/v1/auth/logout` deletes the caller's session row. Media endpoints resolve the same identity
+and enforce role, purpose and depot/outlet scope before any byte moves.
+
+The four demo accounts are seeded with a hashed password (`DEMO_SEED_PASSWORD`, default
+`waypoint2026`).
 
 ---
 

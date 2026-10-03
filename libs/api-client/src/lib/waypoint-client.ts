@@ -144,6 +144,11 @@ export class WaypointClient {
     });
   }
 
+  /** Revoke the current session. The presented bearer token names it. */
+  logout(): Promise<void> {
+    return this.http.post<void>('/auth/logout');
+  }
+
   me(): Promise<LoginResponse['user']> {
     return this.http.get<LoginResponse['user']>('/me');
   }

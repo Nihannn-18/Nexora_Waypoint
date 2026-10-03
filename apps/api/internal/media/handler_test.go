@@ -13,7 +13,7 @@ import (
 
 // allowAll is a test-only resolver/authorizer that authenticates everyone and
 // authorises everything, so the storage paths can be exercised without the
-// real Better Auth integration.
+// real session-based resolver.
 type allowAll struct{}
 
 func (allowAll) Resolve(*http.Request) (Principal, error) {

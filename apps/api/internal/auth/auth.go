@@ -1,23 +1,20 @@
 // Package auth is the authentication and authorization boundary for the Go API.
 //
-// Better Auth, in the Next.js app, owns authentication, sessions and identity.
-// The Go API does not issue or store credentials. It verifies an authenticated
-// request, loads the caller's role and scope, and enforces RBAC and
-// resource-level scope on every request.
+// Authentication is owned by the Go API. It issues opaque server-side session
+// tokens (see session.go) and stores only their hashes; the Next.js client
+// presents a token as "Authorization: Bearer <token>". This package verifies
+// that credential, loads the caller's role and scope, and hands an Identity to
+// the RBAC middleware that enforces resource-level scope on every request.
 //
-// The exact Better Auth -> Go verification mechanism is TBD (see
-// docs/api.md, "Authentication"). This package therefore models the boundary
-// explicitly rather than guessing:
-//
-//   - RequestVerifier is the seam the real Better Auth bridge implements. The
-//     only shipped implementation, SessionTokenVerifier, is an explicit stub
-//     that returns ErrVerificationUnavailable — it never accepts a request and
-//     never invents a JWT/bearer fallback.
+//   - RequestVerifier is the seam the verification mechanism implements. The
+//     production implementation, OpaqueSessionVerifier, resolves a bearer
+//     token through the session store. SessionTokenVerifier is retained as an
+//     explicit fail-closed placeholder for an unconfigured deployment.
 //   - Identity is what every downstream handler consumes. It is deliberately
 //     independent of how the caller was verified, so swapping the verifier
 //     changes no handler.
 //
-// Nothing here logs or serialises a token, session secret or credential.
+// Nothing here logs or serialises a token, password or credential.
 package auth
 
 import (
@@ -40,6 +37,9 @@ type Identity struct {
 	// Email is the account address (app_user.email). Optional in the value;
 	// present when the verifier loaded it.
 	Email string
+	// Name is the display name (app_user.display_name). Optional; it is a
+	// presentation field and never an authorization input.
+	Name string
 	// Role is one of the four domain roles.
 	Role domain.Role
 	// DepotID is the caller's home depot (app_user.depot_id), empty when the
@@ -126,8 +126,8 @@ var (
 	// ErrInvalidSession means credentials were presented but are not valid.
 	ErrInvalidSession = errors.New("auth: invalid session")
 	// ErrVerificationUnavailable means the verification mechanism is not yet
-	// configured (the Better Auth -> Go bridge is TBD). It is distinct from a
-	// rejected session so an operator can tell "not wired" from "wrong token".
+	// configured. It is distinct from a rejected session so an operator can tell
+	// "not wired" from "wrong token".
 	ErrVerificationUnavailable = errors.New("auth: verification mechanism TBD")
 	// ErrForbidden means the caller is authenticated but not permitted.
 	ErrForbidden = errors.New("auth: forbidden")
@@ -138,9 +138,9 @@ var (
 
 // RequestVerifier turns an HTTP request into an Identity.
 //
-// Better Auth owns the session; an implementation of this interface is where
-// the (TBD) verification happens. Implementations must be safe for concurrent
-// use and must not return any credential material in the Identity.
+// An implementation of this interface is where verification happens.
+// Implementations must be safe for concurrent use and must not return any
+// credential material in the Identity.
 type RequestVerifier interface {
 	// Verify returns the caller identity, or one of ErrUnauthenticated,
 	// ErrInvalidSession or ErrVerificationUnavailable.
@@ -152,20 +152,21 @@ type RequestVerifier interface {
 // interface testable and free of net/http in its signature.
 type RequestHeader struct {
 	// Authorization is the raw Authorization header value, if present. It is
-	// read only to hand to the (TBD) verification mechanism; it is never logged.
+	// read only to hand to the verifier; it is never logged.
 	Authorization string
-	// Cookie is the raw Cookie header value, if present — Better Auth sessions
-	// are typically cookie-based. Never logged.
+	// Cookie is the raw Cookie header value, if present. Reserved for a future
+	// cookie transport; the current opaque-session flow uses the bearer header.
+	// Never logged.
 	Cookie string
 }
 
-// SessionTokenVerifier is the stub wired in until the Better Auth -> Go
-// verification mechanism is decided and implemented. It deliberately verifies
-// nothing and returns ErrVerificationUnavailable for every request.
+// SessionTokenVerifier is the fail-closed placeholder used when no session
+// store is wired. It deliberately verifies nothing and returns
+// ErrVerificationUnavailable for every request.
 //
-// This is not a fallback: it never authenticates anyone. It exists so the API
-// can be composed with a real verifier later without any handler changing, and
-// so a mis-deployment fails closed (401) rather than open.
+// This is not a fallback: it never authenticates anyone. It exists so a
+// mis-deployment fails closed (500) rather than open, and is retained for the
+// composition/test of that unconfigured case.
 type SessionTokenVerifier struct{}
 
 // Verify always reports that verification is not yet configured.
@@ -175,9 +176,9 @@ func (SessionTokenVerifier) Verify(context.Context, *RequestHeader) (Identity, e
 
 // UserStore loads the role and scope for an authenticated identity.
 //
-// Better Auth owns credentials and sessions; app_user holds role and depot/
-// outlet scope (see docs/data-model.md). After a verifier establishes who the
-// caller is, the store supplies what that caller may do.
+// app_user holds role and depot/outlet scope (see docs/data-model.md). After a
+// verifier establishes who the caller is, the store supplies what that caller
+// may do.
 type UserStore interface {
 	// LoadIdentity returns the role/scope row for userID, or ErrForbidden when
 	// the user is unknown or inactive.
@@ -250,17 +251,19 @@ func (l *IdentityLoader) Load(ctx context.Context, h *RequestHeader) (Identity, 
 	if err != nil {
 		return Identity{}, err
 	}
-	// Prefer store scope; preserve any email the verifier supplied.
+	// Prefer store scope; preserve any email or name the verifier supplied.
 	if full.Email == "" {
 		full.Email = partial.Email
+	}
+	if full.Name == "" {
+		full.Name = partial.Name
 	}
 	return full, nil
 }
 
 // DemoMode reports whether the seeded demo accounts may be used. It is here so
 // callers can gate demo-only behaviour (such as the demo clock) on an explicit
-// flag rather than on APP_ENV guesses. The demo accounts carry role and scope
-// only; credentials remain Better Auth's.
+// flag rather than on APP_ENV guesses.
 func DemoMode(env string) bool { return env == "development" }
 
 // nowFunc is a seam for tests that need deterministic time. Business logic that

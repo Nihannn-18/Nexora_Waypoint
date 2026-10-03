@@ -29,7 +29,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Compose requires JWT_SECRET; a fresh clone has no .env until this copies one.
+# A fresh clone has no .env; copy the template so compose has its defaults.
 if [ ! -f .env ]; then
   cp .env.example .env
 fi

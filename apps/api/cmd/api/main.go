@@ -29,6 +29,8 @@ import (
 
 	"waypoint.lk/api/internal/audit"
 	"waypoint.lk/api/internal/auth"
+	"waypoint.lk/api/internal/authapi"
+	"waypoint.lk/api/internal/authstore"
 	"waypoint.lk/api/internal/catalog"
 	"waypoint.lk/api/internal/clock"
 	"waypoint.lk/api/internal/config"
@@ -91,14 +93,29 @@ func run() error {
 		)
 	}
 
+	// Auth boundary. The Go API owns authentication: it verifies the opaque
+	// bearer session token against the session store, then loads role and
+	// depot/outlet scope from app_user. Missing/invalid/expired -> 401,
+	// authenticated but unmapped -> 403. No client-supplied identity header is
+	// trusted.
+	authStore := authstore.New(db.Pool())
+	identityLoader := auth.NewIdentityLoader(auth.NewOpaqueSessionVerifier(authStore), authStore)
+	authMiddleware := auth.NewMiddleware(identityLoader, auth.NewAuthorizer())
+	authService := authapi.NewService(authStore, cfg.SessionTTL)
+	authHandler := authapi.NewHandler(authService, authMiddleware)
+
 	// Media backend: local filesystem in Compose, private S3 when configured.
-	// The auth resolver/authorizer are placeholders until Better Auth lands, so
-	// media endpoints reject unauthenticated calls rather than allow them.
+	// Media resolves the same authenticated identity and enforces role/purpose
+	// and depot/outlet scope before any byte moves.
 	storage, err := media.NewStorage(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	mediaHandler := media.NewHandler(storage, media.UnimplementedResolver{}, media.DenyAuthorizer{})
+	mediaHandler := media.NewHandler(
+		storage,
+		media.AuthResolver{Load: mediaIdentityLoad(identityLoader)},
+		media.NewScopeAuthorizer(mediaOwnerReader{store: authStore}),
+	)
 	slog.Info("media storage ready", "backend", cfg.MediaStorage)
 
 	// The single API clock: the demo clock under DEMO_MODE, otherwise the wall
@@ -106,17 +123,6 @@ func run() error {
 	// countdown derive from it, so the seeded (past) demo day is "today".
 	clk := clock.New(cfg.DemoMode, cfg.DemoClockStart, cfg.Location())
 	slog.Info("clock ready", "demoMode", cfg.DemoMode, "now", clk.Now().Format(time.RFC3339))
-
-	// Auth boundary. Better Auth owns sessions in the web app; the Go API
-	// verifies the authenticated request. The verification mechanism is TBD, so
-	// SessionTokenVerifier is wired deliberately: it authenticates no one and
-	// fails closed (500) rather than guessing or opening a backdoor. Every
-	// authenticated route therefore returns 500 until the real bridge lands —
-	// an honest "not configured", not a silent bypass.
-	authMiddleware := auth.NewMiddleware(
-		auth.NewIdentityLoader(auth.SessionTokenVerifier{}, nil),
-		auth.NewAuthorizer(),
-	)
 
 	// Catalog: read-only SKU lookup for order creation and planning. The service
 	// wraps the pgx repository over the existing `item` table (no migration).
@@ -181,7 +187,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
