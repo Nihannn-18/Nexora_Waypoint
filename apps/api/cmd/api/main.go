@@ -27,6 +27,7 @@ import (
 	// a five-and-a-half-hour error in the one calculation that matters most.
 	_ "time/tzdata"
 
+	"waypoint.lk/api/internal/clock"
 	"waypoint.lk/api/internal/config"
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/media"
@@ -96,10 +97,16 @@ func run() error {
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
 	}
 
+	// The single API clock: the demo clock under DEMO_MODE, otherwise the wall
+	// clock, both in the business timezone.
+	clk := clock.New(cfg.DemoMode, cfg.DemoClockStart, cfg.Location())
+	slog.Info("clock ready", "demoMode", cfg.DemoMode, "now", clk.Now().Format(time.RFC3339))
+
+	// Process start for /healthz uptime — operational, not business time.
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, started, checks, mediaHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.

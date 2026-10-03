@@ -87,6 +87,10 @@ services:
       APP_ENV: ${APP_ENV:-production}
       PORT: 8080
       TZ: ${TZ:-Asia/Colombo}
+      # Demo clock: the seeded demo day is in the past, so the walkthrough runs
+      # on an API clock starting at DEMO_CLOCK_START. Off unless set explicitly.
+      DEMO_MODE: ${DEMO_MODE:-false}
+      DEMO_CLOCK_START: ${DEMO_CLOCK_START:-2026-09-25T15:40:00+05:30}
       # Hostnames here are compose service names, resolved on the internal
       # network. They are not reachable from the judge's browser.
       DATABASE_URL: postgres://${POSTGRES_USER:-waypoint}:${POSTGRES_PASSWORD:-waypoint}@postgres:5432/${POSTGRES_DB:-waypoint}?sslmode=disable

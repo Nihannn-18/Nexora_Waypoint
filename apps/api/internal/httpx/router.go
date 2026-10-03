@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"waypoint.lk/api/internal/clock"
 	"waypoint.lk/api/internal/config"
 )
 
@@ -23,9 +24,19 @@ import (
 // packages use the JSON helpers in this one).
 type RouteRegistrar func(mux *http.ServeMux)
 
-// Router builds the HTTP handler for the whole API. checks feed /readyz; feature
-// packages register their routes through the extra registrars.
-func Router(cfg config.Config, started time.Time, checks []Check, registrars ...RouteRegistrar) http.Handler {
+// MetaResponse is the body of GET /api/v1/meta. Mirrors MetaResponse in
+// libs/shared-types/src/lib/entities.ts.
+type MetaResponse struct {
+	// Now is the API clock, RFC 3339 with the business-timezone offset.
+	Now      string `json:"now"`
+	DemoMode bool   `json:"demoMode"`
+	Timezone string `json:"timezone"`
+}
+
+// Router builds the HTTP handler for the whole API. clk is the API clock /meta
+// reports; checks feed /readyz; feature packages register their routes through
+// the extra registrars.
+func Router(cfg config.Config, clk clock.Clock, started time.Time, checks []Check, registrars ...RouteRegistrar) http.Handler {
 	mux := http.NewServeMux()
 
 	// --- Operational -------------------------------------------------------
@@ -44,12 +55,13 @@ func Router(cfg config.Config, started time.Time, checks []Check, registrars ...
 	mux.HandleFunc("GET /readyz", readiness(checks))
 
 	// --- Meta --------------------------------------------------------------
+	// The web app derives every countdown and "today" from now, never from the
+	// browser clock (docs/api.md, Demo mode).
 	mux.HandleFunc("GET /api/v1/meta", func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, http.StatusOK, map[string]any{
-			"service":  "waypoint-api",
-			"env":      cfg.Env,
-			"timezone": cfg.Timezone,
-			"apiBase":  "/api/v1",
+		WriteJSON(w, http.StatusOK, MetaResponse{
+			Now:      clk.Now().Format(time.RFC3339),
+			DemoMode: cfg.DemoMode,
+			Timezone: cfg.Timezone,
 		})
 	})
 
