@@ -32,6 +32,7 @@ import (
 	"waypoint.lk/api/internal/config"
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/media"
+	"waypoint.lk/api/internal/orders"
 	"waypoint.lk/api/internal/seed"
 	"waypoint.lk/api/internal/store"
 )
@@ -110,6 +111,14 @@ func run() error {
 	catalogService := catalog.NewService(catalogRepo)
 	catalogHandler := catalog.NewHandler(catalogService, authMiddleware)
 
+	// Orders: intake, retrieval and confirmation. The clock drives the 16:00
+	// cutoff; wallClock is a stopgap until the injected demo clock lands
+	// (fix/waypoint/backend-contract-gaps), so business time is already behind
+	// an interface rather than read inline.
+	orderRepo := orders.NewPGRepository(db.Pool())
+	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), wallClock{})
+	orderHandler := orders.NewHandler(orderService, authMiddleware)
+
 	checks := []httpx.Check{
 		{Name: "database", Fn: db.Pool().Ping},
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
@@ -118,7 +127,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
@@ -161,6 +170,23 @@ func run() error {
 	slog.Info("shutdown complete")
 	return nil
 }
+
+// wallClock is the order service's Clock until the injected demo clock lands.
+// It reads the wall clock in the business timezone, so the 16:00 cutoff is
+// reckoned in Asia/Colombo rather than the container's local zone.
+type wallClock struct{}
+
+// Now returns the current time in the configured business timezone.
+func (wallClock) Now() time.Time { return time.Now().In(businessLocation) }
+
+// businessLocation is resolved once at start-up from the injected time/tzdata.
+var businessLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Colombo")
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}()
 
 // queueCheck verifies the RabbitMQ broker accepts TCP connections. The AMQP
 // consumer is not wired yet, so reachability is all readiness can honestly say.
