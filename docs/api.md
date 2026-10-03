@@ -35,11 +35,15 @@ One shape for every failure, so the client never has to special-case an HTML err
 | Status | Meaning                                                                                                             |
 | ------ | ------------------------------------------------------------------------------------------------------------------- |
 | `400`  | Malformed body, unknown field (`BAD_REQUEST`), or failed field validation (`VALIDATION_FAILED`, with `fieldErrors`) |
-| `401`  | Missing, expired or invalid token                                                                                   |
-| `403`  | Authenticated but out of scope — another depot's route, another outlet's order                                      |
+| `401`  | Missing or invalid session (`UNAUTHENTICATED`)                                                                      |
+| `403`  | Authenticated but not permitted (`FORBIDDEN`) — wrong role, or out of depot/outlet/route scope                      |
 | `404`  | Not found, or found but out of scope                                                                                |
 | `409`  | Optimistic-lock conflict — `routeVersion` is stale                                                                  |
 | `422`  | Request is well-formed but infeasible; `constraintResults` says which rule blocked it                               |
+
+`401` and `403` are produced by the reusable auth middleware in
+`apps/api/internal/auth` and carry the machine codes `UNAUTHENTICATED` and `FORBIDDEN`. The
+messages are deliberately generic — no token, session or scope value is ever echoed.
 
 A `VALIDATION_FAILED` body lists every invalid field at once so forms can mark each in place:
 `{ "message": "...", "code": "VALIDATION_FAILED", "fieldErrors": [{ "field": "weightKg", "message": "weightKg must be greater than zero" }] }`.
@@ -58,8 +62,36 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 | `GET`  | `/me`         | all                       | Current user with depot or outlet scope                                                                                                      |
 | `GET`  | `/outlets`    | dispatcher, store manager | Access, window, brand, district                                                                                                              |
 | `GET`  | `/vehicles`   | dispatcher                | Availability, capacity, temperature, depot, fuel                                                                                             |
+| `GET`  | `/items`      | all authenticated         | Catalogue SKUs: dimensions and temperature requirement. Read-only                                                                            |
+| `GET`  | `/items/{id}` | all authenticated         | One SKU by `itemId`, or by `?sku=`                                                                                                           |
 | `GET`  | `/healthz`    | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API                                 |
 | `GET`  | `/readyz`     | —                         | Readiness. Pings PostgreSQL and checks RabbitMQ is reachable; `503` and `dependencies: {database, queue}` (`up`/`down`) name the failing one |
+
+### `GET /items`
+
+Read-only catalogue. Returns every SKU the order and capacity rules are checked against.
+Optional query parameters: `brand` (FRESH|STYLE|TECH), `temperature` (AMBIENT|CHILLED|FROZEN)
+and `search` (case-insensitive match on SKU or name). Results are ordered by SKU.
+
+```json
+{
+  "items": [
+    {
+      "itemId": "a3f1…",
+      "sku": "FRESH-0001",
+      "name": "Red lentils 1kg",
+      "brand": "FRESH",
+      "unitWeightKg": 1.0,
+      "unitVolumeM3": 0.0012,
+      "temperatureRequirement": "AMBIENT"
+    }
+  ]
+}
+```
+
+An unknown `brand` or `temperature` value is a `400 VALIDATION_FAILED`. There is no write
+endpoint: the catalogue is reference data seeded from the authoritative source, not edited
+through the API.
 
 ---
 
@@ -114,17 +146,41 @@ the wall clock in the business timezone.
 {
   "orderId": "a3f1…",
   "orderNumber": "ORD-2026-000153",
+  "outletId": "OUT001",
+  "brand": "FRESH",
+  "orderDate": "2026-09-25",
+  "requestedDeliveryDate": "2026-09-26",
   "status": "PLACED",
   "totalUnits": 25,
   "totalWeightKg": 123.5,
   "totalVolumeM3": 1.42,
   "temperatureRequirement": "AMBIENT",
-  "afterCutoff": false
+  "afterCutoff": false,
+  "lines": [
+    {
+      "orderItemId": "…",
+      "itemId": "ITEM001",
+      "quantity": 20,
+      "unitWeightKgSnapshot": 1.0,
+      "unitVolumeM3Snapshot": 0.0012,
+      "totalWeightKg": 20.0,
+      "totalVolumeM3": 0.024
+    }
+  ]
 }
 ```
 
 Totals are never accepted from the client. They are computed from the lines and the
-catalogue, because they are what the capacity rules are checked against.
+catalogue, because they are what the capacity rules are checked against. Each line snapshots
+the SKU's unit weight and volume, so a later catalogue edit cannot change a historical order's
+totals.
+
+**Implemented:** `POST /orders`, `GET /orders/{id}` and `POST /orders/{id}/confirm` are
+mounted. A store manager may only order for and read their own outlet; a dispatcher may act
+across outlets. `POST /orders/{id}/confirm` moves `PLACED`/`DEFERRED` to `CONFIRMED` and returns
+`409 CONFLICT` if the order is already past that point. `GET /orders/{id}/eta` and
+`POST /orders/{id}/receipt` are **not** implemented — they need route state and delivery
+outcomes owned by later agents.
 
 ---
 

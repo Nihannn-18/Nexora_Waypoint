@@ -155,26 +155,18 @@ An order appearing on two routes for one date is prevented by the validator, bec
 cross-row rule the database cannot express cheaply. A partial unique index on the active
 allocation per `(order_id, route_date)` is the belt-and-braces version.
 
-> **Open decision — not yet enforced in the database (Planning/Routes owner).** The
-> repository establishes that history is allowed: an order can be `DEFERRED` and re-enter a
-> later run (`DEFERRED → CONFIRMED`, `FAILED → DEFERRED`), so it can hold several
-> `allocation` rows across dates, and `allocation` is described as the decision audit. So a
-> plain `UNIQUE (order_id)` or one-`ALLOCATED`-row-per-order rule would be wrong. The
-> belt-and-braces index above cannot be built yet because two things are undefined:
->
-> 1. **What makes an allocation "active".** `allocation` has no status, `superseded_at` or
->    similar column. A breakdown re-plan moves an unserved order to a replacement vehicle on
->    the **same date** (DG-C), so a second `ALLOCATED` row for the same order and date is
->    expected. Without a way to retire the first, `(order_id, route_date)` uniqueness would
->    block the designed recovery flow.
-> 2. **Where `route_date` comes from.** It lives on `route`, and a partial unique index
->    cannot reference another table; `allocation` would need its own date column, or the
->    guard would have to sit on `route_leg` instead.
->
-> Until the owner decides both, `DUPLICATE_ASSIGNMENT` in the validator, plus confirmation
-> revalidating inside its transaction, is the only protection. That needs a row lock on the
-> order (or `SERIALIZABLE`) so two concurrent confirms cannot both pass. Decide it before
-> `POST /allocations/confirm` is implemented.
+> **Open decision — not yet enforced in the database (Planning/Routes owner).** History is
+> explicitly allowed: an order can be `DEFERRED` and re-enter a later run
+> (`DEFERRED → CONFIRMED`, `FAILED → DEFERRED`), so it can hold several `allocation` rows, and
+> `allocation` is described as the decision audit. A plain `UNIQUE (order_id)` would therefore
+> be wrong. The belt-and-braces index cannot be built yet because two things are undefined:
+> (1) what makes an allocation "active" — there is no status/superseded column, and a breakdown
+> re-plan (DG-C) intentionally creates a second allocation for the same order and date; and
+> (2) where `route_date` comes from, since it lives on `route` and a partial unique index cannot
+> reference another table. Until the owner decides both, `DUPLICATE_ASSIGNMENT` in the validator
+> plus transactional confirmation is the only protection; that needs a row lock on the order (or
+> `SERIALIZABLE`) so two concurrent confirms cannot both pass. The Orders foundation deliberately
+> leaves the `allocation` schema unchanged rather than guess.
 
 ---
 

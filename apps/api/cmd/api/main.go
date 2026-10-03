@@ -27,10 +27,13 @@ import (
 	// a five-and-a-half-hour error in the one calculation that matters most.
 	_ "time/tzdata"
 
+	"waypoint.lk/api/internal/auth"
+	"waypoint.lk/api/internal/catalog"
 	"waypoint.lk/api/internal/clock"
 	"waypoint.lk/api/internal/config"
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/media"
+	"waypoint.lk/api/internal/orders"
 	"waypoint.lk/api/internal/seed"
 	"waypoint.lk/api/internal/store"
 )
@@ -92,21 +95,45 @@ func run() error {
 	mediaHandler := media.NewHandler(storage, media.UnimplementedResolver{}, media.DenyAuthorizer{})
 	slog.Info("media storage ready", "backend", cfg.MediaStorage)
 
+	// The single API clock: the demo clock under DEMO_MODE, otherwise the wall
+	// clock, both in the business timezone. Orders' 16:00 cutoff and every
+	// countdown derive from it, so the seeded (past) demo day is "today".
+	clk := clock.New(cfg.DemoMode, cfg.DemoClockStart, cfg.Location())
+	slog.Info("clock ready", "demoMode", cfg.DemoMode, "now", clk.Now().Format(time.RFC3339))
+
+	// Auth boundary. Better Auth owns sessions in the web app; the Go API
+	// verifies the authenticated request. The verification mechanism is TBD, so
+	// SessionTokenVerifier is wired deliberately: it authenticates no one and
+	// fails closed (500) rather than guessing or opening a backdoor. Every
+	// authenticated route therefore returns 500 until the real bridge lands —
+	// an honest "not configured", not a silent bypass.
+	authMiddleware := auth.NewMiddleware(
+		auth.NewIdentityLoader(auth.SessionTokenVerifier{}, nil),
+		auth.NewAuthorizer(),
+	)
+
+	// Catalog: read-only SKU lookup for order creation and planning. The service
+	// wraps the pgx repository over the existing `item` table (no migration).
+	catalogRepo := catalog.NewPGRepository(db.Pool())
+	catalogService := catalog.NewService(catalogRepo)
+	catalogHandler := catalog.NewHandler(catalogService, authMiddleware)
+
+	// Orders: intake, retrieval and confirmation. The shared API clock drives the
+	// 16:00 cutoff, so the demo day is honoured like every other "now".
+	orderRepo := orders.NewPGRepository(db.Pool())
+	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), clk)
+	orderHandler := orders.NewHandler(orderService, authMiddleware)
+
 	checks := []httpx.Check{
 		{Name: "database", Fn: db.Pool().Ping},
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
 	}
 
-	// The single API clock: the demo clock under DEMO_MODE, otherwise the wall
-	// clock, both in the business timezone.
-	clk := clock.New(cfg.DemoMode, cfg.DemoClockStart, cfg.Location())
-	slog.Info("clock ready", "demoMode", cfg.DemoMode, "now", clk.Now().Format(time.RFC3339))
-
 	// Process start for /healthz uptime — operational, not business time.
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.

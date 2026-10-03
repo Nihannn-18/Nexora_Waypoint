@@ -25,14 +25,16 @@ cmd/api/main.go           entrypoint: config, logging, server, graceful shutdown
 internal/
 ├── config/               environment settings, validated at start-up
 ├── domain/               shared vocabulary — constraint codes, roles, statuses
+├── auth/                 Better Auth boundary, identity, RBAC, scope, middleware  ← tested
+├── catalog/              SKUs: lookup, filters, read API  ← tested
+├── orders/               order intake, lifecycle, read API  ← tested
 ├── httpx/                router, JSON helpers, middleware
 └── planning/             trip time, budgets, windows, fuel  ← tested
 ```
 
-Packages to add as the service grows: `store` (PostgreSQL), `seed`, `media`,
-`auth` (verify the Better Auth session and enforce RBAC — verification mechanism TBD),
-`orders`, `routes`, `deferrals`, `delivery`, `forecast`, `queue` (RabbitMQ), and a second
-binary at `cmd/worker` for the planning worker.
+Packages to add as the service grows: `clock` (injected demo clock), `store` (PostgreSQL),
+`seed`, `media`, `routes`, `deferrals`, `loading`, `delivery`, `forecast`, `queue` (RabbitMQ),
+and a second binary at `cmd/worker` for the planning worker.
 
 ---
 
