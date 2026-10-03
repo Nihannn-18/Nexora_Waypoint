@@ -497,6 +497,41 @@ are the next (Driver PWA) agent's work.
 
 ---
 
+## Audit
+
+| Method | Endpoint        | Role       | Purpose                                              |
+| ------ | --------------- | ---------- | ---------------------------------------------------- |
+| `GET`  | `/api/v1/audit` | dispatcher | Append-only operational audit trail; filter and page |
+
+Query params: `actor`, `action`, `entityType`, `entityId`, `depotId`, `from`
+(RFC 3339), `to` (RFC 3339), `limit` (≤200, default 50), `offset`. Dispatcher-only —
+there is no admin role, and audit is not exposed to Loader/Driver/Store Manager. A
+dispatcher sees both depots and narrows with `depotId`. Response:
+`{ "records": [{ id, actor?, role?, action, entityType, entityId?, depotId?, outletId?, result?, detail?, occurredAt }] }`.
+Records are written by the business transaction they describe (route/load/delivery), so a
+rolled-back mutation leaves none. No secrets, tokens or request bodies are stored.
+
+---
+
+## Notifications
+
+| Method | Endpoint                             | Role              | Purpose                                             |
+| ------ | ------------------------------------ | ----------------- | --------------------------------------------------- |
+| `GET`  | `/api/v1/notifications`              | any authenticated | List the caller's notifications (`limit`, `offset`) |
+| `GET`  | `/api/v1/notifications/unread-count` | any authenticated | Unread count                                        |
+| `POST` | `/api/v1/notifications/{id}/read`    | any authenticated | Mark one read (idempotent)                          |
+| `POST` | `/api/v1/notifications/read-all`     | any authenticated | Mark all read                                       |
+
+Every endpoint is scoped to the authenticated recipient: a user sees notifications addressed to
+their user id, or (for an outlet-scoped account) to their outlet. A user cannot read or mark
+another user's notification (`404`). Read state is persisted in `read_at`. Operational
+notifications are raised by existing workflows: a loading shortfall and a FAILED/DELAYED
+delivery each notify the depot's dispatchers; creation is idempotent on
+`(user_id, type, reference)`, so a retried event does not duplicate. There is no external
+provider (no email/SMS/push).
+
+---
+
 ## Client bindings
 
 Every endpoint above has a typed method on `WaypointClient`

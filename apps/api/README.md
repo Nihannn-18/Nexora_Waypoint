@@ -31,6 +31,8 @@ internal/
 ├── routes/               confirmation, routes, legs, allocations, deferrals  ← tested
 ├── loading/              loader picking list, load counts, shortfall photo  ← tested
 ├── delivery/            driver outcomes, POD, idempotent offline sync  ← tested
+├── audit/               append-only operational audit trail  ← tested
+├── notify/              in-app operational notifications  ← tested
 ├── httpx/                router, JSON helpers, middleware
 └── planning/             trip time, budgets + deterministic planning engine  ← tested
 ```
