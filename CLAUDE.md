@@ -7,6 +7,11 @@ and raise it — do not silently pick one.
 
 Team **Nexora** · Rootcode Tech-Triathlon 2026 · Hackathon phase.
 
+> Companion checklist: **`AGENTS.md`** consolidates the Challenge Booklet, final
+> specification and Designathon into the authoritative build checklists (offline/sync
+> contract, non-functional gates, test matrix, delivery package, Datathon separation).
+> Read both; this file wins on detail where the two overlap.
+
 ---
 
 ## 1. Mission
@@ -137,7 +142,7 @@ Do not add a third-party Nx Go plugin.
 ## 4. Architecture
 
 ```
- Next.js web app (PWA) ── HTTPS · JWT · /api/v1 ──► Go REST API ──► PostgreSQL (facts, audit)
+ Next.js web app (PWA) ── HTTPS · Better Auth session · /api/v1 ──► Go REST API ──► PostgreSQL (facts, audit)
    4 role workspaces                                   │
    Driver: IndexedDB outbox ─► POST /sync/events       └─ AMQP ─► Planning worker ─► planning_result
 ```
@@ -156,6 +161,21 @@ Do not add a third-party Nx Go plugin.
 - **Realtime is polling.** Trip tracker every 30 s (design). Loader list polls and compares
   `routeVersion`. No WebSockets.
 
+### Authentication boundary (Better Auth → Go)
+
+```
+Next.js ── Better Auth (authentication · sessions · identity)
+        └─> Go API (verify authenticated request · RBAC · depot/outlet scope · domain rules)
+                └─> Neon PostgreSQL
+```
+
+**Better Auth, in the Next.js app, owns authentication, sessions and identity.** The Go API
+does **not** issue or own credentials. It verifies the authenticated request, then enforces
+RBAC and per-depot/outlet/route scope and all business rules. The exact Better Auth → Go
+verification mechanism (for example, session-token verification) is **TBD** and must be
+documented before implementation. Do not invent a bridge. Do not introduce Drizzle, Prisma or
+Supabase merely because Better Auth supports them. No auth code is implemented in this phase.
+
 ### Target Go package layout
 
 Add packages under `apps/api/internal/` as features land. One package per bounded area;
@@ -164,7 +184,7 @@ packages depend inward on `domain` and `planning`, never on `httpx`.
 - `clock` — `Clock` interface, real and demo implementations
 - `store` — `pgxpool` setup, embedded migrations, transaction helper
 - `seed` — Embedded reference CSVs + demo-day seeding, idempotent
-- `auth` — Login, bcrypt, JWT issue/verify, `RequireRole` middleware, scope checks
+- `auth` — Verify the authenticated request from Better Auth, `RequireRole` middleware, scope checks. Authentication/session is owned by Better Auth in the web app; the exact Go verification mechanism is TBD (see §4 Authentication boundary).
 - `catalog` — Outlets, vehicles, items, calendar, district travel, service allowance
 - `orders` — Order lifecycle, cutoff, order numbers, queue, close
 - `constraint` — **The validator.** Pure functions over loaded state → `[]domain.ConstraintResult`
@@ -185,9 +205,11 @@ Each feature package exposes a `Service` (logic, takes a `Clock` and a store) an
 
 Standard-library `net/http` `ServeMux` with method patterns (`"POST /api/v1/orders"`,
 `r.PathValue("id")`) · `log/slog` · `github.com/jackc/pgx/v5` with hand-written SQL, no ORM
-· `github.com/pressly/goose/v3` with numbered SQL migrations in `apps/api/migrations/`,
-embedded in the binary and applied at start-up · `github.com/golang-jwt/jwt/v5` · `golang.org/x/crypto/bcrypt` ·
-`github.com/rabbitmq/amqp091-go`.
+· `github.com/pressly/goose/v3` with numbered SQL migrations in
+`apps/api/internal/store/migrations/`, embedded in the binary and applied at start-up ·
+`github.com/rabbitmq/amqp091-go`. Authentication and session are owned by **Better Auth** in
+the web app (not by Go); Go verifies the authenticated request and enforces RBAC, scope and
+domain rules. Do not add `golang-jwt/jwt/v5` or `bcrypt` as the auth mechanism.
 
 ---
 
@@ -428,7 +450,7 @@ fallback. "Notify stores and the driver" is on by default.
 
 ## 9. API conventions
 
-Base `/api/v1`. Bearer JWT except `POST /auth/login`. Full list with payloads: `docs/api.md`.
+Base `/api/v1`. Better Auth session except sign-in. Full list with payloads: `docs/api.md`.
 Adding or changing an endpoint is three edits in one commit: the Go handler, the
 `WaypointClient` method (`libs/api-client/src/lib/waypoint-client.ts`) and `docs/api.md`.
 
@@ -559,7 +581,7 @@ endpoint exists.
 
 1. `clock`, `store`, migrations for the full schema in `docs/data-model.md`
 2. `seed`: reference CSVs, four accounts, demo day S1
-3. `auth`: login, JWT, `RequireRole`, scope
+3. `auth`: verify the Better Auth session, `RequireRole`, scope (mechanism TBD)
 4. `catalog` + `orders`: create, confirm, queue, close, cutoff
 5. `constraint`: the validator with a test per rule
 6. `planning`: engine + prioritisation, job API, results; then validate / confirm
