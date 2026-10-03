@@ -95,8 +95,34 @@ func TestPlanningIntegration(t *testing.T) {
 	if !in.Calendar.IsOperating {
 		t.Fatal("calendar should be operating")
 	}
+	// The authoritative weekly quota must be loaded from the vehicle row.
+	if got := in.FuelQuotaL["VEHPLAN1"]; got != 400 {
+		t.Fatalf("FuelQuotaL[VEHPLAN1] = %v, want 400 (vehicle.weekly_fuel_quota_l)", got)
+	}
 
-	res := New().Plan(in)
+	// The weekly ledger must be read for the exact planning week, and a row from
+	// another week must be ignored.
+	weekStart := mustDate(2026, 9, 21) // Monday of the ISO week containing 2026-09-26
+	priorWeek := mustDate(2026, 9, 14)
+	if _, err := db.Pool().Exec(ctx, `
+		INSERT INTO vehicle_fuel_usage (vehicle_id, week_start_date, distance_km, estimated_fuel_l)
+		VALUES ('VEHPLAN1', $1, 100, 25), ('VEHPLAN1', $2, 50, 99)
+		ON CONFLICT (vehicle_id, week_start_date) DO UPDATE SET estimated_fuel_l = EXCLUDED.estimated_fuel_l`,
+		weekStart, priorWeek); err != nil {
+		t.Fatalf("seed fuel usage: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Pool().Exec(context.Background(), `DELETE FROM vehicle_fuel_usage WHERE vehicle_id = 'VEHPLAN1'`)
+	})
+	in2, err := loader.LoadInput(ctx, mustDate(2026, 9, 26), depotID)
+	if err != nil {
+		t.Fatalf("reload input: %v", err)
+	}
+	if got := in2.FuelUsedL["VEHPLAN1"]; got != 25 {
+		t.Fatalf("FuelUsedL[VEHPLAN1] = %v, want 25 (this week only, not 99 from the prior week)", got)
+	}
+
+	res := New().Plan(in2)
 	if len(res.Trips) != 1 {
 		t.Fatalf("expected one trip, got %d (deferred %+v)", len(res.Trips), res.Deferred)
 	}

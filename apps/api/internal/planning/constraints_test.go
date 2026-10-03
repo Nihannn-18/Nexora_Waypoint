@@ -1,6 +1,7 @@
 package planning
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -241,22 +242,118 @@ func TestCheckTripAvailability(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Fuel quota (only when modelled)
+// Fuel
 // ---------------------------------------------------------------------------
 
-func TestCheckTripFuelQuota(t *testing.T) {
+// fuelInput returns baseInput with a known travel distance and a vehicle whose
+// km/l and quota can be set per test. VEH002 (ambient truck) is the subject.
+func fuelInput() Input {
 	in := baseInput()
-	o := order("O1", "OUT001", domain.BrandFresh, "Colombo", "d-peli", 10, 0.1, domain.TempAmbient, domain.ParkingNormal)
-	// Without a quota entry, the constraint is not applied (skipped, not passed).
-	if v := CheckTrip(in, Candidate{Vehicle: in.Vehicles[1], TripNo: 1, Orders: []Order{o}}); hasRule(v, domain.ConstraintFuelQuotaExceeded) {
-		t.Fatal("fuel rule should be skipped when the quota is not modelled")
-	}
+	// Colombo: depot_to_district_km = 12, inter_stop_km = 4 (from baseInput).
+	// VEH002 km/l = 5, quota 400 by default.
+	return in
+}
 
-	in.FuelQuotaL = map[string]float64{"VEH002": 1} // 1 litre — impossible
-	in.FuelUsedL = map[string]float64{"VEH002": 0}
-	v := CheckTrip(in, Candidate{Vehicle: in.Vehicles[1], TripNo: 1, Orders: []Order{o}})
-	if v.OK || !hasViolation(v, domain.ConstraintFuelQuotaExceeded) {
-		t.Fatalf("expected FUEL_QUOTA_EXCEEDED, got %v", v.Violations)
+func TestCheckTripFuelQuota(t *testing.T) {
+	o := order("O1", "OUT001", domain.BrandFresh, "Colombo", "d-peli", 10, 0.1, domain.TempAmbient, domain.ParkingNormal)
+
+	t.Run("no quota modelled leaves the rule unapplied", func(t *testing.T) {
+		in := fuelInput()
+		if v := CheckTrip(in, Candidate{Vehicle: in.Vehicles[1], TripNo: 1, Orders: []Order{o}}); hasRule(v, domain.ConstraintFuelQuotaExceeded) {
+			t.Fatal("fuel rule should not be reported when the vehicle has no quota")
+		}
+	})
+
+	t.Run("below quota passes", func(t *testing.T) {
+		in := fuelInput()
+		in.FuelQuotaL = map[string]float64{"VEH002": 400}
+		v := CheckTrip(in, Candidate{Vehicle: in.Vehicles[1], TripNo: 1, Orders: []Order{o}})
+		if !v.OK {
+			t.Fatalf("expected pass, got %v", v.Violations)
+		}
+	})
+
+	t.Run("exactly at quota passes", func(t *testing.T) {
+		in := fuelInput()
+		// One order Colombo: distance 12 + 4*0 = 12 km; fuel = 12/5 = 2.4 L.
+		// Set used + quota so that used + 2.4 == quota exactly.
+		in.FuelUsedL = map[string]float64{"VEH002": 7.6}
+		in.FuelQuotaL = map[string]float64{"VEH002": 10.0}
+		v := CheckTrip(in, Candidate{Vehicle: in.Vehicles[1], TripNo: 1, Orders: []Order{o}, WeeklyFuelUsedL: 7.6})
+		if !v.OK {
+			t.Fatalf("exact quota boundary must pass, got %v", v.Violations)
+		}
+	})
+
+	t.Run("over quota fails", func(t *testing.T) {
+		in := fuelInput()
+		in.FuelQuotaL = map[string]float64{"VEH002": 2} // 2.4 L needed
+		v := CheckTrip(in, Candidate{Vehicle: in.Vehicles[1], TripNo: 1, Orders: []Order{o}})
+		if v.OK || !hasViolation(v, domain.ConstraintFuelQuotaExceeded) {
+			t.Fatalf("expected FUEL_QUOTA_EXCEEDED, got %v", v.Violations)
+		}
+	})
+
+	t.Run("prior weekly usage is counted", func(t *testing.T) {
+		in := fuelInput()
+		in.FuelQuotaL = map[string]float64{"VEH002": 5}
+		// used 4 + trip 2.4 = 6.4 > 5 fails.
+		in.FuelUsedL = map[string]float64{"VEH002": 4}
+		v := CheckTrip(in, Candidate{Vehicle: in.Vehicles[1], TripNo: 1, Orders: []Order{o}, WeeklyFuelUsedL: 4})
+		if v.OK {
+			t.Fatal("prior usage should push it over quota")
+		}
+	})
+}
+
+func TestCheckTripFuelEfficiencyInvalid(t *testing.T) {
+	o := order("O1", "OUT001", domain.BrandFresh, "Colombo", "d-peli", 10, 0.1, domain.TempAmbient, domain.ParkingNormal)
+	for _, kmpl := range []float64{0, -3} {
+		in := fuelInput()
+		in.FuelQuotaL = map[string]float64{"VEH002": 400}
+		v := in.Vehicles[1]
+		v.KmPerL = kmpl
+		got := CheckTrip(in, Candidate{Vehicle: v, TripNo: 1, Orders: []Order{o}})
+		if got.OK {
+			t.Fatalf("km_per_l=%v must be rejected", kmpl)
+		}
+		if !hasViolation(got, domain.ConstraintFuelEfficiencyInvalid) {
+			t.Fatalf("km_per_l=%v expected FUEL_EFFICIENCY_INVALID, got %v", kmpl, got.Violations)
+		}
+		if hasViolation(got, domain.ConstraintFuelQuotaExceeded) {
+			t.Fatalf("km_per_l=%v must not be reported as FUEL_QUOTA_EXCEEDED", kmpl)
+		}
+	}
+}
+
+func TestEstimateFuelLitresFormula(t *testing.T) {
+	// 100 km / 5 km per l = 20 l.
+	got, err := EstimateFuelLitres(100, 5)
+	if err != nil || got != 20 {
+		t.Fatalf("EstimateFuelLitres(100,5) = %v, %v; want 20", got, err)
+	}
+	if _, err := EstimateFuelLitres(100, 0); !errors.Is(err, ErrInvalidEfficiency) {
+		t.Fatalf("zero km/l err = %v, want ErrInvalidEfficiency", err)
+	}
+}
+
+func TestTripFuelDifferentEfficiency(t *testing.T) {
+	in := fuelInput()
+	o := order("O1", "OUT001", domain.BrandFresh, "Colombo", "d-peli", 10, 0.1, domain.TempAmbient, domain.ParkingNormal)
+	cand := Candidate{TripNo: 1, Orders: []Order{o}}
+
+	slow := in.Vehicles[1] // km/l 5
+	fast := in.Vehicles[1]
+	fast.KmPerL = 10
+
+	trip, _ := computeTrip(in, cand, 10, 0.1)
+	slowL, _ := tripFuelLitres(in, trip, slow)
+	fastL, _ := tripFuelLitres(in, trip, fast)
+	if slowL <= fastL {
+		t.Fatalf("5 km/l (%v L) should use more fuel than 10 km/l (%v L)", slowL, fastL)
+	}
+	if fastL != slowL/2 {
+		t.Fatalf("doubling efficiency should halve fuel: %v vs %v", slowL, fastL)
 	}
 }
 
