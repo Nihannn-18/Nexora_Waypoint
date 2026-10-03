@@ -183,7 +183,7 @@ func TestNoCredentialLeak(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/whatever", nil)
 			req.Header.Set("Authorization", "Bearer "+secret)
-			req.Header.Set("Cookie", "better-auth.session_token="+secret)
+			req.Header.Set("Cookie", "session="+secret)
 			tc.wrap(m, next).ServeHTTP(rec, req)
 
 			blob := rec.Body.String() + " " + rec.Header().Get("WWW-Authenticate")

@@ -8,8 +8,8 @@ import (
 // clearEnv blanks every variable Load reads so each case starts from defaults.
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"APP_ENV", "DATABASE_URL", "RABBITMQ_URL", "JWT_SECRET", "CORS_ORIGIN", "TZ",
-		"MEDIA_STORAGE", "MEDIA_ROOT", "S3_BUCKET", "AWS_REGION", "PORT", "TOKEN_TTL_MINUTES",
+	for _, k := range []string{"APP_ENV", "DATABASE_URL", "RABBITMQ_URL", "SESSION_TTL", "CORS_ORIGIN", "TZ",
+		"MEDIA_STORAGE", "MEDIA_ROOT", "S3_BUCKET", "AWS_REGION", "PORT",
 		"DEMO_MODE", "DEMO_CLOCK_START"} {
 		t.Setenv(k, "")
 	}
@@ -24,6 +24,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Env != "development" || cfg.Port != 8080 || cfg.Timezone != "Asia/Colombo" {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
+	if cfg.SessionTTL != 12*time.Hour {
+		t.Errorf("SessionTTL = %v, want 12h default", cfg.SessionTTL)
+	}
 	if cfg.MediaStorage != StorageLocal {
 		t.Errorf("MediaStorage = %q, want local so Compose needs no AWS", cfg.MediaStorage)
 	}
@@ -33,6 +36,18 @@ func TestLoadDefaults(t *testing.T) {
 	wantStart := time.Date(2026, 9, 25, 15, 40, 0, 0, time.FixedZone("", 5*3600+30*60))
 	if !cfg.DemoClockStart.Equal(wantStart) {
 		t.Errorf("DemoClockStart = %v, want %v", cfg.DemoClockStart, wantStart)
+	}
+}
+
+func TestLoadSessionTTL(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("SESSION_TTL", "30m")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SessionTTL != 30*time.Minute {
+		t.Errorf("SessionTTL = %v, want 30m", cfg.SessionTTL)
 	}
 }
 
@@ -58,9 +73,10 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		name string
 		env  map[string]string
 	}{
-		{"production without secret", map[string]string{"APP_ENV": "production"}},
 		{"non-numeric port", map[string]string{"PORT": "eighty"}},
 		{"unknown timezone", map[string]string{"TZ": "Mars/Olympus"}},
+		{"invalid session ttl", map[string]string{"SESSION_TTL": "forever"}},
+		{"non-positive session ttl", map[string]string{"SESSION_TTL": "0s"}},
 		{"unknown media backend", map[string]string{"MEDIA_STORAGE": "ftp"}},
 		{"s3 without bucket", map[string]string{"MEDIA_STORAGE": "s3", "AWS_REGION": "ap-south-1"}},
 		{"s3 without region", map[string]string{"MEDIA_STORAGE": "s3", "S3_BUCKET": "b"}},
@@ -80,10 +96,12 @@ func TestLoadRejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestLoadProductionWithSecret(t *testing.T) {
+// TestLoadProductionWithoutSecret proves authentication needs no Go signing
+// secret: sessions are opaque and stored server-side, so production starts
+// without one.
+func TestLoadProductionWithoutSecret(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("APP_ENV", "production")
-	t.Setenv("JWT_SECRET", "x")
 	if _, err := Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}

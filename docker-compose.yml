@@ -95,8 +95,11 @@ services:
       # network. They are not reachable from the judge's browser.
       DATABASE_URL: postgres://${POSTGRES_USER:-waypoint}:${POSTGRES_PASSWORD:-waypoint}@postgres:5432/${POSTGRES_DB:-waypoint}?sslmode=disable
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-waypoint}:${RABBITMQ_PASSWORD:-waypoint}@rabbitmq:5672/
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
-      TOKEN_TTL_MINUTES: ${TOKEN_TTL_MINUTES:-720}
+      # Go-owned opaque sessions. No signing secret: a login mints a random
+      # token and only its hash is stored. DEMO_SEED_PASSWORD hashes the four
+      # seeded demo accounts.
+      SESSION_TTL: ${SESSION_TTL:-12h}
+      DEMO_SEED_PASSWORD: ${DEMO_SEED_PASSWORD:-waypoint2026}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       # Media defaults to the local filesystem so Compose needs no AWS. Point
       # MEDIA_ROOT at the named volume below; `docker compose down` keeps the
@@ -123,7 +126,7 @@ services:
   #     postgres: { condition: service_healthy }
   #     rabbitmq: { condition: service_healthy }
   #   environment:
-  #     # Copy the same DATABASE_URL / RABBITMQ_URL / JWT_SECRET block as `api`.
+  #     # Copy the same DATABASE_URL / RABBITMQ_URL / SESSION_TTL block as `api`.
   #   entrypoint: ['/app/waypoint-worker']
 
   # -------------------------------------------------------------------------

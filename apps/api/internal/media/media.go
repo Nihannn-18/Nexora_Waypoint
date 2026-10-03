@@ -67,8 +67,9 @@ func (p Purpose) Valid() bool {
 //
 //	<purpose>/<ownerID>/<uuid>
 //
-// ownerID is the route id for a shortfall and the leg id for a POD, so the key
-// itself is traceable to its business context without a lookup.
+// ownerID is the order-item id for a shortfall and the leg id for a POD, so the
+// key is traceable to its business context without trusting the client. KeyFor
+// builds the canonical key for a purpose/owner/new object id.
 func KeyFor(p Purpose, ownerID, id string) (string, error) {
 	if !p.Valid() {
 		return "", fmt.Errorf("unknown media purpose %q", p)
@@ -80,6 +81,27 @@ func KeyFor(p Purpose, ownerID, id string) (string, error) {
 		return "", fmt.Errorf("media object id is required")
 	}
 	return fmt.Sprintf("%s/%s/%s", p, ownerID, id), nil
+}
+
+// ParseKey splits a server-generated key back into its purpose and owner. The
+// authorizer uses it to recover an existing object's business context without
+// trusting anything beyond the key the server issued.
+func ParseKey(key string) (Purpose, string, error) {
+	if _, err := safeKey(key); err != nil {
+		return "", "", err
+	}
+	parts := strings.Split(key, "/")
+	if len(parts) != 3 {
+		return "", "", fmt.Errorf("malformed media key %q", key)
+	}
+	p := Purpose(parts[0])
+	if !p.Valid() {
+		return "", "", fmt.Errorf("unknown media purpose %q", parts[0])
+	}
+	if parts[1] == "" || parts[2] == "" {
+		return "", "", fmt.Errorf("malformed media key %q", key)
+	}
+	return p, parts[1], nil
 }
 
 // NewStorage selects a backend from configuration.

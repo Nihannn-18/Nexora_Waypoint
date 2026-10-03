@@ -16,7 +16,7 @@ import (
 )
 
 // verifier authenticates as a fixed identity so the real auth middleware runs
-// without the (TBD) Better Auth bridge.
+// without a database.
 type verifier struct{ id auth.Identity }
 
 func (v verifier) Verify(context.Context, *auth.RequestHeader) (auth.Identity, error) {

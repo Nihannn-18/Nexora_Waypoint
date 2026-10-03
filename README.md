@@ -41,9 +41,10 @@ cp .env.example .env
 docker compose up --build
 ```
 
-`JWT_SECRET` in `.env.example` already has a working local value, so no editing is required to
-start. It is **legacy scaffolding**: authentication moves to Better Auth in the web app, and
-the exact Better Auth → Go verification mechanism is still TBD (see `docs/api.md`).
+Authentication is owned by the Go API: `POST /api/v1/auth/login` verifies an Argon2id password
+hash and returns an opaque session token (only its SHA-256 hash is stored). The web client keeps
+the token and sends it as `Authorization: Bearer` on every call. `SESSION_TTL` controls how long
+a session lasts (default `12h`); see `docs/api.md`.
 
 1. **Configure (optional).** The defaults work as-is. To change ports or the database
    password, edit `.env` after copying it.
@@ -88,7 +89,7 @@ deployment decision**, not a Challenge Booklet requirement.
 ### With Docker — the one command a judge needs
 
 ```bash
-cp .env.example .env     # JWT_SECRET has a local default; it is legacy auth scaffolding
+cp .env.example .env     # has working local defaults; change the DB password before deploying
 docker compose up --build
 ```
 
@@ -329,7 +330,7 @@ The competition requires significant departures to be recorded. These are ours.
 
 Our specification named Spring Boot. We build in **Go 1.24**. Everything the specification
 requires of the backend is unchanged — one authoritative constraint validator, DTOs at the
-boundary, transactional confirmation, optimistic locking on route edits, a Better Auth session
+boundary, transactional confirmation, optimistic locking on route edits, a Go-owned session
 with server-side depot and outlet scope, idempotent offline sync, an immutable audit trail. Only
 the language and framework differ.
 
@@ -384,8 +385,9 @@ Not yet verified: **the Docker image builds**. The scaffold was prepared in an e
 without a Docker daemon, so `docker compose up --build` has not been executed end to end.
 Run it once locally before relying on it.
 
-Not yet built: database schema and migrations, seed data, authentication, the four role
-screen sets, the planning engine and worker, the offline outbox, and realtime progress.
+Not yet built: the four role screen sets beyond their shells, the planning worker transport,
+the offline outbox, and realtime progress. Authentication (Go-owned opaque sessions with
+Argon2id passwords, login/logout/me and media scope) **is** implemented; see `docs/api.md`.
 
 ---
 
