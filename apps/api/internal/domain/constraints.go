@@ -76,6 +76,19 @@ const (
 	BrandTech  Brand = "TECH"
 )
 
+// BrandValues lists the three canonical brands.
+var BrandValues = []Brand{BrandFresh, BrandStyle, BrandTech}
+
+// Valid reports whether b is one of the three canonical brands.
+func (b Brand) Valid() bool {
+	for _, known := range BrandValues {
+		if b == known {
+			return true
+		}
+	}
+	return false
+}
+
 // Role is one of the four user roles a judge must be able to sign in as.
 type Role string
 
@@ -128,6 +141,19 @@ const (
 	TempChilled TempRequirement = "CHILLED"
 	TempFrozen  TempRequirement = "FROZEN"
 )
+
+// TempRequirementValues lists the three canonical temperature requirements.
+var TempRequirementValues = []TempRequirement{TempAmbient, TempChilled, TempFrozen}
+
+// Valid reports whether t is one of the three canonical requirements.
+func (t TempRequirement) Valid() bool {
+	for _, known := range TempRequirementValues {
+		if t == known {
+			return true
+		}
+	}
+	return false
+}
 
 // RequiresReefer reports whether this requirement can only be met by a
 // refrigerated vehicle. A reefer may also carry ambient; the reverse is never true.
