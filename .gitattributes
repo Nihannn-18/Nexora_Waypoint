@@ -1,2 +1,9 @@
-# Shell scripts run inside Linux containers; CRLF breaks the shebang line.
+# Normalise repository text files to LF. A Windows checkout with CRLF line
+# endings would otherwise break the Linux build — a CRLF shebang turns
+# "#!/bin/sh" into "#!/bin/sh\r" and the container cannot exec the entrypoint.
+* text=auto eol=lf
+
+# Shell scripts run inside Linux containers; spell the rule out as documentation.
+# The Dockerfile also strips CR at build time so a legacy CRLF checkout still
+# produces a working image.
 *.sh text eol=lf
