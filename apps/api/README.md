@@ -25,7 +25,7 @@ cmd/api/main.go           entrypoint: config, logging, server, graceful shutdown
 internal/
 ├── config/               environment settings, validated at start-up
 ├── domain/               shared vocabulary — constraint codes, roles, statuses
-├── auth/                 Better Auth boundary, identity, RBAC, scope, middleware  ← tested
+├── auth/                 opaque-session verifier, identity, RBAC, scope, middleware  ← tested
 ├── catalog/              SKUs: lookup, filters, read API  ← tested
 ├── orders/               order intake, lifecycle, read API  ← tested
 ├── routes/               confirmation, routes, legs, allocations, deferrals  ← tested
@@ -62,9 +62,10 @@ go get github.com/rabbitmq/amqp091-go  # planning queue
 go mod tidy
 ```
 
-Auth is **not** a `go get`: Better Auth in the web app owns authentication, sessions and
-identity, and the Go API verifies the authenticated request. The exact verification mechanism
-is TBD, so do not add `golang-jwt/jwt/v5` or `bcrypt` as the auth mechanism.
+Auth is owned by the Go API: opaque, database-backed sessions (`internal/authstore`,
+`internal/authapi`) with Argon2id password hashes (`golang.org/x/crypto/argon2`, already a
+dependency). A login returns a random session token; only its SHA-256 hash is stored. Do not
+add a JWT library or an external auth framework as the mechanism.
 
 The router is `net/http`'s `ServeMux` using Go 1.22+ method-and-path patterns
 (`"POST /api/v1/orders"`, `"GET /api/v1/orders/{id}"`), which covers this API without a
@@ -75,20 +76,19 @@ depends on the choice.
 
 ## Configuration
 
-Every setting has a working default except `JWT_SECRET`, which is refused when
-`APP_ENV=production`. Authentication is moving to Better Auth, so `JWT_SECRET` is legacy
-scaffolding pending that decision. See [`../../.env.example`](../../.env.example).
+Every setting has a working default. Authentication is Go-owned opaque sessions, so there is
+no signing secret to configure. See [`../../.env.example`](../../.env.example).
 
-| Variable            | Default                 | Notes                                                          |
-| ------------------- | ----------------------- | -------------------------------------------------------------- |
-| `APP_ENV`           | `development`           | `development` gives debug logs and human-readable output       |
-| `PORT`              | `8080`                  |                                                                |
-| `DATABASE_URL`      | localhost               | libpq connection string                                        |
-| `RABBITMQ_URL`      | localhost               | AMQP URL                                                       |
-| `JWT_SECRET`        | —                       | Legacy; required when `APP_ENV=production` pending Better Auth |
-| `TOKEN_TTL_MINUTES` | `720`                   | 12 hours, so a driver is not signed out mid-shift              |
-| `CORS_ORIGIN`       | `http://localhost:3000` |                                                                |
-| `TZ`                | `Asia/Colombo`          | Validated at start-up                                          |
+| Variable             | Default                 | Notes                                                    |
+| -------------------- | ----------------------- | -------------------------------------------------------- |
+| `APP_ENV`            | `development`           | `development` gives debug logs and human-readable output |
+| `PORT`               | `8080`                  |                                                          |
+| `DATABASE_URL`       | localhost               | libpq connection string                                  |
+| `RABBITMQ_URL`       | localhost               | AMQP URL                                                 |
+| `SESSION_TTL`        | `12h`                   | Login session lifetime (Go duration)                     |
+| `DEMO_SEED_PASSWORD` | `waypoint2026`          | Password for the four seeded demo accounts               |
+| `CORS_ORIGIN`        | `http://localhost:3000` |                                                          |
+| `TZ`                 | `Asia/Colombo`          | Validated at start-up                                    |
 
 ### Why the timezone matters more than it looks
 

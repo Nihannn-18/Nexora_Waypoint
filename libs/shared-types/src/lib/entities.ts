@@ -328,6 +328,11 @@ export interface LoadItemRecord {
 
 export interface ProofOfDelivery {
   readonly type: PodType;
+  /** Required for DELIVERED (see delivery.ValidateEvent in the Go API). */
+  readonly receiverName?: string;
+  /** Media key of the signature image: `pod/<legId>/<id>`. */
+  readonly signature?: string;
+  /** Media key of the POD photo: `pod/<legId>/<id>`. */
   readonly fileRef?: string;
 }
 

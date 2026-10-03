@@ -117,8 +117,8 @@ func TestCanAccessOutlet(t *testing.T) {
 	}
 }
 
-// fakeVerifier lets the loader/context/middleware tests run without the real,
-// still-TBD Better Auth bridge.
+// fakeVerifier lets the loader/context/middleware tests run without the real
+// session store.
 type fakeVerifier struct {
 	identity Identity
 	err      error

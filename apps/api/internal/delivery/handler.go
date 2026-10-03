@@ -15,7 +15,8 @@ import (
 //	POST /api/v1/legs/{id}/events  -> record one outcome with POD
 //	POST /api/v1/sync/events       -> batch offline events, reconciled per event
 //	GET  /api/v1/sync/status       -> the driver's synced/conflict counts
-//	GET  /api/v1/legs/{id}         -> the leg's delivery context
+//	GET  /api/v1/legs/{id}         -> the stop: route, outlet, window, orders
+//	GET  /api/v1/driver/routes     -> the depot's routes on ?date= with stops
 type Handler struct {
 	service *Service
 	auth    *auth.Middleware
@@ -33,6 +34,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 		h.auth.RequireRole(driver, http.HandlerFunc(h.RecordEvent)))
 	mux.Handle("GET /api/v1/legs/{id}",
 		h.auth.RequireRole(driver, http.HandlerFunc(h.GetLeg)))
+	mux.Handle("GET /api/v1/driver/routes",
+		h.auth.RequireRole(driver, http.HandlerFunc(h.ListRoutes)))
 	mux.Handle("POST /api/v1/sync/events",
 		h.auth.RequireRole(driver, http.HandlerFunc(h.SyncEvents)))
 	mux.Handle("GET /api/v1/sync/status",
@@ -89,6 +92,80 @@ type syncEventsResponse struct {
 type syncStatusResponse struct {
 	Synced    int `json:"synced"`
 	Conflicts int `json:"conflicts"`
+}
+
+type routeSummaryResponse struct {
+	RouteID   string `json:"routeId"`
+	RouteDate string `json:"routeDate"`
+	VehicleID string `json:"vehicleId"`
+	TripNo    int    `json:"tripNo"`
+	Brand     string `json:"brand"`
+	District  string `json:"district"`
+	Status    string `json:"status"`
+}
+
+type outletResponse struct {
+	OutletID          string `json:"outletId"`
+	Name              string `json:"name"`
+	District          string `json:"district"`
+	DockType          string `json:"dockType"`
+	ParkingConstraint string `json:"parkingConstraint"`
+	WindowOpen        string `json:"windowOpen"`
+	WindowClose       string `json:"windowClose"`
+	MallWindowOpen    string `json:"mallWindowOpen,omitempty"`
+	MallWindowClose   string `json:"mallWindowClose,omitempty"`
+}
+
+type orderLineResponse struct {
+	OrderItemID string `json:"orderItemId"`
+	SKU         string `json:"sku"`
+	Name        string `json:"name"`
+	Quantity    int    `json:"quantity"`
+}
+
+type stopOrderResponse struct {
+	OrderID         string              `json:"orderId"`
+	OrderNumber     string              `json:"orderNumber"`
+	TempRequirement string              `json:"tempRequirement"`
+	TotalUnits      int                 `json:"totalUnits"`
+	TotalWeightKg   float64             `json:"totalWeightKg"`
+	TotalVolumeM3   float64             `json:"totalVolumeM3"`
+	Lines           []orderLineResponse `json:"lines"`
+}
+
+type legResponse struct {
+	LegID          string               `json:"legId"`
+	RouteID        string               `json:"routeId"`
+	DepotID        string               `json:"depotId"`
+	RouteDate      string               `json:"routeDate"`
+	ToOutletID     string               `json:"toOutletId"`
+	Status         string               `json:"status"`
+	OrderIDs       []string             `json:"orderIds"`
+	Seq            int                  `json:"seq"`
+	PlannedArrival string               `json:"plannedArrival,omitempty"`
+	Route          routeSummaryResponse `json:"route"`
+	Outlet         outletResponse       `json:"outlet"`
+	Orders         []stopOrderResponse  `json:"orders"`
+}
+
+type routeStopResponse struct {
+	LegID          string `json:"legId"`
+	Seq            int    `json:"seq"`
+	OutletID       string `json:"outletId"`
+	OutletName     string `json:"outletName"`
+	WindowOpen     string `json:"windowOpen"`
+	WindowClose    string `json:"windowClose"`
+	PlannedArrival string `json:"plannedArrival,omitempty"`
+	Status         string `json:"status"`
+}
+
+type driverRouteResponse struct {
+	routeSummaryResponse
+	Stops []routeStopResponse `json:"stops"`
+}
+
+func toRouteSummary(r RouteSummary) routeSummaryResponse {
+	return routeSummaryResponse(r)
 }
 
 // --- handlers --------------------------------------------------------------
@@ -168,16 +245,56 @@ func (h *Handler) GetLeg(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
 		return
 	}
-	leg, err := h.service.LegContext(r.Context(), r.PathValue("id"), identity.DepotID)
+	leg, err := h.service.LegDetail(r.Context(), r.PathValue("id"), identity.DepotID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"legId": leg.LegID, "routeId": leg.RouteID, "depotId": leg.DepotID,
-		"routeDate": leg.RouteDate, "toOutletId": leg.ToOutlet, "status": leg.Status,
-		"orderIds": leg.OrderIDs,
-	})
+	out := legResponse{
+		LegID: leg.LegID, RouteID: leg.RouteID, DepotID: leg.DepotID, RouteDate: leg.RouteDate,
+		ToOutletID: leg.ToOutlet, Status: leg.Status, OrderIDs: leg.OrderIDs,
+		Seq: leg.Seq, PlannedArrival: leg.PlannedArrival,
+		Route: toRouteSummary(leg.Route), Outlet: outletResponse(leg.Outlet),
+		Orders: make([]stopOrderResponse, 0, len(leg.Orders)),
+	}
+	if out.OrderIDs == nil {
+		out.OrderIDs = []string{}
+	}
+	for _, o := range leg.Orders {
+		so := stopOrderResponse{
+			OrderID: o.OrderID, OrderNumber: o.OrderNumber, TempRequirement: o.TempRequirement,
+			TotalUnits: o.TotalUnits, TotalWeightKg: o.TotalWeightKg, TotalVolumeM3: o.TotalVolumeM3,
+			Lines: make([]orderLineResponse, 0, len(o.Lines)),
+		}
+		for _, l := range o.Lines {
+			so.Lines = append(so.Lines, orderLineResponse(l))
+		}
+		out.Orders = append(out.Orders, so)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// ListRoutes handles GET /api/v1/driver/routes?date=YYYY-MM-DD.
+func (h *Handler) ListRoutes(w http.ResponseWriter, r *http.Request) {
+	identity, err := auth.MustIdentity(r.Context())
+	if err != nil {
+		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
+		return
+	}
+	routes, err := h.service.DriverRoutes(r.Context(), identity.DepotID, r.URL.Query().Get("date"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := make([]driverRouteResponse, 0, len(routes))
+	for _, rt := range routes {
+		dr := driverRouteResponse{routeSummaryResponse: toRouteSummary(rt.RouteSummary), Stops: make([]routeStopResponse, 0, len(rt.Stops))}
+		for _, s := range rt.Stops {
+			dr.Stops = append(dr.Stops, routeStopResponse(s))
+		}
+		out = append(out, dr)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func eventInput(legID string, req eventRequest) EventInput {

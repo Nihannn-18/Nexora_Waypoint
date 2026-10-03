@@ -7,7 +7,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function clientWith(fetchImpl: typeof fetch, token: string | null = 'jwt-123') {
+function clientWith(fetchImpl: typeof fetch, token: string | null = 'opaque-123') {
   return new HttpClient({
     baseUrl: 'http://api.test/api/v1',
     getToken: () => token,
@@ -26,7 +26,7 @@ describe('HttpClient', () => {
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe('http://api.test/api/v1/me');
     expect((init.headers as Record<string, string>)['Authorization']).toBe(
-      'Bearer jwt-123',
+      'Bearer opaque-123',
     );
   });
 

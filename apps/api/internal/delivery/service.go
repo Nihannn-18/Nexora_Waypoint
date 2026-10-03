@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Service is the delivery business surface: it validates driver scope and event
@@ -62,19 +63,32 @@ func (s *Service) SyncBatch(ctx context.Context, actor, actorDepot string, event
 	return results, nil
 }
 
-// LegContext returns a leg's operational context, scoped to the caller's depot.
-func (s *Service) LegContext(ctx context.Context, legID, actorDepot string) (LegContext, error) {
+// LegDetail returns a leg's stop detail, scoped to the caller's depot.
+func (s *Service) LegDetail(ctx context.Context, legID, actorDepot string) (LegDetail, error) {
 	if strings.TrimSpace(legID) == "" {
-		return LegContext{}, ValidationError{Field: "legId", Message: "is required"}
+		return LegDetail{}, ValidationError{Field: "legId", Message: "is required"}
 	}
-	leg, err := s.repo.LegContext(ctx, legID)
+	leg, err := s.repo.LegDetail(ctx, legID)
 	if err != nil {
-		return LegContext{}, err
+		return LegDetail{}, err
 	}
 	if !depotAllowed(actorDepot, leg.DepotID) {
-		return LegContext{}, fmt.Errorf("%w: leg %s", ErrNotFound, legID)
+		return LegDetail{}, fmt.Errorf("%w: leg %s", ErrNotFound, legID)
 	}
 	return leg, nil
+}
+
+// DriverRoutes lists the caller's depot's routes on date (YYYY-MM-DD). Depot is
+// the strongest driver boundary the schema has: app_user carries no vehicle, so
+// a driver sees every route of their depot and picks their vehicle.
+func (s *Service) DriverRoutes(ctx context.Context, actorDepot, date string) ([]DriverRoute, error) {
+	if _, err := time.Parse(time.DateOnly, date); err != nil {
+		return nil, ValidationError{Field: "date", Message: "must be YYYY-MM-DD"}
+	}
+	if actorDepot == "" {
+		return []DriverRoute{}, nil // fail closed: no depot, no routes
+	}
+	return s.repo.DriverRoutes(ctx, actorDepot, date)
 }
 
 // SyncStatus returns the caller's synced/conflict counts.
