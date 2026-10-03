@@ -31,6 +31,7 @@ import (
 	"waypoint.lk/api/internal/catalog"
 	"waypoint.lk/api/internal/clock"
 	"waypoint.lk/api/internal/config"
+	"waypoint.lk/api/internal/delivery"
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/loading"
 	"waypoint.lk/api/internal/media"
@@ -150,6 +151,13 @@ func run() error {
 	loadingService := loading.NewService(loadingRepo)
 	loadingHandler := loading.NewHandler(loadingService, authMiddleware)
 
+	// Delivery: the driver's outcome, POD and idempotent offline-event sync.
+	// delivery_event is the authoritative record, keyed for idempotency by
+	// client_event_id.
+	deliveryRepo := delivery.NewPGRepository(db.Pool())
+	deliveryService := delivery.NewService(deliveryRepo)
+	deliveryHandler := delivery.NewHandler(deliveryService, authMiddleware)
+
 	checks := []httpx.Check{
 		{Name: "database", Fn: db.Pool().Ping},
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
@@ -159,7 +167,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
