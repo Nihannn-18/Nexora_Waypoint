@@ -109,16 +109,32 @@ func run() error {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	ln, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", server.Addr, err)
+	}
+	slog.Info("waypoint api listening",
+		"addr", server.Addr,
+		"env", cfg.Env,
+		"timezone", cfg.Timezone,
+	)
+
 	// Shutdown is triggered by the same signal context created above, so an
 	// in-flight allocation confirmation can finish instead of being cut off.
+	return serve(ctx, server, ln, shutdownTimeout)
+}
+
+// shutdownTimeout bounds how long in-flight requests may take to drain after a
+// shutdown signal before the remaining connections are closed.
+const shutdownTimeout = 20 * time.Second
+
+// serve runs server on ln until it fails or ctx is cancelled. On cancellation
+// it stops accepting connections and waits up to drain for in-flight requests
+// to finish; past that it closes what remains rather than hang the container.
+func serve(ctx context.Context, server *http.Server, ln net.Listener, drain time.Duration) error {
 	serverError := make(chan error, 1)
 	go func() {
-		slog.Info("waypoint api listening",
-			"addr", server.Addr,
-			"env", cfg.Env,
-			"timezone", cfg.Timezone,
-		)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverError <- err
 		}
 	}()
@@ -130,13 +146,13 @@ func run() error {
 		slog.Info("shutdown signal received, draining connections")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), drain)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		// Force the remaining connections closed rather than hang the container.
 		_ = server.Close()
-		return err
+		return fmt.Errorf("drain connections: %w", err)
 	}
 
 	slog.Info("shutdown complete")

@@ -50,13 +50,15 @@ func TestMigrateIsIdempotentAndEnforcesSchemaRules(t *testing.T) {
 		t.Fatalf("migrate on an up-to-date database: %v", err)
 	}
 
-	// The database itself must enforce these, not only the services (CLAUDE.md §10).
+	// The database itself must enforce these, not only the services (CLAUDE.md §10,
+	// docs/data-model.md).
 	required := []struct {
 		table, definition string
 	}{
 		{"route", "UNIQUE (vehicle_id, route_date, trip_no)"},
 		{"route", "CHECK ((trip_no = ANY (ARRAY[1, 2])))"},
 		{"route_leg", "UNIQUE (route_id, seq)"},
+		{"route_leg", "UNIQUE (route_id, order_id)"},
 		{"delivery_event", "UNIQUE (client_event_id)"},
 	}
 	for _, rc := range required {
