@@ -377,3 +377,20 @@ export interface DemandForecastPoint {
   /** Only Fresh carries chilled demand; 0 for Style and Tech. */
   readonly predChilledVolumeM3: number;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Meta                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Response of GET /meta. Mirrors `httpx.MetaResponse` in the Go API. Every
+ * countdown and "today" in the web app derives from `now`, never from the
+ * browser clock — the seeded demo day is in the past.
+ */
+export interface MetaResponse {
+  /** The API clock (the demo clock under DEMO_MODE), RFC 3339 with offset. */
+  readonly now: IsoDateTime;
+  readonly demoMode: boolean;
+  /** IANA name of the business timezone, e.g. `Asia/Colombo`. */
+  readonly timezone: string;
+}

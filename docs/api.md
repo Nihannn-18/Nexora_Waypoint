@@ -99,7 +99,16 @@ through the API.
 
 The seeded delivery day is in the past and the judge walkthrough spans Friday 16:00 to Saturday
 morning, so the API runs on an injected clock rather than the wall clock. Enabled with
-`DEMO_MODE=true`; the clock starts at `DEMO_CLOCK_START` and ticks from there.
+`DEMO_MODE=true`; the clock starts at `DEMO_CLOCK_START` and ticks from there. `DEMO_MODE`
+is off unless set (`.env.example` sets it on for the walkthrough); `DEMO_CLOCK_START` is
+RFC 3339 with offset and defaults to `2026-09-25T15:40:00+05:30`. With demo mode off, `now` is
+the wall clock in the business timezone.
+
+`GET /meta` → `200`, public:
+
+```json
+{ "now": "2026-09-25T15:40:00+05:30", "demoMode": true, "timezone": "Asia/Colombo" }
+```
 
 | Method | Endpoint      | Role       | Purpose                                                                                                                                                                   |
 | ------ | ------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

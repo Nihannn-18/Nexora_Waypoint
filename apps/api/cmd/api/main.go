@@ -29,6 +29,7 @@ import (
 
 	"waypoint.lk/api/internal/auth"
 	"waypoint.lk/api/internal/catalog"
+	"waypoint.lk/api/internal/clock"
 	"waypoint.lk/api/internal/config"
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/media"
@@ -94,6 +95,12 @@ func run() error {
 	mediaHandler := media.NewHandler(storage, media.UnimplementedResolver{}, media.DenyAuthorizer{})
 	slog.Info("media storage ready", "backend", cfg.MediaStorage)
 
+	// The single API clock: the demo clock under DEMO_MODE, otherwise the wall
+	// clock, both in the business timezone. Orders' 16:00 cutoff and every
+	// countdown derive from it, so the seeded (past) demo day is "today".
+	clk := clock.New(cfg.DemoMode, cfg.DemoClockStart, cfg.Location())
+	slog.Info("clock ready", "demoMode", cfg.DemoMode, "now", clk.Now().Format(time.RFC3339))
+
 	// Auth boundary. Better Auth owns sessions in the web app; the Go API
 	// verifies the authenticated request. The verification mechanism is TBD, so
 	// SessionTokenVerifier is wired deliberately: it authenticates no one and
@@ -111,12 +118,10 @@ func run() error {
 	catalogService := catalog.NewService(catalogRepo)
 	catalogHandler := catalog.NewHandler(catalogService, authMiddleware)
 
-	// Orders: intake, retrieval and confirmation. The clock drives the 16:00
-	// cutoff; wallClock is a stopgap until the injected demo clock lands
-	// (fix/waypoint/backend-contract-gaps), so business time is already behind
-	// an interface rather than read inline.
+	// Orders: intake, retrieval and confirmation. The shared API clock drives the
+	// 16:00 cutoff, so the demo day is honoured like every other "now".
 	orderRepo := orders.NewPGRepository(db.Pool())
-	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), wallClock{})
+	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), clk)
 	orderHandler := orders.NewHandler(orderService, authMiddleware)
 
 	checks := []httpx.Check{
@@ -124,10 +129,11 @@ func run() error {
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
 	}
 
+	// Process start for /healthz uptime — operational, not business time.
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
@@ -170,23 +176,6 @@ func run() error {
 	slog.Info("shutdown complete")
 	return nil
 }
-
-// wallClock is the order service's Clock until the injected demo clock lands.
-// It reads the wall clock in the business timezone, so the 16:00 cutoff is
-// reckoned in Asia/Colombo rather than the container's local zone.
-type wallClock struct{}
-
-// Now returns the current time in the configured business timezone.
-func (wallClock) Now() time.Time { return time.Now().In(businessLocation) }
-
-// businessLocation is resolved once at start-up from the injected time/tzdata.
-var businessLocation = func() *time.Location {
-	loc, err := time.LoadLocation("Asia/Colombo")
-	if err != nil {
-		return time.UTC
-	}
-	return loc
-}()
 
 // queueCheck verifies the RabbitMQ broker accepts TCP connections. The AMQP
 // consumer is not wired yet, so reachability is all readiness can honestly say.

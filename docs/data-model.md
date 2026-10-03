@@ -164,7 +164,8 @@ allocation per `(order_id, route_date)` is the belt-and-braces version.
 > re-plan (DG-C) intentionally creates a second allocation for the same order and date; and
 > (2) where `route_date` comes from, since it lives on `route` and a partial unique index cannot
 > reference another table. Until the owner decides both, `DUPLICATE_ASSIGNMENT` in the validator
-> plus transactional confirmation is the only protection. The Orders foundation deliberately
+> plus transactional confirmation is the only protection; that needs a row lock on the order (or
+> `SERIALIZABLE`) so two concurrent confirms cannot both pass. The Orders foundation deliberately
 > leaves the `allocation` schema unchanged rather than guess.
 
 ---

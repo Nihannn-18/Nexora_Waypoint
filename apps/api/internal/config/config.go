@@ -37,6 +37,13 @@ type Config struct {
 	// delivery windows are wall-clock times in this zone.
 	Timezone string
 
+	// DemoMode runs the API on the demo clock instead of the wall clock, so the
+	// seeded (past) demo day is "today" for the judge walkthrough. DEMO_MODE.
+	DemoMode bool
+	// DemoClockStart is where the demo clock starts when DemoMode is on.
+	// DEMO_CLOCK_START, RFC 3339 with offset.
+	DemoClockStart time.Time
+
 	// MediaStorage selects the media backend: "local" or "s3". Defaults to
 	// "local" so Docker Compose works with no AWS configuration at all.
 	MediaStorage string
@@ -60,6 +67,10 @@ const (
 )
 
 const devJWTSecret = "dev-only-insecure-secret-change-me"
+
+// defaultDemoClockStart is Fri 25 Sep 2026 15:40 Asia/Colombo: twenty minutes
+// before the 16:00 cutoff on the Task 2B S1 planning day (CLAUDE.md §6).
+const defaultDemoClockStart = "2026-09-25T15:40:00+05:30"
 
 // Load reads the environment and validates it.
 func Load() (Config, error) {
@@ -88,6 +99,18 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("TOKEN_TTL_MINUTES must be a number: %w", err)
 	}
 	cfg.TokenTTL = time.Duration(ttlMinutes) * time.Minute
+
+	demoMode, err := strconv.ParseBool(getEnv("DEMO_MODE", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("DEMO_MODE must be true or false: %w", err)
+	}
+	cfg.DemoMode = demoMode
+
+	demoStart, err := time.Parse(time.RFC3339, getEnv("DEMO_CLOCK_START", defaultDemoClockStart))
+	if err != nil {
+		return Config{}, fmt.Errorf("DEMO_CLOCK_START must be RFC 3339, e.g. %s: %w", defaultDemoClockStart, err)
+	}
+	cfg.DemoClockStart = demoStart
 
 	if cfg.JWTSecret == "" {
 		if cfg.Env == "production" {

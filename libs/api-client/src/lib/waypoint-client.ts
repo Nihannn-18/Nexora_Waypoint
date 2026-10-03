@@ -22,6 +22,7 @@ import type {
   LoadItemRecord,
   LoginRequest,
   LoginResponse,
+  MetaResponse,
   Outlet,
   PlanningJob,
   PlanningResults,
@@ -64,6 +65,11 @@ export class WaypointClient {
 
   me(): Promise<LoginResponse['user']> {
     return this.http.get<LoginResponse['user']>('/me');
+  }
+
+  /** The API clock and demo mode. Public: needed before sign-in for countdowns. */
+  meta(): Promise<MetaResponse> {
+    return this.http.get<MetaResponse>('/meta', { anonymous: true });
   }
 
   /* --- Store Manager ----------------------------------------------------- */
