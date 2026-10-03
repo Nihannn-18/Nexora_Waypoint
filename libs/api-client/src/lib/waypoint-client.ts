@@ -13,7 +13,6 @@ import type {
   CustomerOrder,
   DeferralLogEntry,
   DeferralRequest,
-  DeliveryEvent,
   DeliveryEventRequest,
   DemandForecastPoint,
   DemandForecastQuery,
@@ -45,7 +44,27 @@ export interface SyncEventOutcome {
   readonly clientEventId: string;
   readonly status: SyncResult;
   readonly serverEventId?: string;
-  readonly message?: string;
+  /** Short, non-sensitive explanation on REJECTED / CONFLICT. */
+  readonly reason?: string;
+}
+
+/** The driver-visible context of one route leg (GET /legs/{id}). */
+export interface LegContext {
+  readonly legId: string;
+  readonly routeId: string;
+  readonly depotId: string;
+  readonly routeDate: IsoDate;
+  readonly toOutletId: string;
+  readonly status: string;
+  readonly orderIds: readonly string[];
+}
+
+/** Where to PUT the bytes of a POD image; `fileRef` goes on the event. */
+export interface MediaUpload {
+  readonly fileRef: string;
+  readonly uploadMode: 'inline' | 'presigned';
+  readonly uploadUrl: string;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 export class WaypointClient {
@@ -200,11 +219,24 @@ export class WaypointClient {
 
   /* --- Driver ---------------------------------------------------------- */
 
+  getLeg(legId: string): Promise<LegContext> {
+    return this.http.get<LegContext>(`/legs/${legId}`);
+  }
+
   recordDeliveryEvent(
     legId: string,
     body: DeliveryEventRequest,
-  ): Promise<DeliveryEvent> {
-    return this.http.post<DeliveryEvent>(`/legs/${legId}/events`, body);
+  ): Promise<SyncEventOutcome> {
+    return this.http.post<SyncEventOutcome>(`/legs/${legId}/events`, body);
+  }
+
+  /** Mints a server-side `pod/<legId>/…` key; never accepts a client key. */
+  createPodUpload(legId: string, contentType: string): Promise<MediaUpload> {
+    return this.http.post<MediaUpload>('/media/uploads', {
+      purpose: 'POD',
+      legId,
+      contentType,
+    });
   }
 
   /** Batch upload for events captured offline. Each is resolved independently. */
@@ -214,11 +246,7 @@ export class WaypointClient {
     return this.http.post('/sync/events', body);
   }
 
-  getSyncStatus(): Promise<{
-    pending: number;
-    synced: number;
-    failed: number;
-  }> {
+  getSyncStatus(): Promise<{ synced: number; conflicts: number }> {
     return this.http.get('/sync/status');
   }
 
