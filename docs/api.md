@@ -62,8 +62,36 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 | `GET`  | `/me`         | all                       | Current user with depot or outlet scope                                                                                                      |
 | `GET`  | `/outlets`    | dispatcher, store manager | Access, window, brand, district                                                                                                              |
 | `GET`  | `/vehicles`   | dispatcher                | Availability, capacity, temperature, depot, fuel                                                                                             |
+| `GET`  | `/items`      | all authenticated         | Catalogue SKUs: dimensions and temperature requirement. Read-only                                                                            |
+| `GET`  | `/items/{id}` | all authenticated         | One SKU by `itemId`, or by `?sku=`                                                                                                           |
 | `GET`  | `/healthz`    | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API                                 |
 | `GET`  | `/readyz`     | —                         | Readiness. Pings PostgreSQL and checks RabbitMQ is reachable; `503` and `dependencies: {database, queue}` (`up`/`down`) name the failing one |
+
+### `GET /items`
+
+Read-only catalogue. Returns every SKU the order and capacity rules are checked against.
+Optional query parameters: `brand` (FRESH|STYLE|TECH), `temperature` (AMBIENT|CHILLED|FROZEN)
+and `search` (case-insensitive match on SKU or name). Results are ordered by SKU.
+
+```json
+{
+  "items": [
+    {
+      "itemId": "a3f1…",
+      "sku": "FRESH-0001",
+      "name": "Red lentils 1kg",
+      "brand": "FRESH",
+      "unitWeightKg": 1.0,
+      "unitVolumeM3": 0.0012,
+      "temperatureRequirement": "AMBIENT"
+    }
+  ]
+}
+```
+
+An unknown `brand` or `temperature` value is a `400 VALIDATION_FAILED`. There is no write
+endpoint: the catalogue is reference data seeded from the authoritative source, not edited
+through the API.
 
 ---
 
