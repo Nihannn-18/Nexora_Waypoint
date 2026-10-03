@@ -37,6 +37,12 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Better Auth requires a secret when the auth route module is evaluated during
+# `next build`. This is a build-only placeholder: it is confined to the builder
+# stage and never copied to the runtime image, where the real BETTER_AUTH_SECRET
+# is injected from the environment.
+ENV BETTER_AUTH_SECRET=build-only-placeholder-not-used-at-runtime-000
+
 RUN npx nx build web
 
 # ---------------------------------------------------------------------------

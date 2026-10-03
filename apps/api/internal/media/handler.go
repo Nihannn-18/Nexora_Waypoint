@@ -30,8 +30,10 @@ const presignTTL = 300
 // internal/auth's full Identity, so AuthResolver adapts one to the other at the
 // composition root.
 type Principal struct {
-	UserID string
-	Role   string
+	UserID   string
+	Role     string
+	DepotID  string
+	OutletID string
 }
 
 // Resolver turns an authenticated HTTP request into a Principal.
@@ -45,10 +47,10 @@ type Resolver interface {
 // AuthResolver adapts internal/auth to the media Resolver interface. It is
 // wired in main; the media package never imports auth directly.
 //
-// loadFn is auth.IdentityLoader.Load wrapped to the minimal surface — the media
-// package only needs user id and role, not the whole identity.
+// Load is auth's identity load wrapped to the minimal surface media needs:
+// user id, role and the depot/outlet scope the authorizer checks.
 type AuthResolver struct {
-	Load func(r *http.Request) (userID, role string, err error)
+	Load func(r *http.Request) (userID, role, depotID, outletID string, err error)
 }
 
 // Resolve delegates to the injected loader.
@@ -56,11 +58,11 @@ func (a AuthResolver) Resolve(r *http.Request) (Principal, error) {
 	if a.Load == nil {
 		return Principal{}, ErrUnauthenticated
 	}
-	userID, role, err := a.Load(r)
+	userID, role, depotID, outletID, err := a.Load(r)
 	if err != nil {
 		return Principal{}, err
 	}
-	return Principal{UserID: userID, Role: role}, nil
+	return Principal{UserID: userID, Role: role, DepotID: depotID, OutletID: outletID}, nil
 }
 
 // UnimplementedResolver is the placeholder wired in until Better Auth lands. It
@@ -75,6 +77,10 @@ func (UnimplementedResolver) Resolve(*http.Request) (Principal, error) {
 
 // ErrUnauthenticated is returned when no valid session is present.
 var ErrUnauthenticated = errors.New("unauthenticated")
+
+// ErrForbidden is returned when the caller is authenticated but out of scope
+// for the requested media object.
+var ErrForbidden = errors.New("forbidden")
 
 // Authorizer decides whether a principal may touch a given media purpose and
 // owner. The real implementation checks depot/outlet/route scope. The default
@@ -98,6 +104,123 @@ func (DenyAuthorizer) AuthorizeUpload(context.Context, Principal, Purpose, strin
 // AuthorizeRead always denies.
 func (DenyAuthorizer) AuthorizeRead(context.Context, Principal, string) error {
 	return ErrUnauthenticated
+}
+
+// OwnerScope is the depot/outlet a media owner (order line or leg) belongs to.
+type OwnerScope struct {
+	DepotID  string
+	OutletID string
+	Found    bool
+}
+
+// OwnerReader resolves the business scope of a media owner. The database-backed
+// implementation is wired in main, so this package stays free of SQL.
+type OwnerReader interface {
+	// OrderItemScope resolves the depot/outlet of a shortfall's order line.
+	OrderItemScope(ctx context.Context, orderItemID string) (OwnerScope, error)
+	// LegScope resolves the depot/outlet of a POD's route leg.
+	LegScope(ctx context.Context, legID string) (OwnerScope, error)
+}
+
+// ScopeAuthorizer enforces role, purpose and depot/outlet scope for media.
+//
+// Uploads are restricted to the role that produces them (LOADER for a shortfall,
+// DRIVER for a POD) and to their own depot. Reads are allowed for the dispatcher
+// (both depots), the producing role within its depot, and a store manager for an
+// object belonging to its outlet. A wrong-purpose, cross-scope or unknown-owner
+// request is denied.
+type ScopeAuthorizer struct {
+	owners OwnerReader
+}
+
+// NewScopeAuthorizer builds a scope authorizer over an owner reader.
+func NewScopeAuthorizer(owners OwnerReader) ScopeAuthorizer {
+	return ScopeAuthorizer{owners: owners}
+}
+
+// AuthorizeUpload checks that the principal may upload for purpose/owner.
+func (a ScopeAuthorizer) AuthorizeUpload(ctx context.Context, p Principal, purpose Purpose, ownerID string) error {
+	scope, err := a.ownerScope(ctx, purpose, ownerID)
+	if err != nil {
+		return err
+	}
+	if !scope.Found {
+		return ErrForbidden
+	}
+	if !sameDepot(p, scope) {
+		return ErrForbidden
+	}
+	switch purpose {
+	case PurposeShortfall:
+		if p.Role != roleLoader {
+			return ErrForbidden
+		}
+	case PurposePOD:
+		if p.Role != roleDriver {
+			return ErrForbidden
+		}
+	default:
+		return ErrForbidden
+	}
+	return nil
+}
+
+// AuthorizeRead checks that the principal may read the object named by key.
+func (a ScopeAuthorizer) AuthorizeRead(ctx context.Context, p Principal, key string) error {
+	purpose, ownerID, err := ParseKey(key)
+	if err != nil {
+		return ErrForbidden
+	}
+	scope, err := a.ownerScope(ctx, purpose, ownerID)
+	if err != nil {
+		return err
+	}
+	if !scope.Found {
+		return ErrForbidden
+	}
+	switch p.Role {
+	case roleDispatcher:
+		return nil
+	case roleStoreManager:
+		if p.OutletID != "" && p.OutletID == scope.OutletID {
+			return nil
+		}
+		return ErrForbidden
+	case roleLoader, roleDriver:
+		if sameDepot(p, scope) {
+			return nil
+		}
+		return ErrForbidden
+	default:
+		return ErrForbidden
+	}
+}
+
+func (a ScopeAuthorizer) ownerScope(ctx context.Context, purpose Purpose, ownerID string) (OwnerScope, error) {
+	if a.owners == nil {
+		return OwnerScope{}, ErrForbidden
+	}
+	switch purpose {
+	case PurposeShortfall:
+		return a.owners.OrderItemScope(ctx, ownerID)
+	case PurposePOD:
+		return a.owners.LegScope(ctx, ownerID)
+	default:
+		return OwnerScope{}, ErrForbidden
+	}
+}
+
+// Media roles, mirroring domain.Role. Defined here so the media package does not
+// import the domain vocabulary just for four strings.
+const (
+	roleDispatcher   = "DISPATCHER"
+	roleLoader       = "LOADER"
+	roleDriver       = "DRIVER"
+	roleStoreManager = "STORE_MANAGER"
+)
+
+func sameDepot(p Principal, scope OwnerScope) bool {
+	return p.DepotID != "" && scope.DepotID != "" && p.DepotID == scope.DepotID
 }
 
 // Handler serves the media endpoints. It depends on a Storage, a Resolver and
@@ -205,11 +328,15 @@ func (h *Handler) PutBytes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := r.PathValue("key")
-	if _, err := safeKey(key); err != nil {
+	purpose, ownerID, err := ParseKey(key)
+	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid media key")
 		return
 	}
-	if err := h.authorizer.AuthorizeRead(r.Context(), principal, key); err != nil {
+	// This is an upload: authorise it as one. The key was minted by CreateUpload,
+	// which already authorised the intent; this re-checks the principal still has
+	// upload scope for the object it names.
+	if err := h.authorizer.AuthorizeUpload(r.Context(), principal, purpose, ownerID); err != nil {
 		writeAuthzError(w, err)
 		return
 	}

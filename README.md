@@ -41,9 +41,11 @@ cp .env.example .env
 docker compose up --build
 ```
 
-`JWT_SECRET` in `.env.example` already has a working local value, so no editing is required to
-start. It is **legacy scaffolding**: authentication moves to Better Auth in the web app, and
-the exact Better Auth → Go verification mechanism is still TBD (see `docs/api.md`).
+`BETTER_AUTH_SECRET` in `.env.example` has a working **local-only** placeholder, so no editing
+is required to start. Authentication is **Better Auth** in the Next.js app, which owns
+accounts, passwords and sessions; the Go API verifies the Better Auth bearer session token
+(reading the `session` table) and maps the user to `app_user` by email. Replace
+`BETTER_AUTH_SECRET` with `openssl rand -base64 32` before deploying (see `docs/api.md`).
 
 1. **Configure (optional).** The defaults work as-is. To change ports or the database
    password, edit `.env` after copying it.
@@ -88,7 +90,7 @@ deployment decision**, not a Challenge Booklet requirement.
 ### With Docker — the one command a judge needs
 
 ```bash
-cp .env.example .env     # JWT_SECRET has a local default; it is legacy auth scaffolding
+cp .env.example .env     # BETTER_AUTH_SECRET has a local-only placeholder; change it for prod
 docker compose up --build
 ```
 
@@ -384,8 +386,9 @@ Not yet verified: **the Docker image builds**. The scaffold was prepared in an e
 without a Docker daemon, so `docker compose up --build` has not been executed end to end.
 Run it once locally before relying on it.
 
-Not yet built: database schema and migrations, seed data, authentication, the four role
-screen sets, the planning engine and worker, the offline outbox, and realtime progress.
+Not yet built: the four role screen sets beyond their shells, the planning worker transport,
+the offline outbox, and realtime progress. Authentication (Better Auth in the web app plus Go
+bearer-session verification and media authorization) **is** implemented; see `docs/api.md`.
 
 ---
 

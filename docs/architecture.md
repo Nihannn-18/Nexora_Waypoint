@@ -28,7 +28,7 @@ and an AI tool disclosure.
 │                          Go 1.24 REST API                          │
 │                                                                    │
 │  httpx         router, strict JSON decoding, one error shape       │
-│  auth          verify session (TBD), RBAC, depot/outlet scope       │
+│  auth          verify Better Auth bearer session, RBAC, scope       │
 │  orders        lifecycle, 16:00 cutoff, aggregate totals           │
 │  planning      ▸ ConstraintValidator — the only feasibility rule   │
 │                ▸ TripTimeCalculator — the official formula         │
@@ -52,7 +52,23 @@ and an AI tool disclosure.
 
 ---
 
-## The five rules this architecture is built around
+## Authentication boundary
+
+Better Auth runs in the Next.js app and owns accounts, passwords and sessions. A successful
+sign-in returns a session token in the `set-auth-token` response header and sets the Better Auth
+session cookie. The web client stores that token via the existing API-client token store and
+sends it as `Authorization: Bearer <session-token>` on every `/api/v1` call.
+
+The Go API does not issue or store credentials. `internal/auth` parses the token (splitting the
+`token.signature` form Better Auth emits to the stored `session.token`) and
+`internal/authstore` reads the Better Auth `session` row, checks `expiresAt`, and maps the user
+to `app_user` **by email**. `internal/auth` then supplies role and depot/outlet scope to the
+same RBAC middleware every handler already uses. Missing/invalid/expired → `401`; a valid
+session with no active `app_user` → `403`. Client-supplied identity headers are never trusted.
+
+Media endpoints resolve the same identity and enforce role, purpose and depot/outlet scope
+before any byte moves. The four demo accounts are seeded through Better Auth's own sign-up API
+(idempotently) and mapped to the Go seed's `app_user` rows by email.
 
 **PostgreSQL stores facts, not conclusions.** Remaining capacity and remaining minutes are
 derived from a route and its current orders on every read. Persisting them would mean a

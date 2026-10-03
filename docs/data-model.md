@@ -15,17 +15,19 @@ stale number that looks authoritative is worse than no number.
   (adds `load_item.photo_ref`) and `00003_order_service_history.sql` (adds the deferral
   history columns to `customer_order`) and `00004_load_item_unique.sql` (adds
   `UNIQUE (route_id, order_item_id)` on `load_item`) and `00005_notification_unique.sql` (adds
-  `UNIQUE (user_id, type, reference)` on `notification`). A new change is a new numbered file,
-  never an edit to an applied one.
+  `UNIQUE (user_id, type, reference)` on `notification`) and `00006_better_auth.sql` (the
+  Better Auth owned tables). A new change is a new numbered file, never an edit to an applied
+  one.
 - **Reference seed:** the five operational CSVs are copied into
   `apps/api/internal/seed/data/` and embedded with `//go:embed` (`apps/api/internal/seed`).
   Seeding runs after migrations and is idempotent (upsert on the natural key). It is seeded
   from Go, not SQL — the numbered migrations are schema changes only, never reference inserts.
 - **Source of truth for the data:** `docs/general-data/` remains the human-supplied original;
   the copies under `seed/data/` are what the binary embeds. Do not edit the copies by hand.
-- **Demo accounts:** the seed upserts the four `app_user` rows (role and depot/outlet scope
-  only; Better Auth owns credentials). `user_id` is a stable placeholder (`seed-dispatcher`, …)
-  that a re-seed never rewrites on an existing email, so the Better Auth link can replace it.
+- **Demo accounts:** the Go seed upserts the four `app_user` rows (role and depot/outlet scope;
+  Better Auth owns credentials). `user_id` is a stable placeholder (`seed-dispatcher`, …).
+  The web app's idempotent seed creates the matching Better Auth `user`/`account` rows and the
+  two sides are joined by **email**, so `user_id` need not be the Better Auth id.
 - **Demo day (Task 2B S1):** the two `task2b_peak_day_*.csv` files are embedded and seeded:
   85 orders (`order_ref` is the order number, status `CONFIRMED`, ordered Fri 25 Sep for
   Sat 26 Sep) and a `vehicle_daily_availability` row for all 60 vehicles on Sat 26 Sep. The
@@ -86,7 +88,26 @@ planning, transient:
 | `outlet`   | `outlet_id` PK, `name`, `brand`, `district`, `depot_id` FK, `dock_type`, `parking_constraint`, `mall_window_open`, `mall_window_close`, `window_open_time`, `window_close_time` | OUT001–OUT120, from `outlets.csv`. `parking_constraint` is one column with three values: `normal`, `van_only` (no trucks) or `mall_dock` (the mall window applies). `mall_window` arrives as `HH:MM-HH:MM` and is split on load; blank outside malls. `name` is seed-generated — the CSV has none. `dock_type` drives the service allowance lookup.                   |
 | `vehicle`  | `vehicle_id` PK, `type`, `temp`, `weight_cap_kg`, `volume_cap_m3`, `fuel_type`, `km_per_l`, `weekly_fuel_quota_l`, `depot_id` FK                                                | VEH001–VEH060, from `vehicles.csv`: 12 reefer trucks, 40 dry-box trucks, 8 vans (4 refrigerated). Day-to-day availability lives in `vehicle_daily_availability`, not here.                                                                                                                                                                                            |
 | `item`     | `item_id` PK, `sku` UNIQUE, `brand`, `unit_weight_kg`, `unit_volume_m3`, `temperature_requirement`                                                                              | Real SKUs, not aggregates.                                                                                                                                                                                                                                                                                                                                            |
-| `app_user` | `user_id` PK, `email` UNIQUE, `role`, `depot_id` nullable, `outlet_id` nullable                                                                                                 | Identity, credentials and sessions are owned by **Better Auth** in the Next.js app; this table stores only role and depot/outlet scope. The Better Auth → Go verification mechanism is TBD. Nullable scope columns: a dispatcher has a depot and no outlet, a store manager the reverse. Enforced server-side on every query, never trusted from a token claim alone. |
+| `app_user` | `user_id` PK, `email` UNIQUE, `role`, `depot_id` nullable, `outlet_id` nullable                                                                                                 | Identity, credentials and sessions are owned by **Better Auth** in the Next.js app; this table stores only role and depot/outlet scope. The Better Auth → Go boundary is the **email**: Better Auth's `user.email` maps to `app_user.email` (UNIQUE). The Go verifier reads the Better Auth `session` table, resolves the user, and looks up the matching active `app_user`. Nullable scope columns: a dispatcher has a depot and no outlet, a store manager the reverse. Enforced server-side on every query, never trusted from a token claim alone. |
+
+### Better Auth owned tables (`00006_better_auth.sql`)
+
+Better Auth, running in the Next.js app, writes these four tables. The Go API **reads**
+`session` and `user` only, during request verification; it never writes them. The SQL is the
+exact output of Better Auth's own migration generator for the installed version, so its
+runtime schema check passes. Table and column names are the camelCase identifiers Better Auth
+uses (quoted in SQL).
+
+| Table          | Key columns                                                                                                                                    | Notes                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `user`         | `id` PK, `email` UNIQUE, `name`, `emailVerified`, `image`, `createdAt`, `updatedAt`                                                            | The account. Maps to `app_user` by `email`.                                                |
+| `session`      | `id` PK, `token` UNIQUE, `userId` FK → `user`, `expiresAt`, `ipAddress`, `userAgent`, `createdAt`, `updatedAt`                                  | `token` is the raw session token; the cookie/bearer value is `token.signature`. The Go verifier splits on `.` and looks `token` up, requiring `expiresAt > now()`. |
+| `account`      | `id` PK, `accountId`, `providerId`, `userId` FK → `user`, `password`, `accessToken`, `refreshToken`, …                                          | Credential (email/password) rows use `providerId = 'credential'`; `password` holds the hash. |
+| `verification` | `id` PK, `identifier`, `value`, `expiresAt`, `createdAt`, `updatedAt`                                                                          | Email-verification / reset tokens. Unused while verification is disabled.                  |
+
+The four demo accounts are provisioned through Better Auth's own sign-up API, not by writing
+password hashes by hand (see `apps/web/src/lib/seed-auth.ts`). `app_user` rows are seeded by
+the Go seed and map to them by email.
 
 ---
 

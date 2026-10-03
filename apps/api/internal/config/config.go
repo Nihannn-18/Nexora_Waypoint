@@ -23,14 +23,6 @@ type Config struct {
 	DatabaseURL string
 	// RabbitURL is the AMQP URL for the planning job queue.
 	RabbitURL string
-	// JWTSecret is legacy scaffolding. Authentication is being moved to Better
-	// Auth in the web app; the Go API will verify the authenticated request
-	// rather than issue tokens. The exact verification mechanism is TBD, so
-	// this field is retained only until that decision is made.
-	JWTSecret string
-	// TokenTTL is legacy scaffolding, tied to JWTSecret and pending the same
-	// Better Auth decision.
-	TokenTTL time.Duration
 	// CORSOrigin is the web origin allowed to call this API.
 	CORSOrigin string
 	// Timezone the business day is reckoned in. The 16:00 cutoff and all
@@ -66,8 +58,6 @@ const (
 	StorageS3 = "s3"
 )
 
-const devJWTSecret = "dev-only-insecure-secret-change-me"
-
 // defaultDemoClockStart is Fri 25 Sep 2026 15:40 Asia/Colombo: twenty minutes
 // before the 16:00 cutoff on the Task 2B S1 planning day (CLAUDE.md §6).
 const defaultDemoClockStart = "2026-09-25T15:40:00+05:30"
@@ -78,7 +68,6 @@ func Load() (Config, error) {
 		Env:         getEnv("APP_ENV", "development"),
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://waypoint:waypoint@localhost:5432/waypoint?sslmode=disable"),
 		RabbitURL:   getEnv("RABBITMQ_URL", "amqp://waypoint:waypoint@localhost:5672/"),
-		JWTSecret:   getEnv("JWT_SECRET", ""),
 		CORSOrigin:  getEnv("CORS_ORIGIN", "http://localhost:3000"),
 		Timezone:    getEnv("TZ", "Asia/Colombo"),
 
@@ -94,12 +83,6 @@ func Load() (Config, error) {
 	}
 	cfg.Port = port
 
-	ttlMinutes, err := strconv.Atoi(getEnv("TOKEN_TTL_MINUTES", "720"))
-	if err != nil {
-		return Config{}, fmt.Errorf("TOKEN_TTL_MINUTES must be a number: %w", err)
-	}
-	cfg.TokenTTL = time.Duration(ttlMinutes) * time.Minute
-
 	demoMode, err := strconv.ParseBool(getEnv("DEMO_MODE", "false"))
 	if err != nil {
 		return Config{}, fmt.Errorf("DEMO_MODE must be true or false: %w", err)
@@ -111,13 +94,6 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("DEMO_CLOCK_START must be RFC 3339, e.g. %s: %w", defaultDemoClockStart, err)
 	}
 	cfg.DemoClockStart = demoStart
-
-	if cfg.JWTSecret == "" {
-		if cfg.Env == "production" {
-			return Config{}, errors.New("JWT_SECRET must be set when APP_ENV=production")
-		}
-		cfg.JWTSecret = devJWTSecret
-	}
 
 	if _, err := time.LoadLocation(cfg.Timezone); err != nil {
 		return Config{}, fmt.Errorf("TZ %q is not a known timezone: %w", cfg.Timezone, err)

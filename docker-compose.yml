@@ -95,8 +95,6 @@ services:
       # network. They are not reachable from the judge's browser.
       DATABASE_URL: postgres://${POSTGRES_USER:-waypoint}:${POSTGRES_PASSWORD:-waypoint}@postgres:5432/${POSTGRES_DB:-waypoint}?sslmode=disable
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-waypoint}:${RABBITMQ_PASSWORD:-waypoint}@rabbitmq:5672/
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
-      TOKEN_TTL_MINUTES: ${TOKEN_TTL_MINUTES:-720}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       # Media defaults to the local filesystem so Compose needs no AWS. Point
       # MEDIA_ROOT at the named volume below; `docker compose down` keeps the
@@ -139,11 +137,23 @@ services:
         # http://api:8080, which only resolves inside this network.
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080/api/v1}
     restart: unless-stopped
+    # Wait for the API to be healthy: it applies the Goose migrations (including
+    # the Better Auth tables) before it starts listening, so the web app's demo-
+    # account seed never races the schema.
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       TZ: ${TZ:-Asia/Colombo}
+      # Better Auth owns authentication in the web app and writes its own tables
+      # in the same database, so the web service needs the connection string and
+      # the signing secret. The Go API only reads the session table; it needs
+      # neither. Never commit BETTER_AUTH_SECRET — .env is gitignored.
+      DATABASE_URL: postgres://${POSTGRES_USER:-waypoint}:${POSTGRES_PASSWORD:-waypoint}@postgres:5432/${POSTGRES_DB:-waypoint}?sslmode=disable
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set — copy .env.example to .env}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:3000}
     ports:
       - '${WEB_PORT:-3000}:3000'
 

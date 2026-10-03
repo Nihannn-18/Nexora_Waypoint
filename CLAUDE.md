@@ -171,10 +171,13 @@ Next.js ── Better Auth (authentication · sessions · identity)
 
 **Better Auth, in the Next.js app, owns authentication, sessions and identity.** The Go API
 does **not** issue or own credentials. It verifies the authenticated request, then enforces
-RBAC and per-depot/outlet/route scope and all business rules. The exact Better Auth → Go
-verification mechanism (for example, session-token verification) is **TBD** and must be
-documented before implementation. Do not invent a bridge. Do not introduce Drizzle, Prisma or
-Supabase merely because Better Auth supports them. No auth code is implemented in this phase.
+RBAC and per-depot/outlet/route scope and all business rules. The mechanism is **implemented**:
+the web client sends Better Auth's session token as `Authorization: Bearer <session-token>`,
+`internal/auth.BetterAuthSessionVerifier` reads the session from Better Auth's `session` table
+(checking expiry) and `internal/authstore` maps the user to `app_user` **by email**. A
+missing/invalid/expired session is `401`; a valid session with no active `app_user` is `403`.
+Client-supplied identity headers are never trusted. Do not invent a second bridge. Do not
+introduce Drizzle, Prisma or Supabase merely because Better Auth supports them.
 
 ### Target Go package layout
 
@@ -184,7 +187,7 @@ packages depend inward on `domain` and `planning`, never on `httpx`.
 - `clock` — `Clock` interface, real and demo implementations
 - `store` — `pgxpool` setup, embedded migrations, transaction helper
 - `seed` — Embedded reference CSVs + demo-day seeding, idempotent
-- `auth` — Verify the authenticated request from Better Auth, `RequireRole` middleware, scope checks. Authentication/session is owned by Better Auth in the web app; the exact Go verification mechanism is TBD (see §4 Authentication boundary).
+- `auth` — Verify the authenticated request from Better Auth, `RequireRole` middleware, scope checks. Authentication/session is owned by Better Auth in the web app; the Go bearer-session verification is implemented (see §4 Authentication boundary).
 - `catalog` — Outlets, vehicles, items, calendar, district travel, service allowance
 - `orders` — Order lifecycle, cutoff, order numbers, queue, close
 - `constraint` — **The validator.** Pure functions over loaded state → `[]domain.ConstraintResult`
@@ -581,7 +584,7 @@ endpoint exists.
 
 1. `clock`, `store`, migrations for the full schema in `docs/data-model.md`
 2. `seed`: reference CSVs, four accounts, demo day S1
-3. `auth`: verify the Better Auth session, `RequireRole`, scope (mechanism TBD)
+3. `auth`: verify the Better Auth bearer session, `RequireRole`, scope (implemented)
 4. `catalog` + `orders`: create, confirm, queue, close, cutoff
 5. `constraint`: the validator with a test per rule
 6. `planning`: engine + prioritisation, job API, results; then validate / confirm

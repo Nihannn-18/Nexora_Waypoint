@@ -51,7 +51,7 @@ Sections below marked _[see `CLAUDE.md`]_ are summarized here for checklist comp
 - `.prettierrc` — Prettier; `singleQuote: true`. For Go, `nx fmt api` runs `gofmt`.
 - `tsconfig.base.json` — strict TS; path aliases `@waypoint/shared-types`, `@waypoint/api-client`, `@waypoint/ui`.
 - `nx.json` / `apps/*/project.json` — Nx targets; Go is wrapped with `nx:run-commands` (no third-party Go plugin).
-- `.env.example` — environment template. Local dev: `cp .env.example .env`. Never commit `.env`. The current `JWT_SECRET` entry is **legacy**: authentication is moving to Better Auth and the Go verification mechanism is **TBD** — treat it as pending the auth decision, not a settled contract.
+- `.env.example` — environment template. Local dev: `cp .env.example .env`. Never commit `.env`. Authentication is **Better Auth** in the web app; it needs `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` and (at runtime) `DATABASE_URL`. The Go API verifies the Better Auth bearer session and needs no signing secret. `JWT_SECRET` is no longer used.
 
 **Conventions — the fuller wording lives in `CLAUDE.md`:** Go backend `@CLAUDE.md` §10 · Frontend `@CLAUDE.md` §11 · Testing `@CLAUDE.md` §12 · Git workflow `@CLAUDE.md` §13 · API conventions `@CLAUDE.md` §9. Design tokens and touch-target rules are in §11 and must be followed for screen fidelity.
 
@@ -220,7 +220,7 @@ Next.js ── Better Auth (authentication · sessions · identity)
                 └─> Neon PostgreSQL
 ```
 
-**Better Auth owns authentication, session and identity in the Next.js app.** Go does **not** issue or own credentials; it verifies the authenticated request, then enforces RBAC and per-depot/outlet/route scope and all business rules. The exact Better Auth → Go verification mechanism (e.g. session-token verification) is **TO BE DECIDED** and must be documented before any implementation. Do not invent a bridge. Do not introduce Drizzle, Prisma or Supabase merely because Better Auth supports them. Auth is guidance-only for now: no auth code is implemented in this phase.
+**Better Auth owns authentication, session and identity in the Next.js app.** Go does **not** issue or own credentials; it verifies the authenticated request, then enforces RBAC and per-depot/outlet/route scope and all business rules. The mechanism is implemented: the web client sends Better Auth's session token as `Authorization: Bearer <session-token>`, the Go verifier reads the session from Better Auth's `session` table (checking expiry) and maps the user to `app_user` by email (`401` missing/invalid/expired; `403` valid session with no active `app_user`). Client-supplied identity headers are never trusted. Do not introduce Drizzle, Prisma or Supabase merely because Better Auth supports them.
 
 **Existing repo:** Nx 23/npm; Node 22; Next.js 16 App Router, React 19, Tailwind v4, strict TypeScript. Preserve existing workspace, CI, shared contracts, API client, design tokens, route shells, Go config/router/health/trip-time; verify actual files before assuming a module is finished.
 

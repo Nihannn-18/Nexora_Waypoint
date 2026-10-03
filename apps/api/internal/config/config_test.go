@@ -8,8 +8,8 @@ import (
 // clearEnv blanks every variable Load reads so each case starts from defaults.
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"APP_ENV", "DATABASE_URL", "RABBITMQ_URL", "JWT_SECRET", "CORS_ORIGIN", "TZ",
-		"MEDIA_STORAGE", "MEDIA_ROOT", "S3_BUCKET", "AWS_REGION", "PORT", "TOKEN_TTL_MINUTES",
+	for _, k := range []string{"APP_ENV", "DATABASE_URL", "RABBITMQ_URL", "CORS_ORIGIN", "TZ",
+		"MEDIA_STORAGE", "MEDIA_ROOT", "S3_BUCKET", "AWS_REGION", "PORT",
 		"DEMO_MODE", "DEMO_CLOCK_START"} {
 		t.Setenv(k, "")
 	}
@@ -58,7 +58,6 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		name string
 		env  map[string]string
 	}{
-		{"production without secret", map[string]string{"APP_ENV": "production"}},
 		{"non-numeric port", map[string]string{"PORT": "eighty"}},
 		{"unknown timezone", map[string]string{"TZ": "Mars/Olympus"}},
 		{"unknown media backend", map[string]string{"MEDIA_STORAGE": "ftp"}},
@@ -80,10 +79,11 @@ func TestLoadRejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestLoadProductionWithSecret(t *testing.T) {
+// TestLoadProductionNoSecret proves authentication no longer depends on a Go
+// secret: Better Auth owns credentials, so a production API starts without one.
+func TestLoadProductionNoSecret(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("APP_ENV", "production")
-	t.Setenv("JWT_SECRET", "x")
 	if _, err := Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}

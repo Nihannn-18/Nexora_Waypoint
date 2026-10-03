@@ -40,6 +40,9 @@ type Identity struct {
 	// Email is the account address (app_user.email). Optional in the value;
 	// present when the verifier loaded it.
 	Email string
+	// Name is the display name, carried from the Better Auth user row. Optional;
+	// app_user has no name column, so the store never supplies it.
+	Name string
 	// Role is one of the four domain roles.
 	Role domain.Role
 	// DepotID is the caller's home depot (app_user.depot_id), empty when the
@@ -253,6 +256,9 @@ func (l *IdentityLoader) Load(ctx context.Context, h *RequestHeader) (Identity, 
 	// Prefer store scope; preserve any email the verifier supplied.
 	if full.Email == "" {
 		full.Email = partial.Email
+	}
+	if full.Name == "" {
+		full.Name = partial.Name
 	}
 	return full, nil
 }

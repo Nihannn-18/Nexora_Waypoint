@@ -94,6 +94,8 @@ All AWS-specific values arrive through the environment; nothing is hard-coded.
 | --------------- | ------------------------------------- | ------------- |
 | `DATABASE_URL`  | Postgres connection (Neon or compose) | compose url   |
 | `RABBITMQ_URL`  | AMQP connection                       | compose url   |
+| `BETTER_AUTH_SECRET` | Better Auth signing secret (web app) | local placeholder |
+| `BETTER_AUTH_URL`    | Public origin the web app signs in against | `http://localhost:3000` |
 | `MEDIA_STORAGE` | `local` or `s3`                       | `local`       |
 | `MEDIA_ROOT`    | Filesystem root when `local`          | `/data/media` |
 | `S3_BUCKET`     | Private bucket name when `s3`         | —             |
@@ -123,8 +125,18 @@ encryption.
 1. Provision an EC2 instance and an Elastic IP.
 2. Create a private S3 bucket (`securing-s3-buckets` skill covers the hardening).
 3. Attach an instance role with the least-privilege policy above.
-4. Point `DATABASE_URL` at Neon, set `MEDIA_STORAGE=s3`, `S3_BUCKET`, `AWS_REGION`.
-5. Install Nginx; proxy `/` to the web app and `/api/` to the Go API.
+4. Point `DATABASE_URL` at Neon, set `MEDIA_STORAGE=s3`, `S3_BUCKET`, `AWS_REGION`, and set
+   `BETTER_AUTH_SECRET` (a strong random value) and `BETTER_AUTH_URL` to the public origin.
+5. Install Nginx. Route by prefix, keeping Better Auth and the Go API on distinct paths on the
+   same public origin:
+   - `/api/auth/` → the Next.js web app (Better Auth's own routes),
+   - `/api/v1/` → the Go API,
+   - `/` → the Next.js web app.
+
+   Order matters: a blanket `/api/` rule pointed at the Go API would swallow Better Auth's
+   `/api/auth/*` routes. The web client calls Better Auth same-origin at `/api/auth/*` and sends
+   the resulting bearer token to the Go API at `/api/v1/*`. `BETTER_AUTH_TRUSTED_ORIGINS` must
+   include the public origin.
 6. Build and run the API and web images on the instance.
 
 ### Fallback procedure
