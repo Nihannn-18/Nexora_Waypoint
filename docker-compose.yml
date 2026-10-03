@@ -154,6 +154,10 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set — copy .env.example to .env}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:3000}
+      # Optional: hosted Better Auth dashboard (`dash()`) API key. Empty leaves
+      # the dashboard connection disabled; sign-in and Go verification are
+      # unaffected.
+      BETTER_AUTH_API_KEY: ${BETTER_AUTH_API_KEY:-}
     ports:
       - '${WEB_PORT:-3000}:3000'
 

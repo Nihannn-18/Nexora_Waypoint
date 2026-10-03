@@ -90,16 +90,17 @@ Next.js        Go API
 
 All AWS-specific values arrive through the environment; nothing is hard-coded.
 
-| Variable        | Purpose                               | Local default |
-| --------------- | ------------------------------------- | ------------- |
-| `DATABASE_URL`  | Postgres connection (Neon or compose) | compose url   |
-| `RABBITMQ_URL`  | AMQP connection                       | compose url   |
-| `BETTER_AUTH_SECRET` | Better Auth signing secret (web app) | local placeholder |
-| `BETTER_AUTH_URL`    | Public origin the web app signs in against | `http://localhost:3000` |
-| `MEDIA_STORAGE` | `local` or `s3`                       | `local`       |
-| `MEDIA_ROOT`    | Filesystem root when `local`          | `/data/media` |
-| `S3_BUCKET`     | Private bucket name when `s3`         | —             |
-| `AWS_REGION`    | Region of the bucket when `s3`        | —             |
+| Variable              | Purpose                                              | Local default           |
+| --------------------- | ---------------------------------------------------- | ----------------------- |
+| `DATABASE_URL`        | Postgres connection (Neon or compose)                | compose url             |
+| `RABBITMQ_URL`        | AMQP connection                                      | compose url             |
+| `BETTER_AUTH_SECRET`  | Better Auth signing secret (web app)                 | local placeholder       |
+| `BETTER_AUTH_URL`     | Public origin the web app signs in against           | `http://localhost:3000` |
+| `BETTER_AUTH_API_KEY` | Optional hosted Better Auth dashboard (`dash()`) key | unset                   |
+| `MEDIA_STORAGE`       | `local` or `s3`                                      | `local`                 |
+| `MEDIA_ROOT`          | Filesystem root when `local`                         | `/data/media`           |
+| `S3_BUCKET`           | Private bucket name when `s3`                        | —                       |
+| `AWS_REGION`          | Region of the bucket when `s3`                       | —                       |
 
 **Credentials are never configured here.** The Go API uses the standard AWS SDK
 chain, so on EC2 it reads an **instance role**; locally, SSO or environment
@@ -137,6 +138,7 @@ encryption.
    `/api/auth/*` routes. The web client calls Better Auth same-origin at `/api/auth/*` and sends
    the resulting bearer token to the Go API at `/api/v1/*`. `BETTER_AUTH_TRUSTED_ORIGINS` must
    include the public origin.
+
 6. Build and run the API and web images on the instance.
 
 ### Fallback procedure

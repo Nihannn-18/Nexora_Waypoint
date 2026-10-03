@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { nextCookies } from 'better-auth/next-js';
 import { bearer } from 'better-auth/plugins/bearer';
+import { dash } from '@better-auth/infra';
 import { Pool } from 'pg';
 
 /**
@@ -19,6 +20,11 @@ import { Pool } from 'pg';
  * `DATABASE_URL`, `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are required at
  * runtime. `BETTER_AUTH_SECRET` is never given a default: a placeholder secret
  * in production is a security bug, so the process should fail loudly instead.
+ *
+ * `dash()` connects this auth server to the hosted Better Auth dashboard using
+ * `BETTER_AUTH_API_KEY` (it defaults `apiUrl`/`kvUrl` to Better Auth's hosted
+ * endpoints). It is an observability/connection plugin and does not change the
+ * sign-in or session behaviour the Go API verifies.
  */
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -55,5 +61,5 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 12,
     updateAge: 60 * 60,
   },
-  plugins: [bearer(), nextCookies()],
+  plugins: [bearer(), dash(), nextCookies()],
 });

@@ -42,6 +42,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # stage and never copied to the runtime image, where the real BETTER_AUTH_SECRET
 # is injected from the environment.
 ENV BETTER_AUTH_SECRET=build-only-placeholder-not-used-at-runtime-000
+ENV BETTER_AUTH_API_KEY=build-only-placeholder-not-used-at-runtime
 
 RUN npx nx build web
 

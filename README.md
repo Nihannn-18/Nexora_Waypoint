@@ -47,6 +47,10 @@ accounts, passwords and sessions; the Go API verifies the Better Auth bearer ses
 (reading the `session` table) and maps the user to `app_user` by email. Replace
 `BETTER_AUTH_SECRET` with `openssl rand -base64 32` before deploying (see `docs/api.md`).
 
+`BETTER_AUTH_API_KEY` is **optional**: it connects the auth server to the hosted Better Auth
+dashboard (`dash()` in `apps/web/src/lib/auth.ts`). Leave it unset for the normal Hackathon
+flow — sign-in and Go verification do not use it.
+
 1. **Configure (optional).** The defaults work as-is. To change ports or the database
    password, edit `.env` after copying it.
 2. **Start the stack.** The command above builds and starts PostgreSQL 17, RabbitMQ 4, the Go
