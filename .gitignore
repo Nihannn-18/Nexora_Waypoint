@@ -61,3 +61,4 @@ apps/api/waypoint-worker
 # Competition datasets: large, and the booklet forbids redistributing them.
 # Seed data derived for the demo day belongs in the repo; raw supplied CSVs do not.
 /data/raw/
+.neon

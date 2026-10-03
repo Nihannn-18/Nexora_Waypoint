@@ -64,6 +64,29 @@ npx nx dev web      # → http://localhost:3000
 npx nx serve api    # → http://localhost:8080
 ```
 
+### Neon (managed Postgres and agent tooling)
+
+The repository is linked to a Neon project, so a developer can build against a managed
+Postgres branch instead of the local container. The Neon CLI is the entry point:
+
+```bash
+npm i -g neon@latest && neon login   # one-off; opens a browser
+neon skills -y                       # Neon agent skills for coding agents
+neon mcp -y                          # Neon MCP server for coding agents
+neon link --project-id tiny-wildflower-59177855 --branch production -y
+neon config init                     # writes neon.ts
+neon deploy                          # apply neon.ts and pull the branch's env
+```
+
+- `.neon` holds the link (org, project, branch) and is git-ignored.
+- `neon.ts` is the branch config / infrastructure-as-code file. It declares the Neon
+  services a branch should have; `neon deploy` (alias for `neon config apply`) reconciles
+  the linked branch to it. `neon config plan` previews the diff first.
+- `neon link` and `neon deploy` pull the branch's Neon variables into `.env.local`
+  (`DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `NEON_BRANCH`), which is git-ignored.
+- The Neon skill lives at `.agents/skills/neon/`; the MCP server is registered in the
+  project-level `opencode.json` and signs in on first use.
+
 ---
 
 ## Seeded accounts
@@ -232,6 +255,8 @@ Run from the repository root.
 | `npx nx graph`                     | Project dependency graph in the browser      |
 | `npx nx fmt api` / `fmt-check api` | `gofmt -w .` / fail if unformatted           |
 | `npx nx tidy api`                  | `go mod tidy`                                |
+| `neon status`                      | Print the linked branch's live Neon config   |
+| `neon deploy`                      | Apply `neon.ts` and pull the branch's env    |
 
 Nx has no official Go plugin. Rather than depend on a third-party one days before a
 deadline, `apps/api/project.json` wraps the Go toolchain in `nx:run-commands`: the commands
