@@ -173,3 +173,33 @@ const (
 	// ParkingMallDock: access is limited to the mall's fixed delivery window.
 	ParkingMallDock ParkingConstraint = "MALL_DOCK"
 )
+
+// VehicleType mirrors vehicles.csv `type`. A van is required for a van_only
+// outlet; a truck may never serve one.
+type VehicleType string
+
+const (
+	VehicleTruck VehicleType = "TRUCK"
+	VehicleVan   VehicleType = "VAN"
+)
+
+// VehicleTempClass mirrors vehicles.csv `temp`. A REEFER may also carry ambient
+// goods; an AMBIENT vehicle may never carry chilled or frozen.
+type VehicleTempClass string
+
+const (
+	VehicleTempAmbient VehicleTempClass = "AMBIENT"
+	VehicleTempReefer  VehicleTempClass = "REEFER"
+)
+
+// String returns the wire value, so it can be used directly in messages.
+func (v VehicleTempClass) String() string { return string(v) }
+
+// DockType mirrors outlets.csv `dock_type`. Drives the service-allowance lookup.
+type DockType string
+
+const (
+	DockRearDock DockType = "REAR_DOCK"
+	DockStreet   DockType = "STREET"
+	DockMallBay  DockType = "MALL_BAY"
+)
