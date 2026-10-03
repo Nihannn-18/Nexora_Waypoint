@@ -90,14 +90,16 @@ Next.js        Go API
 
 All AWS-specific values arrive through the environment; nothing is hard-coded.
 
-| Variable        | Purpose                               | Local default |
-| --------------- | ------------------------------------- | ------------- |
-| `DATABASE_URL`  | Postgres connection (Neon or compose) | compose url   |
-| `RABBITMQ_URL`  | AMQP connection                       | compose url   |
-| `MEDIA_STORAGE` | `local` or `s3`                       | `local`       |
-| `MEDIA_ROOT`    | Filesystem root when `local`          | `/data/media` |
-| `S3_BUCKET`     | Private bucket name when `s3`         | —             |
-| `AWS_REGION`    | Region of the bucket when `s3`        | —             |
+| Variable             | Purpose                                    | Local default  |
+| -------------------- | ------------------------------------------ | -------------- |
+| `DATABASE_URL`       | Postgres connection (Neon or compose)      | compose url    |
+| `RABBITMQ_URL`       | AMQP connection                            | compose url    |
+| `SESSION_TTL`        | Login session lifetime (Go duration)       | `12h`          |
+| `DEMO_SEED_PASSWORD` | Password for the four seeded demo accounts | `waypoint2026` |
+| `MEDIA_STORAGE`      | `local` or `s3`                            | `local`        |
+| `MEDIA_ROOT`         | Filesystem root when `local`               | `/data/media`  |
+| `S3_BUCKET`          | Private bucket name when `s3`              | —              |
+| `AWS_REGION`         | Region of the bucket when `s3`             | —              |
 
 **Credentials are never configured here.** The Go API uses the standard AWS SDK
 chain, so on EC2 it reads an **instance role**; locally, SSO or environment

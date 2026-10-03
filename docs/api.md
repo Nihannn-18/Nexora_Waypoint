@@ -2,12 +2,14 @@
 
 Base path `/api/v1`.
 
-**Authentication.** Better Auth in the Next.js app owns authentication, sessions and identity.
-The Go API does not issue credentials: it verifies the authenticated request, then enforces RBAC
-and per-depot/outlet/route scope. The exact Better Auth → Go verification mechanism is **TBD**
-and is not invented here; `JWT_SECRET` and the JWT helpers are **legacy scaffolding** pending
-that decision. Until it lands, treat the endpoints below as the intended contract, not as a
-signed-in flow that already works.
+**Authentication.** The Go API owns authentication with opaque, database-backed sessions.
+`POST /api/v1/auth/login` verifies the email and Argon2id password hash against `app_user` and
+returns a random session token (returned once; only its SHA-256 hash is stored in `session`).
+The client sends it as `Authorization: Bearer <token>` on every subsequent call. The Go API
+hashes the presented token, looks up a live, unexpired session, loads role and depot/outlet
+scope from `app_user`, and enforces RBAC and per-depot/outlet/route scope. A missing, malformed,
+unknown or expired token is `401`; an authenticated user with no active `app_user` is `403`.
+No client-supplied identity header (`X-User-ID`, `X-Role`, …) is ever trusted.
 
 Handlers stay thin: no planning arithmetic in a handler. Every calculation happens in
 `internal/planning` or the constraint validator, which are unit-tested without a server.
@@ -56,16 +58,17 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 
 ## Shared
 
-| Method | Endpoint      | Role                      | Purpose                                                                                                                                      |
-| ------ | ------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/auth/login` | all                       | Better Auth sign-in; returns the user, role and scope. Go-side session verification is TBD                                                   |
-| `GET`  | `/me`         | all                       | Current user with depot or outlet scope                                                                                                      |
-| `GET`  | `/outlets`    | dispatcher, store manager | Access, window, brand, district                                                                                                              |
-| `GET`  | `/vehicles`   | dispatcher                | Availability, capacity, temperature, depot, fuel                                                                                             |
-| `GET`  | `/items`      | all authenticated         | Catalogue SKUs: dimensions and temperature requirement. Read-only                                                                            |
-| `GET`  | `/items/{id}` | all authenticated         | One SKU by `itemId`, or by `?sku=`                                                                                                           |
-| `GET`  | `/healthz`    | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API                                 |
-| `GET`  | `/readyz`     | —                         | Readiness. Pings PostgreSQL and checks RabbitMQ is reachable; `503` and `dependencies: {database, queue}` (`up`/`down`) name the failing one |
+| Method | Endpoint       | Role                      | Purpose                                                                                                                                      |
+| ------ | -------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/auth/login`  | all                       | Verify email + password; return an opaque session token and the user's role/scope                                                            |
+| `POST` | `/auth/logout` | all authenticated         | Revoke the caller's current session (the presented bearer token)                                                                             |
+| `GET`  | `/me`          | all authenticated         | Current user with depot or outlet scope                                                                                                      |
+| `GET`  | `/outlets`     | dispatcher, store manager | Access, window, brand, district                                                                                                              |
+| `GET`  | `/vehicles`    | dispatcher                | Availability, capacity, temperature, depot, fuel                                                                                             |
+| `GET`  | `/items`       | all authenticated         | Catalogue SKUs: dimensions and temperature requirement. Read-only                                                                            |
+| `GET`  | `/items/{id}`  | all authenticated         | One SKU by `itemId`, or by `?sku=`                                                                                                           |
+| `GET`  | `/healthz`     | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API                                 |
+| `GET`  | `/readyz`      | —                         | Readiness. Pings PostgreSQL and checks RabbitMQ is reachable; `503` and `dependencies: {database, queue}` (`up`/`down`) name the failing one |
 
 ### `GET /items`
 
@@ -432,9 +435,12 @@ A shortfall photo's `fileRef` is stored on the order line (`load_item.photo_ref`
 /legs/{id}/events` and `POST /routes/{id}/shortfalls` payloads carry the `fileRef` returned
 here; there is no separate "attach media" step.
 
-> Authentication for these endpoints uses the same Better Auth session as the rest of the
-> API. The Go-side verification mechanism is **TBD** (see AGENTS.md "Authentication
-> boundary"); until it lands the handlers reject every request rather than guess.
+> Authentication for these endpoints uses the same Go opaque bearer session as the rest of
+> the API. Uploads are restricted to the producing role and its depot scope: `SHORTFALL`
+> uploads require `LOADER` and an order line in the caller's depot, `POD` uploads require
+> `DRIVER` and a leg in the caller's depot. Reads are allowed for the dispatcher (both
+> depots), the producing role within its depot, and a store manager for an object belonging
+> to its outlet. A wrong-purpose, cross-scope or unknown-owner request is `403`.
 
 ---
 
@@ -489,9 +495,10 @@ silently applied; both of those lose information a human needs.
 `GET /sync/status` and `GET /legs/{id}` are mounted, driver-only and depot-scoped. `delivery_event`
 is the authoritative record; idempotency is the unique `client_event_id`. `DELIVERED` requires a
 receiver name and a POD artefact (photo `pod/<legId>/…` or signature); `FAILED`/`DELAYED` do not.
-An event updates the leg and order status in one transaction. Not yet implemented: the media
-upload endpoints still 401 (the Better Auth → Go bridge is TBD), so a POD photo cannot yet be
-uploaded end-to-end; `GET /sync/status` reports server-synced counts and a `0` conflict count
+An event updates the leg and order status in one transaction. The media upload endpoints
+authenticate the same Go bearer session and enforce role/purpose/depot scope, so a POD photo can
+be uploaded end-to-end (create upload → PUT bytes → attach `fileRef` to the event). Not yet
+implemented: `GET /sync/status` reports server-synced counts and a `0` conflict count
 (there is no separate conflict store). The driver's outbox, run-sheet cache and service worker
 are the next (Driver PWA) agent's work.
 

@@ -44,8 +44,8 @@ func MustIdentity(ctx context.Context) (Identity, error) {
 }
 
 // HTTPRequestHeader extracts the minimal, transport-neutral header view the
-// verifier consumes from a request. It copies only the two headers the (TBD)
-// Better Auth bridge may need.
+// verifier consumes from a request: the Authorization bearer token, and the
+// Cookie header reserved for a future cookie transport.
 func HTTPRequestHeader(r *http.Request) *RequestHeader {
 	return &RequestHeader{
 		Authorization: r.Header.Get("Authorization"),

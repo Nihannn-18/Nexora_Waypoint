@@ -1,13 +1,42 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import SignInPage from './page';
 import { ROLE_ROUTES, routeForRole } from '../../../lib/roles';
 
+const mockPush = jest.fn();
+const mockLogin = jest.fn();
+const mockMe = jest.fn();
+const mockSet = jest.fn();
+const mockClear = jest.fn();
+
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
+jest.mock('../../../lib/api', () => ({
+  api: {
+    login: (...args: unknown[]) => mockLogin(...args),
+    me: () => mockMe(),
+  },
+  tokenStore: {
+    set: (...args: unknown[]) => mockSet(...args),
+    clear: (...args: unknown[]) => mockClear(...args),
+  },
+}));
+
 /**
- * G-01 is the judge's entry point, and the one screen whose failure makes every
- * other screen unreachable. These tests guard the two things that would break
- * the walkthrough: a missing role, or a role card that links nowhere useful.
+ * G-01 is the judge's entry point. These tests guard the two things that would
+ * break the walkthrough: a missing role, and a role card that does not reach
+ * that role's workspace after a real Go-API sign-in.
  */
 describe('Sign in (G-01)', () => {
+  beforeEach(() => {
+    mockPush.mockReset();
+    mockLogin.mockReset();
+    mockMe.mockReset();
+    mockSet.mockReset();
+    mockClear.mockReset();
+  });
+
   it('offers all four roles', () => {
     render(<SignInPage />);
 
@@ -25,15 +54,57 @@ describe('Sign in (G-01)', () => {
     }
   });
 
-  it('links each role card to that role workspace', () => {
+  it('pre-fills the demo account when a role card is chosen', () => {
     render(<SignInPage />);
 
-    for (const route of ROLE_ROUTES) {
-      const link = screen.getByRole('link', {
-        name: new RegExp(route.label, 'i'),
-      });
-      expect(link.getAttribute('href')).toBe(route.href);
-    }
+    fireEvent.click(screen.getByRole('button', { name: /Dispatcher/i }));
+
+    expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe(
+      'priyantha.w@waypoint.lk',
+    );
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe(
+      'waypoint2026',
+    );
+  });
+
+  it('signs in through the Go API and routes to the server-reported role', async () => {
+    mockLogin.mockResolvedValue({ token: 'opaque-token', user: {} });
+    mockMe.mockResolvedValue({
+      userId: 'seed-driver',
+      name: 'Kasun P.',
+      email: 'kasun.p@waypoint.lk',
+      role: 'DRIVER',
+      depotId: 'd-peli',
+      outletId: null,
+    });
+
+    render(<SignInPage />);
+    fireEvent.click(screen.getByRole('button', { name: /Driver/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Sign in$/i }));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/driver'));
+    expect(mockLogin).toHaveBeenCalledWith({
+      email: 'kasun.p@waypoint.lk',
+      password: 'waypoint2026',
+    });
+    expect(mockSet).toHaveBeenCalledWith('opaque-token');
+  });
+
+  it('shows an accessible error and clears the token when sign-in fails', async () => {
+    mockLogin.mockRejectedValue(new Error('401'));
+
+    render(<SignInPage />);
+    fireEvent.change(screen.getByLabelText('Email'), {
+      target: { value: 'priyantha.w@waypoint.lk' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), {
+      target: { value: 'wrong' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Sign in$/i }));
+
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(mockClear).toHaveBeenCalled();
   });
 });
 

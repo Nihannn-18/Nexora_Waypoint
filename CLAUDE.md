@@ -142,7 +142,7 @@ Do not add a third-party Nx Go plugin.
 ## 4. Architecture
 
 ```
- Next.js web app (PWA) ── HTTPS · Better Auth session · /api/v1 ──► Go REST API ──► PostgreSQL (facts, audit)
+ Next.js web app (PWA) ── HTTPS · opaque bearer session · /api/v1 ──► Go REST API ──► PostgreSQL (facts, audit)
    4 role workspaces                                   │
    Driver: IndexedDB outbox ─► POST /sync/events       └─ AMQP ─► Planning worker ─► planning_result
 ```
@@ -161,20 +161,21 @@ Do not add a third-party Nx Go plugin.
 - **Realtime is polling.** Trip tracker every 30 s (design). Loader list polls and compares
   `routeVersion`. No WebSockets.
 
-### Authentication boundary (Better Auth → Go)
+### Authentication boundary (Go-owned sessions)
 
 ```
-Next.js ── Better Auth (authentication · sessions · identity)
-        └─> Go API (verify authenticated request · RBAC · depot/outlet scope · domain rules)
-                └─> Neon PostgreSQL
+Next.js ── POST /api/v1/auth/login (email + password)
+        └─> Go API (issue opaque session · verify bearer token · RBAC · depot/outlet scope)
+                └─> PostgreSQL (app_user credentials+scope, session hashes)
 ```
 
-**Better Auth, in the Next.js app, owns authentication, sessions and identity.** The Go API
-does **not** issue or own credentials. It verifies the authenticated request, then enforces
-RBAC and per-depot/outlet/route scope and all business rules. The exact Better Auth → Go
-verification mechanism (for example, session-token verification) is **TBD** and must be
-documented before implementation. Do not invent a bridge. Do not introduce Drizzle, Prisma or
-Supabase merely because Better Auth supports them. No auth code is implemented in this phase.
+**The Go API owns authentication, sessions and identity.** It verifies the submitted password
+against `app_user.password_hash` (Argon2id, constant-time), mints a random opaque session token
+and stores only its SHA-256 hash in `session`. Every request presents the token as
+`Authorization: Bearer <token>`; the API hashes it, requires a live, unexpired session for an
+active `app_user`, loads role and depot/outlet scope, and enforces RBAC and all business rules.
+`POST /api/v1/auth/logout` deletes the caller's session. There is no second identity system and
+no cross-system mapping. Client-supplied identity headers are never trusted.
 
 ### Target Go package layout
 
@@ -184,7 +185,7 @@ packages depend inward on `domain` and `planning`, never on `httpx`.
 - `clock` — `Clock` interface, real and demo implementations
 - `store` — `pgxpool` setup, embedded migrations, transaction helper
 - `seed` — Embedded reference CSVs + demo-day seeding, idempotent
-- `auth` — Verify the authenticated request from Better Auth, `RequireRole` middleware, scope checks. Authentication/session is owned by Better Auth in the web app; the exact Go verification mechanism is TBD (see §4 Authentication boundary).
+- `auth` — Verify the opaque bearer session, `RequireRole` middleware, scope checks. Authentication and sessions are owned by the Go API (see §4 Authentication boundary); `authstore` and `authapi` hold the database and HTTP pieces.
 - `catalog` — Outlets, vehicles, items, calendar, district travel, service allowance
 - `orders` — Order lifecycle, cutoff, order numbers, queue, close
 - `constraint` — **The validator.** Pure functions over loaded state → `[]domain.ConstraintResult`
@@ -207,9 +208,10 @@ Standard-library `net/http` `ServeMux` with method patterns (`"POST /api/v1/orde
 `r.PathValue("id")`) · `log/slog` · `github.com/jackc/pgx/v5` with hand-written SQL, no ORM
 · `github.com/pressly/goose/v3` with numbered SQL migrations in
 `apps/api/internal/store/migrations/`, embedded in the binary and applied at start-up ·
-`github.com/rabbitmq/amqp091-go`. Authentication and session are owned by **Better Auth** in
-the web app (not by Go); Go verifies the authenticated request and enforces RBAC, scope and
-domain rules. Do not add `golang-jwt/jwt/v5` or `bcrypt` as the auth mechanism.
+`github.com/rabbitmq/amqp091-go`. Authentication and session are owned by the Go API with
+opaque, database-backed sessions and Argon2id password hashes (`golang.org/x/crypto/argon2`);
+Go verifies the bearer token and enforces RBAC, scope and domain rules. Do not add a JWT or
+an external auth framework as the mechanism.
 
 ---
 
@@ -450,7 +452,7 @@ fallback. "Notify stores and the driver" is on by default.
 
 ## 9. API conventions
 
-Base `/api/v1`. Better Auth session except sign-in. Full list with payloads: `docs/api.md`.
+Base `/api/v1`. Go opaque bearer session except login. Full list with payloads: `docs/api.md`.
 Adding or changing an endpoint is three edits in one commit: the Go handler, the
 `WaypointClient` method (`libs/api-client/src/lib/waypoint-client.ts`) and `docs/api.md`.
 
@@ -581,7 +583,7 @@ endpoint exists.
 
 1. `clock`, `store`, migrations for the full schema in `docs/data-model.md`
 2. `seed`: reference CSVs, four accounts, demo day S1
-3. `auth`: verify the Better Auth session, `RequireRole`, scope (mechanism TBD)
+3. `auth`: issue and verify opaque sessions, login/logout/me, `RequireRole`, scope
 4. `catalog` + `orders`: create, confirm, queue, close, cutoff
 5. `constraint`: the validator with a test per rule
 6. `planning`: engine + prioritisation, job API, results; then validate / confirm

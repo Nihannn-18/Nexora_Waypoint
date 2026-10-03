@@ -16,11 +16,14 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"waypoint.lk/api/internal/password"
 )
 
 //go:embed data/*.csv
@@ -97,25 +100,40 @@ func Run(ctx context.Context, pool *pgxpool.Pool) (Result, error) {
 	return res, nil
 }
 
-// demoUsers are the four seeded accounts. They carry role and scope only:
-// Better Auth owns credentials and sessions, so no password is stored here. The
-// user_id is a stable placeholder; the Better Auth bridge decides how it is
-// linked (TBD, see CLAUDE.md section 4), which is why a re-seed never rewrites
-// it on an existing email.
+// demoUsers are the four seeded accounts. Their passwords are hashed with
+// Argon2id and stored in app_user.password_hash; the plaintext comes from
+// DEMO_SEED_PASSWORD (default "waypoint2026") and is never stored or logged.
+// user_id is a stable placeholder; a re-seed never rewrites it on an existing
+// email.
 var demoUsers = []struct {
 	userID   string
 	email    string
+	name     string
 	role     string
 	depot    string // depot name, empty when the user is outlet-scoped
 	outletID string
 }{
-	{"seed-dispatcher", "priyantha.w@waypoint.lk", "DISPATCHER", "Peliyagoda", ""},
-	{"seed-loader", "nadeesha.p@waypoint.lk", "LOADER", "Peliyagoda", ""},
-	{"seed-driver", "kasun.p@waypoint.lk", "DRIVER", "Peliyagoda", ""},
-	{"seed-store-manager", "ishara.s@waypoint.lk", "STORE_MANAGER", "", "OUT014"},
+	{"seed-dispatcher", "priyantha.w@waypoint.lk", "Priyantha W.", "DISPATCHER", "Peliyagoda", ""},
+	{"seed-loader", "nadeesha.p@waypoint.lk", "Nadeesha P.", "LOADER", "Peliyagoda", ""},
+	{"seed-driver", "kasun.p@waypoint.lk", "Kasun P.", "DRIVER", "Peliyagoda", ""},
+	{"seed-store-manager", "ishara.s@waypoint.lk", "Ishara S.", "STORE_MANAGER", "", "OUT014"},
 }
 
+// defaultDemoPassword is the seeded password when DEMO_SEED_PASSWORD is unset.
+// It is a demo credential, documented in the README; never use it in a
+// production-like deployment with real data.
+const defaultDemoPassword = "waypoint2026"
+
 func seedUsers(ctx context.Context, tx pgx.Tx, depotIDs map[string]string) (int, error) {
+	demoPassword := os.Getenv("DEMO_SEED_PASSWORD")
+	if demoPassword == "" {
+		demoPassword = defaultDemoPassword
+	}
+	passwordHash, err := password.Hash(demoPassword)
+	if err != nil {
+		return 0, fmt.Errorf("hash demo password: %w", err)
+	}
+
 	for _, u := range demoUsers {
 		var depotID *string
 		if u.depot != "" {
@@ -131,11 +149,15 @@ func seedUsers(ctx context.Context, tx pgx.Tx, depotIDs map[string]string) (int,
 		}
 
 		_, err := tx.Exec(ctx, `
-			INSERT INTO app_user (user_id, email, role, depot_id, outlet_id)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO app_user (user_id, email, display_name, role, depot_id, outlet_id, password_hash)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (email) DO UPDATE
-			SET role = EXCLUDED.role, depot_id = EXCLUDED.depot_id, outlet_id = EXCLUDED.outlet_id`,
-			u.userID, u.email, u.role, depotID, outletID)
+			SET display_name = EXCLUDED.display_name,
+			    role = EXCLUDED.role,
+			    depot_id = EXCLUDED.depot_id,
+			    outlet_id = EXCLUDED.outlet_id,
+			    password_hash = EXCLUDED.password_hash`,
+			u.userID, u.email, u.name, u.role, depotID, outletID, passwordHash)
 		if err != nil {
 			return 0, fmt.Errorf("seed user %s: %w", u.email, err)
 		}

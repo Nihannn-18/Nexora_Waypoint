@@ -51,7 +51,7 @@ Sections below marked _[see `CLAUDE.md`]_ are summarized here for checklist comp
 - `.prettierrc` — Prettier; `singleQuote: true`. For Go, `nx fmt api` runs `gofmt`.
 - `tsconfig.base.json` — strict TS; path aliases `@waypoint/shared-types`, `@waypoint/api-client`, `@waypoint/ui`.
 - `nx.json` / `apps/*/project.json` — Nx targets; Go is wrapped with `nx:run-commands` (no third-party Go plugin).
-- `.env.example` — environment template. Local dev: `cp .env.example .env`. Never commit `.env`. The current `JWT_SECRET` entry is **legacy**: authentication is moving to Better Auth and the Go verification mechanism is **TBD** — treat it as pending the auth decision, not a settled contract.
+- `.env.example` — environment template. Local dev: `cp .env.example .env`. Never commit `.env`. Authentication is Go-owned opaque sessions (`SESSION_TTL`); `DEMO_SEED_PASSWORD` sets the four seeded demo passwords. There is no JWT/signing secret. `JWT_SECRET` is no longer used.
 
 **Conventions — the fuller wording lives in `CLAUDE.md`:** Go backend `@CLAUDE.md` §10 · Frontend `@CLAUDE.md` §11 · Testing `@CLAUDE.md` §12 · Git workflow `@CLAUDE.md` §13 · API conventions `@CLAUDE.md` §9. Design tokens and touch-target rules are in §11 and must be followed for screen fidelity.
 
@@ -67,7 +67,7 @@ Sections below marked _[see `CLAUDE.md`]_ are summarized here for checklist comp
 4. **CLAUDE.md**, `docs/api.md`, `docs/data-model.md`, `docs/prioritisation-policy.md`, `libs/shared-types`: repository-specific decisions and detailed contracts. Keep them synchronized with this guide. If they do not exist yet, create them from the agreed source specification, not guesses.
 5. Code and tests: implementation state, never authority to silently weaken a requirement.
 
-**Official vs chosen:** the competition allows automatic, assisted or validated manual allocation; **we chose assisted planning**. RabbitMQ, product-level `item`/`order_item`, Better Auth, the exact REST routes, polling, a demo clock and our fairness order are **team implementation decisions**, not official rules. Do not present them as competition mandates.
+**Official vs chosen:** the competition allows automatic, assisted or validated manual allocation; **we chose assisted planning**. RabbitMQ, product-level `item`/`order_item`, Go-owned opaque sessions, the exact REST routes, polling, a demo clock and our fairness order are **team implementation decisions**, not official rules. Do not present them as competition mandates.
 
 **System mission:** one responsive application covering **Store Manager → Dispatcher → Loader → Driver → Store Manager**, from ordering to validated planning, loading, delivery, receipt, notifications, forecasts and audit. Planning must explain which orders cannot be served and why.
 
@@ -157,7 +157,7 @@ IN_TRANSIT → FAILED → DEFERRED
 
 ### Shared authentication: G-01–G-03 — `/signin`
 
-- Four role cards prefill the four demo accounts; proper login, loading state, visible accessible errors and role redirect. Better Auth session and server-side scope enforcement; sign-out and expired-session handling. Four roles only.
+- Four role cards prefill the four demo accounts; proper login, loading state, visible accessible errors and role redirect. Go-owned opaque session and server-side scope enforcement; sign-out and expired-session handling. Four roles only.
 
 ### Dispatcher: D-01–D-09
 
@@ -203,7 +203,7 @@ IN_TRANSIT → FAILED → DEFERRED
 
 ```text
 Next.js PWA (four RBAC workspaces)
-  ├─ typed /api/v1 REST client, Better Auth session
+  ├─ typed /api/v1 REST client, opaque bearer session
   └─ Driver: Service Worker + Dexie/IndexedDB run-sheet cache and outbox
                   │ HTTPS
                   ▼
@@ -212,32 +212,32 @@ Go net/http API → domain services → pgx/PostgreSQL 17 (authoritative state +
                                               └─ planning_result (proposals only)
 ```
 
-### Authentication boundary (Better Auth → Go)
+### Authentication boundary (Go-owned sessions)
 
 ```
-Next.js ── Better Auth (authentication · sessions · identity)
-        └─> Go API (verify authenticated request · RBAC · depot/outlet scope · domain rules)
-                └─> Neon PostgreSQL
+Next.js ── POST /api/v1/auth/login (email + password)
+        └─> Go API (issue opaque session · verify bearer token · RBAC · depot/outlet scope)
+                └─> PostgreSQL (app_user credentials+scope, session hashes)
 ```
 
-**Better Auth owns authentication, session and identity in the Next.js app.** Go does **not** issue or own credentials; it verifies the authenticated request, then enforces RBAC and per-depot/outlet/route scope and all business rules. The exact Better Auth → Go verification mechanism (e.g. session-token verification) is **TO BE DECIDED** and must be documented before any implementation. Do not invent a bridge. Do not introduce Drizzle, Prisma or Supabase merely because Better Auth supports them. Auth is guidance-only for now: no auth code is implemented in this phase.
+**The Go API owns authentication, session and identity.** Go verifies the submitted password against `app_user.password_hash` (Argon2id), mints a random opaque session token, stores only its SHA-256 hash in `session`, and verifies the `Authorization: Bearer` token on every request (live, unexpired session for an active `app_user`). `POST /api/v1/auth/logout` deletes the caller's session. There is no second identity system and no cross-system mapping, and client-supplied identity headers are never trusted.
 
 **Existing repo:** Nx 23/npm; Node 22; Next.js 16 App Router, React 19, Tailwind v4, strict TypeScript. Preserve existing workspace, CI, shared contracts, API client, design tokens, route shells, Go config/router/health/trip-time; verify actual files before assuming a module is finished.
 
-**Go conventions:** `net/http` method-aware `ServeMux`, `r.PathValue`; `log/slog`; `pgx/v5` handwritten SQL **without ORM**; `goose/v3` numbered forward SQL migrations embedded and applied at startup; `rabbitmq/amqp091-go`. Authentication is owned by Better Auth in the web app; Go verifies the authenticated request and enforces RBAC, scope and domain rules. Nx `project.json` wraps Go via `nx:run-commands` (no third-party Go Nx plugin). Handlers parse/auth/call services/write JSON; no SQL/arithmetic in handlers. Service methods take `context.Context` and injected clock; log errors once at HTTP boundary. Database structs stay private to persistence packages. Transactional writes for allocation, edits, state changes and audits. Avoid dependency cycles.
+**Go conventions:** `net/http` method-aware `ServeMux`, `r.PathValue`; `log/slog`; `pgx/v5` handwritten SQL **without ORM**; `goose/v3` numbered forward SQL migrations embedded and applied at startup; `rabbitmq/amqp091-go`. Authentication is owned by the Go API with opaque, database-backed sessions and Argon2id password hashes (`golang.org/x/crypto/argon2`); Go verifies the bearer token and enforces RBAC, scope and domain rules. Nx `project.json` wraps Go via `nx:run-commands` (no third-party Go Nx plugin). Handlers parse/auth/call services/write JSON; no SQL/arithmetic in handlers. Service methods take `context.Context` and injected clock; log errors once at HTTP boundary. Database structs stay private to persistence packages. Transactional writes for allocation, edits, state changes and audits. Avoid dependency cycles.
 
 **Target packages** under `apps/api/internal/`:
 
-| Package                           | Responsibilities                                                                                                  |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `config`, `clock`, `httpx`        | Env validation; real/demo clock; router, strict JSON, auth/error middleware.                                      |
-| `store`, `seed`                   | Pool/transactions, embedded migrations, reference CSV and demo seed.                                              |
-| `domain`, `auth`                  | Mirrored enums/DTO vocabulary; verify authenticated request (Better Auth), RBAC and per-depot/outlet/route scope. |
-| `catalog`, `orders`               | Items/outlets/vehicles/calendar/travel/service reference; orders, cutoff, confirmation, queue.                    |
-| `constraint`, `planning`          | One pure validator; time/window/fuel calculation, fairness, engine, async job runner/results.                     |
-| `routes`, `deferrals`             | Route/legs/reorder/dispatch/ETA/live state/breakdown; reasons/history/protected-next-run.                         |
-| `loading`, `delivery`, `receipts` | Load checklist/shortfalls; POD, offline event reconciliation; GRN/issues.                                         |
-| `notify`, `forecast`, `audit`     | In-app notifications; read-only demand series; immutable actor/time audit.                                        |
+| Package                           | Responsibilities                                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `config`, `clock`, `httpx`        | Env validation; real/demo clock; router, strict JSON, auth/error middleware.                                                |
+| `store`, `seed`                   | Pool/transactions, embedded migrations, reference CSV and demo seed.                                                        |
+| `domain`, `auth`                  | Mirrored enums/DTO vocabulary; verify the authenticated request (opaque Go session), RBAC and per-depot/outlet/route scope. |
+| `catalog`, `orders`               | Items/outlets/vehicles/calendar/travel/service reference; orders, cutoff, confirmation, queue.                              |
+| `constraint`, `planning`          | One pure validator; time/window/fuel calculation, fairness, engine, async job runner/results.                               |
+| `routes`, `deferrals`             | Route/legs/reorder/dispatch/ETA/live state/breakdown; reasons/history/protected-next-run.                                   |
+| `loading`, `delivery`, `receipts` | Load checklist/shortfalls; POD, offline event reconciliation; GRN/issues.                                                   |
+| `notify`, `forecast`, `audit`     | In-app notifications; read-only demand series; immutable actor/time audit.                                                  |
 
 **Planning job:** `POST /allocations/suggest` returns **202 `{jobId}`**. Worker state QUEUED → RUNNING → COMPLETED/FAILED, polling via `/planning-jobs/{id}`; RabbitMQ exchange `waypoint.planning`, queue `waypoint.planning.queue`, routing key `planning.generate`, retry transient errors then DLQ, idempotent processing. An in-process worker implementing the same interface is an explicitly permitted interim fallback; preserve the job API. Do not block the HTTP request for planning. Tracker uses **30s polling**, loader polls route versions; **no WebSocket scope**.
 
@@ -251,7 +251,8 @@ Use `docs/data-model.md` for exact types/relations/migrations. Implement **all**
 | --------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `depot`                                 | ID/code/name/location/active.                                                             |
 | `outlet`                                | ID, brand, district, depot, dock/parking constraints, outlet/mall windows.                |
-| `app_user`                              | Identity/session owned by Better Auth; role, depot/outlet scope, active flag.             |
+| `app_user`                              | Identity + credential (Argon2id password_hash), role, depot/outlet scope, active flag.    |
+| `session`                               | Opaque session tokens (SHA-256 hash only), expiry, FK to `app_user`.                      |
 | `vehicle`                               | ID, type/temp, weight/volume, fuel type/efficiency/quota, home depot/status.              |
 | `item`                                  | SKU, name/brand/category, unit weight/volume, temperature requirement.                    |
 | `customer_order`                        | Number, outlet, brand, dates, totals, temp, status, cutoff, notes.                        |
@@ -273,11 +274,12 @@ Enforce FK, CHECK, unique and transactional integrity. At minimum: `UNIQUE(vehic
 
 ## 10. Complete REST endpoint checklist
 
-**Base `/api/v1`**; Better Auth session except sign-in; authorization and resource scope enforced server-side. JSON camelCase; reject unknown fields. Error `{message, code?, constraintResults?}`; 400 malformed, 401 unauthenticated, 403 wrong role, 404 missing/out-of-scope, 409 stale route version, 422 attempted infeasible confirmation. **Validation probe** returns `200 {valid:false,...}` rather than 422. The final specification lists the core endpoints below; `CLAUDE.md` adds demo-clock operations for reproducible judging.
+**Base `/api/v1`**; Go opaque bearer session except login; authorization and resource scope enforced server-side. JSON camelCase; reject unknown fields. Error `{message, code?, constraintResults?}`; 400 malformed, 401 unauthenticated, 403 wrong role, 404 missing/out-of-scope, 409 stale route version, 422 attempted infeasible confirmation. **Validation probe** returns `200 {valid:false,...}` rather than 422. The final specification lists the core endpoints below; `CLAUDE.md` adds demo-clock operations for reproducible judging.
 
 | Method | Endpoint                         | Responsibility                                                                |
 | ------ | -------------------------------- | ----------------------------------------------------------------------------- |
-| POST   | `/auth/login`                    | Better Auth sign-in; role/scope.                                              |
+| POST   | `/auth/login`                    | Verify credentials; issue opaque session, role/scope.                         |
+| POST   | `/auth/logout`                   | Revoke the caller's session.                                                  |
 | GET    | `/me`                            | Current profile/scope.                                                        |
 | GET    | `/outlets`                       | Outlet search/access/windows.                                                 |
 | GET    | `/vehicles`                      | Fleet filters, availability, capabilities/fuel.                               |
@@ -354,7 +356,7 @@ Never expose seeded credentials in a production-like deployment with real data. 
 - **Responsiveness:** all four roles usable on their intended devices; loader/driver phone-sized tests are mandatory. Tablet master-detail for loader; no hover-only primary actions. Fast, clear feedback and disabled duplicate-submit actions.
 - **Usability/accessibility:** 48px phone/tablet touch targets; driver primary 56px; ≥14px mobile text; labelled controls, keyboard/focus support, in-place plus summary validation, status **never by colour alone**, empty/loading/error/success states, plain-language reasons and next steps. Driver UI explicitly intended only while safely stopped.
 - **Visual fidelity:** match submitted Figma screens, component hierarchy and style tokens. Use `bg-page`, `bg-card`, `text-ink`, `text-ink-muted`, `text-brand`, `text-link`, `bg-action`, `text-success`, `text-warning`, `text-error`, `bg-offline`; no hard-coded colours. Monospace/tabular IDs and times, 24h `HH:MM`, `kg`, `m³`, desktop 252px sidebar/60px top bar, phone app bar and 4-tab navigation, shared badges. Amber for degradation; neutral grey for offline.
-- **Security:** Better Auth session (authentication owned by the web app); Go-enforced role and record-level depot/outlet/route scoping on **every** handler; strict JSON decoding, server-computed totals, safe file/photo handling, no secrets in source or logs. Return 404 for out-of-scope records where specified. Demo controls restricted to demo mode.
+- **Security:** Go-owned opaque session (authentication owned by the Go API); Go-enforced role and record-level depot/outlet/route scoping on **every** handler; strict JSON decoding, server-computed totals, safe file/photo handling, no secrets in source or logs. Return 404 for out-of-scope records where specified. Demo controls restricted to demo mode.
 - **Reliability:** DB transactions and optimistic route versions; queue retries/DLQ; idempotent seed, planning jobs and offline events; conflict visibility and no data loss; safe restart/reconnect behaviour.
 - **Performance/feedback:** planning is asynchronous with progress polling; live tracker 30s polling; loader updates on version changes; no blocking UI while jobs run. **No numeric latency/uptime SLA is specified in the supplied sources; do not invent one.**
 - **Audit/explainability:** append-only actor/timestamp/before/after for deferrals, allocations, route edits, load shortfalls, delivery events and relevant recovery actions. Store explanations with constraint codes; no silent overrides.
