@@ -32,6 +32,7 @@ import (
 	"waypoint.lk/api/internal/clock"
 	"waypoint.lk/api/internal/config"
 	"waypoint.lk/api/internal/httpx"
+	"waypoint.lk/api/internal/loading"
 	"waypoint.lk/api/internal/media"
 	"waypoint.lk/api/internal/orders"
 	"waypoint.lk/api/internal/planning"
@@ -142,6 +143,13 @@ func run() error {
 	confirmation := routes.NewConfirmation(routesRepo, planningService, routesReaders, routesReaders, routesReaders, clk)
 	routesHandler := routes.NewHandler(confirmation, routesRepo, authMiddleware)
 
+	// Loading: the loader's picking list and shortfall recording for a confirmed
+	// route. Expected quantities come from order_item via route_leg; load state
+	// is per order line, upserted against the (route_id, order_item_id) key.
+	loadingRepo := loading.NewPGRepository(db.Pool())
+	loadingService := loading.NewService(loadingRepo)
+	loadingHandler := loading.NewHandler(loadingService, authMiddleware)
+
 	checks := []httpx.Check{
 		{Name: "database", Fn: db.Pool().Ping},
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
@@ -151,7 +159,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
