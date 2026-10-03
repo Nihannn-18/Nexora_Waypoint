@@ -157,9 +157,11 @@ One account per role, matching the Designathon personas. All use the password
 The sign-in screen lists all four, so there is no need to type an address.
 
 **Seeded demo day.** Planning day **Friday 25 September 2026**, delivery day
-**Saturday 26 September 2026** — a festival week chosen deliberately because demand
-exceeds the fleet: 186 confirmed orders, 54 vehicles available and 6 in the workshop.
-That is the condition the system exists for, and the walkthrough below runs through it.
+**Saturday 26 September 2026** — the Task 2B peak-day scenario S1, Peliyagoda: **85 confirmed
+orders** (26 chilled, 59 ambient) and **10 vehicles in the workshop**. The supplied fleet file
+lists 38 of the 60 vehicles; the 22 it omits are treated as available, so 50 are available.
+These are the imported figures; the design mock-ups quoted different ones (186 / 54 / 6).
+How many orders the fleet cannot serve is decided by the planning engine, not by the seed.
 
 ---
 

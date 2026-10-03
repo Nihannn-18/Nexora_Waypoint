@@ -5,10 +5,9 @@
 // idempotent: every insert is an upsert keyed on the natural identifier, so
 // running it twice changes nothing and never duplicates a row.
 //
-// It seeds reference data and the four demo accounts' role and scope rows. Demo
-// orders and per-day vehicle availability are NOT seeded here — those come from
-// the Task 2B source files, which are not present. traffic_speed and road_condition are Datathon-only
-// and are never seeded.
+// It seeds reference data, the four demo accounts' role and scope rows, and the
+// demo day (Task 2B scenario S1: its orders and fleet availability).
+// traffic_speed and road_condition are Datathon-only and are never seeded.
 package seed
 
 import (
@@ -46,6 +45,8 @@ type Result struct {
 	ServiceAllowance int
 	CalendarDays     int
 	Users            int
+	DemoOrders       int
+	DemoAvailability int
 }
 
 // Run seeds every reference dataset in foreign-key order: depots first, then
@@ -82,6 +83,9 @@ func Run(ctx context.Context, pool *pgxpool.Pool) (Result, error) {
 	}
 
 	if res.Users, err = seedUsers(ctx, tx, depotIDs); err != nil {
+		return res, err
+	}
+	if res.DemoOrders, res.DemoAvailability, err = seedDemoDay(ctx, tx); err != nil {
 		return res, err
 	}
 

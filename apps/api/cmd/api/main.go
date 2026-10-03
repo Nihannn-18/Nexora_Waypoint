@@ -76,6 +76,8 @@ func run() error {
 			"districtTravel", res.DistrictTravel,
 			"serviceAllowance", res.ServiceAllowance,
 			"calendarDays", res.CalendarDays,
+			"demoOrders", res.DemoOrders,
+			"demoVehicleDays", res.DemoAvailability,
 		)
 	}
 

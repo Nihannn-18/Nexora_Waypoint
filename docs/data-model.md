@@ -20,8 +20,18 @@ stale number that looks authoritative is worse than no number.
 - **Demo accounts:** the seed upserts the four `app_user` rows (role and depot/outlet scope
   only; Better Auth owns credentials). `user_id` is a stable placeholder (`seed-dispatcher`, …)
   that a re-seed never rewrites on an existing email, so the Better Auth link can replace it.
-- **Not seeded:** S1 demo orders and `vehicle_daily_availability` (the Task 2B
-  source files are not yet present); `traffic_speed` and `road_condition` are Datathon-only
+- **Demo day (Task 2B S1):** the two `task2b_peak_day_*.csv` files are embedded and seeded:
+  85 orders (`order_ref` is the order number, status `CONFIRMED`, ordered Fri 25 Sep for
+  Sat 26 Sep) and a `vehicle_daily_availability` row for all 60 vehicles on Sat 26 Sep. The
+  fleet file lists 38 vehicles (28 available, 10 in workshop); a vehicle it omits is treated as
+  available. Orders arrive as aggregates, so each gets one line of a stand-in `DEMO-<BRAND>-<TEMP>`
+  item whose totals are the CSV values verbatim; the line's unit snapshots are derived from them
+  and may differ from the totals by rounding. An existing order number is never overwritten, so a
+  re-seed cannot rewind an order that has moved through the lifecycle.
+- **Deferral history:** `customer_order.deferred_yesterday` and `days_since_last_served`
+  (migration `00003`) carry the S1 history that the fairness guard and D-07 read.
+- **Not seeded:** a real item catalogue (the scenario has only aggregates);
+  `traffic_speed` and `road_condition` are Datathon-only
   and carry no rows.
 - **Display names.** The supplied CSVs contain no outlet names or vehicle registrations. The
   seed derives a deterministic display name from the identifier: `Outlet OUT001 … Outlet

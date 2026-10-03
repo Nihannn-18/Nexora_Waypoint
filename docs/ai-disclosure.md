@@ -52,7 +52,7 @@ specification. They are not AI-generated design decisions.
 | Driver screens and offline sync | ⚠️   | ⚠️     | ⚠️           |
 | Store manager screens           | ⚠️   | ⚠️     | ⚠️           |
 | Tests                           | ⚠️   | ⚠️     | ⚠️           |
-| Seed data                       | ⚠️   | ⚠️     | ⚠️           |
+| Seed data                       | Claude (Anthropic) | Go seeding code for the reference CSVs, demo accounts and the Task 2B S1 demo day (orders, fleet availability, history migration `00003`) and its tests; the CSV data itself was supplied and placed by a teammate | Pending team review; the seed integration test was run against PostgreSQL 17 |
 
 ---
 
