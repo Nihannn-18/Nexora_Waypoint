@@ -137,17 +137,41 @@ morning, so the API runs on an injected clock rather than the wall clock. Enable
 {
   "orderId": "a3f1…",
   "orderNumber": "ORD-2026-000153",
+  "outletId": "OUT001",
+  "brand": "FRESH",
+  "orderDate": "2026-09-25",
+  "requestedDeliveryDate": "2026-09-26",
   "status": "PLACED",
   "totalUnits": 25,
   "totalWeightKg": 123.5,
   "totalVolumeM3": 1.42,
   "temperatureRequirement": "AMBIENT",
-  "afterCutoff": false
+  "afterCutoff": false,
+  "lines": [
+    {
+      "orderItemId": "…",
+      "itemId": "ITEM001",
+      "quantity": 20,
+      "unitWeightKgSnapshot": 1.0,
+      "unitVolumeM3Snapshot": 0.0012,
+      "totalWeightKg": 20.0,
+      "totalVolumeM3": 0.024
+    }
+  ]
 }
 ```
 
 Totals are never accepted from the client. They are computed from the lines and the
-catalogue, because they are what the capacity rules are checked against.
+catalogue, because they are what the capacity rules are checked against. Each line snapshots
+the SKU's unit weight and volume, so a later catalogue edit cannot change a historical order's
+totals.
+
+**Implemented:** `POST /orders`, `GET /orders/{id}` and `POST /orders/{id}/confirm` are
+mounted. A store manager may only order for and read their own outlet; a dispatcher may act
+across outlets. `POST /orders/{id}/confirm` moves `PLACED`/`DEFERRED` to `CONFIRMED` and returns
+`409 CONFLICT` if the order is already past that point. `GET /orders/{id}/eta` and
+`POST /orders/{id}/receipt` are **not** implemented — they need route state and delivery
+outcomes owned by later agents.
 
 ---
 

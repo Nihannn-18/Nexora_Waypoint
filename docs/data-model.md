@@ -155,6 +155,18 @@ An order appearing on two routes for one date is prevented by the validator, bec
 cross-row rule the database cannot express cheaply. A partial unique index on the active
 allocation per `(order_id, route_date)` is the belt-and-braces version.
 
+> **Open decision — not yet enforced in the database (Planning/Routes owner).** History is
+> explicitly allowed: an order can be `DEFERRED` and re-enter a later run
+> (`DEFERRED → CONFIRMED`, `FAILED → DEFERRED`), so it can hold several `allocation` rows, and
+> `allocation` is described as the decision audit. A plain `UNIQUE (order_id)` would therefore
+> be wrong. The belt-and-braces index cannot be built yet because two things are undefined:
+> (1) what makes an allocation "active" — there is no status/superseded column, and a breakdown
+> re-plan (DG-C) intentionally creates a second allocation for the same order and date; and
+> (2) where `route_date` comes from, since it lives on `route` and a partial unique index cannot
+> reference another table. Until the owner decides both, `DUPLICATE_ASSIGNMENT` in the validator
+> plus transactional confirmation is the only protection. The Orders foundation deliberately
+> leaves the `allocation` schema unchanged rather than guess.
+
 ---
 
 ## Execution
