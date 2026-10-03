@@ -35,13 +35,21 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # `_ "time/tzdata"`, so no tzdata package is needed here.
 FROM alpine:3.21
 
-# wget for the healthcheck; ca-certificates for any outbound HTTPS later.
-RUN apk add --no-cache ca-certificates wget \
+# wget for the healthcheck; ca-certificates for outbound HTTPS; su-exec so the
+# entrypoint can fix the media volume's ownership and then drop privileges.
+RUN apk add --no-cache ca-certificates wget su-exec \
     && addgroup -S waypoint \
     && adduser -S -G waypoint waypoint
 
+# Local media root, owned by the app user. When Compose mounts a named volume
+# here the mount is root-owned and this ownership is masked, so the entrypoint
+# re-applies it at start-up before dropping to the waypoint user.
+RUN mkdir -p /data/media && chown -R waypoint:waypoint /data
+
 WORKDIR /app
 COPY --from=builder /out/waypoint-api /app/waypoint-api
+COPY --chown=root:root apps/api/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod 0755 /app/docker-entrypoint.sh
 
 ENV APP_ENV=production \
     PORT=8080 \
@@ -49,10 +57,10 @@ ENV APP_ENV=production \
 
 EXPOSE 8080
 
-# Never run as root: a container escape should not land on a root shell.
-USER waypoint
-
+# The entrypoint starts as root only to fix the media volume's ownership, then
+# drops to the unprivileged waypoint user for the API process itself.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
     CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1
 
-ENTRYPOINT ["/app/waypoint-api"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["/app/waypoint-api"]

@@ -94,6 +94,13 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — copy .env.example to .env}
       TOKEN_TTL_MINUTES: ${TOKEN_TTL_MINUTES:-720}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      # Media defaults to the local filesystem so Compose needs no AWS. Point
+      # MEDIA_ROOT at the named volume below; `docker compose down` keeps the
+      # volume, `docker compose down -v` removes it (a deliberate full reset).
+      MEDIA_STORAGE: ${MEDIA_STORAGE:-local}
+      MEDIA_ROOT: ${MEDIA_ROOT:-/data/media}
+    volumes:
+      - media-data:/data/media
     ports:
       - '${API_PORT:-8080}:8080'
 
@@ -139,3 +146,6 @@ services:
 volumes:
   postgres-data:
   rabbitmq-data:
+  # Uploaded proof-of-delivery and shortfall photos. Preserved by
+  # `docker compose down`; removed by `docker compose down -v`.
+  media-data:
