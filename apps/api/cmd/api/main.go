@@ -3,16 +3,19 @@
 //	go run ./cmd/api          # from apps/api
 //	nx serve api              # from the repo root
 //
-// Scaffold state: configuration, logging, routing, graceful shutdown and the
-// health endpoints are in place. Database, queue and the role handlers are not
-// yet wired — see apps/api/README.md for the order to build them in.
+// Start-up order: configuration, PostgreSQL, migrations, reference seed, media
+// storage, then the HTTP server with graceful shutdown. The role handlers are
+// not wired yet — see apps/api/README.md for the order to build them in.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -73,6 +76,8 @@ func run() error {
 			"districtTravel", res.DistrictTravel,
 			"serviceAllowance", res.ServiceAllowance,
 			"calendarDays", res.CalendarDays,
+			"demoOrders", res.DemoOrders,
+			"demoVehicleDays", res.DemoAvailability,
 		)
 	}
 
@@ -86,10 +91,15 @@ func run() error {
 	mediaHandler := media.NewHandler(storage, media.UnimplementedResolver{}, media.DenyAuthorizer{})
 	slog.Info("media storage ready", "backend", cfg.MediaStorage)
 
+	checks := []httpx.Check{
+		{Name: "database", Fn: db.Pool().Ping},
+		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
+	}
+
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, started, mediaHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, started, checks, mediaHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
@@ -131,6 +141,26 @@ func run() error {
 
 	slog.Info("shutdown complete")
 	return nil
+}
+
+// queueCheck verifies the RabbitMQ broker accepts TCP connections. The AMQP
+// consumer is not wired yet, so reachability is all readiness can honestly say.
+func queueCheck(rawURL string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return fmt.Errorf("parse RABBITMQ_URL: %w", err)
+		}
+		host := u.Host
+		if u.Port() == "" {
+			host = net.JoinHostPort(u.Hostname(), "5672")
+		}
+		conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", host)
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	}
 }
 
 func setupLogging(cfg config.Config) {

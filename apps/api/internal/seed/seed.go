@@ -5,10 +5,9 @@
 // idempotent: every insert is an upsert keyed on the natural identifier, so
 // running it twice changes nothing and never duplicates a row.
 //
-// It seeds reference data only. Demo orders, demo users and per-day vehicle
-// availability are NOT seeded here — those come from the Task 2B source files,
-// which are not present. traffic_speed and road_condition are Datathon-only
-// and are never seeded.
+// It seeds reference data, the four demo accounts' role and scope rows, and the
+// demo day (Task 2B scenario S1: its orders and fleet availability).
+// traffic_speed and road_condition are Datathon-only and are never seeded.
 package seed
 
 import (
@@ -38,6 +37,8 @@ var depots = []struct {
 }
 
 // Result reports how many rows each dataset contributed, for logging and tests.
+// DemoOrders counts the scenario's order rows read (stable across re-runs even
+// when nothing is inserted); DemoAvailability counts vehicle-days written.
 type Result struct {
 	Depots           int
 	Outlets          int
@@ -45,6 +46,9 @@ type Result struct {
 	DistrictTravel   int
 	ServiceAllowance int
 	CalendarDays     int
+	Users            int
+	DemoOrders       int
+	DemoAvailability int
 }
 
 // Run seeds every reference dataset in foreign-key order: depots first, then
@@ -80,10 +84,63 @@ func Run(ctx context.Context, pool *pgxpool.Pool) (Result, error) {
 		return res, err
 	}
 
+	if res.Users, err = seedUsers(ctx, tx, depotIDs); err != nil {
+		return res, err
+	}
+	if res.DemoOrders, res.DemoAvailability, err = seedDemoDay(ctx, tx); err != nil {
+		return res, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return res, fmt.Errorf("commit seed: %w", err)
 	}
 	return res, nil
+}
+
+// demoUsers are the four seeded accounts. They carry role and scope only:
+// Better Auth owns credentials and sessions, so no password is stored here. The
+// user_id is a stable placeholder; the Better Auth bridge decides how it is
+// linked (TBD, see CLAUDE.md section 4), which is why a re-seed never rewrites
+// it on an existing email.
+var demoUsers = []struct {
+	userID   string
+	email    string
+	role     string
+	depot    string // depot name, empty when the user is outlet-scoped
+	outletID string
+}{
+	{"seed-dispatcher", "priyantha.w@waypoint.lk", "DISPATCHER", "Peliyagoda", ""},
+	{"seed-loader", "nadeesha.p@waypoint.lk", "LOADER", "Peliyagoda", ""},
+	{"seed-driver", "kasun.p@waypoint.lk", "DRIVER", "Peliyagoda", ""},
+	{"seed-store-manager", "ishara.s@waypoint.lk", "STORE_MANAGER", "", "OUT014"},
+}
+
+func seedUsers(ctx context.Context, tx pgx.Tx, depotIDs map[string]string) (int, error) {
+	for _, u := range demoUsers {
+		var depotID *string
+		if u.depot != "" {
+			id, ok := depotIDs[u.depot]
+			if !ok {
+				return 0, fmt.Errorf("seed user %s: unknown depot %q", u.email, u.depot)
+			}
+			depotID = &id
+		}
+		var outletID *string
+		if u.outletID != "" {
+			outletID = &u.outletID
+		}
+
+		_, err := tx.Exec(ctx, `
+			INSERT INTO app_user (user_id, email, role, depot_id, outlet_id)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (email) DO UPDATE
+			SET role = EXCLUDED.role, depot_id = EXCLUDED.depot_id, outlet_id = EXCLUDED.outlet_id`,
+			u.userID, u.email, u.role, depotID, outletID)
+		if err != nil {
+			return 0, fmt.Errorf("seed user %s: %w", u.email, err)
+		}
+	}
+	return len(demoUsers), nil
 }
 
 func seedDepots(ctx context.Context, tx pgx.Tx) (map[string]string, error) {

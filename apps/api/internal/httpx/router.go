@@ -10,8 +10,8 @@ import (
 
 // Router builds the HTTP handler for the whole API.
 //
-// Scaffold state: only the operational endpoints (/healthz, /readyz) and a
-// meta endpoint are wired. Register the real route groups here as they land —
+// Only the operational endpoints (/healthz, /readyz) and a meta endpoint are
+// wired. Register the real route groups here as they land —
 // docs/api.md lists every endpoint with its role and purpose.
 //
 // Go 1.22+ ServeMux patterns ("POST /api/v1/orders", "GET /api/v1/orders/{id}")
@@ -23,9 +23,9 @@ import (
 // packages use the JSON helpers in this one).
 type RouteRegistrar func(mux *http.ServeMux)
 
-// Router builds the HTTP handler for the whole API. Feature packages register
-// their routes through the extra registrars.
-func Router(cfg config.Config, started time.Time, registrars ...RouteRegistrar) http.Handler {
+// Router builds the HTTP handler for the whole API. checks feed /readyz; feature
+// packages register their routes through the extra registrars.
+func Router(cfg config.Config, started time.Time, checks []Check, registrars ...RouteRegistrar) http.Handler {
 	mux := http.NewServeMux()
 
 	// --- Operational -------------------------------------------------------
@@ -39,15 +39,9 @@ func Router(cfg config.Config, started time.Time, registrars ...RouteRegistrar) 
 	})
 
 	// Readiness: dependencies are reachable and this instance can serve traffic.
-	// TODO: ping PostgreSQL and RabbitMQ here once the pools exist, and return
-	// 503 with the failing dependency named.
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, http.StatusOK, map[string]any{
-			"status":   "ready",
-			"database": "not-wired",
-			"queue":    "not-wired",
-		})
-	})
+	// A failing check returns 503 naming the dependency; details go to the log,
+	// not the response.
+	mux.HandleFunc("GET /readyz", readiness(checks))
 
 	// --- Meta --------------------------------------------------------------
 	mux.HandleFunc("GET /api/v1/meta", func(w http.ResponseWriter, _ *http.Request) {
@@ -80,7 +74,7 @@ func Router(cfg config.Config, started time.Time, registrars ...RouteRegistrar) 
 		WriteError(w, http.StatusNotFound, "No handler for "+r.Method+" "+r.URL.Path)
 	})
 
-	return withRequestLogging(withCORS(cfg, mux))
+	return withRecover(withRequestLogging(withCORS(cfg, mux)))
 }
 
 // withCORS allows the Next.js origin to call the API with credentials.

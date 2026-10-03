@@ -187,3 +187,33 @@ func TestDepotNamesMatchCSV(t *testing.T) {
 		}
 	}
 }
+
+func TestDemoDayDatasets(t *testing.T) {
+	orders, err := readCSV("data/task2b_peak_day_scenarios.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, r := range orders {
+		if r["scenario"] != demoScenario {
+			t.Errorf("%s: scenario %q", r["order_ref"], r["scenario"])
+		}
+		if seen[r["order_ref"]] {
+			t.Errorf("duplicate order_ref %s", r["order_ref"])
+		}
+		seen[r["order_ref"]] = true
+		if _, err := enum(r["temp_requirement"]); err != nil {
+			t.Errorf("%s: %v", r["order_ref"], err)
+		}
+	}
+
+	fleet, err := readCSV("data/task2b_peak_day_fleet.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range fleet {
+		if s, _ := enum(r["status"]); s != "AVAILABLE" && s != "IN_WORKSHOP" {
+			t.Errorf("%s: unsupported status %q", r["vehicle_id"], r["status"])
+		}
+	}
+}

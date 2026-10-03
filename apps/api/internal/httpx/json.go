@@ -21,6 +21,9 @@ import (
 type ErrorBody struct {
 	Message string `json:"message"`
 	Code    string `json:"code,omitempty"`
+	// FieldErrors lists every invalid field on a VALIDATION_FAILED response so
+	// forms can mark each error in place.
+	FieldErrors []FieldError `json:"fieldErrors,omitempty"`
 	// ConstraintResults is populated on 422 from the allocation endpoints so the
 	// dispatcher's rule panel can highlight exactly which rule blocked the plan.
 	ConstraintResults []domain.ConstraintResult `json:"constraintResults,omitempty"`
@@ -43,6 +46,11 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 // WriteError sends a problem the client can act on.
 func WriteError(w http.ResponseWriter, status int, message string) {
 	WriteJSON(w, status, ErrorBody{Message: message})
+}
+
+// WriteErrorCode is WriteError with a machine-readable code.
+func WriteErrorCode(w http.ResponseWriter, status int, code, message string) {
+	WriteJSON(w, status, ErrorBody{Message: message, Code: code})
 }
 
 // WriteConstraintViolation reports an infeasible allocation as 422 together with
