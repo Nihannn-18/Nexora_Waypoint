@@ -2,6 +2,7 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "allowJs": false,
+    "types": ["node"],
     "allowSyntheticDefaultImports": true,
     "strict": true
   },
