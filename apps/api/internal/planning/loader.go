@@ -48,6 +48,9 @@ func (l *PGLoader) LoadInput(ctx context.Context, planningDate time.Time, depotI
 	if err := l.loadVehicles(ctx, planningDate, depotID, &in); err != nil {
 		return Input{}, err
 	}
+	if err := l.loadFuelUsage(ctx, planningDate, &in); err != nil {
+		return Input{}, err
+	}
 	if err := l.loadOrders(ctx, planningDate, depotID, &in); err != nil {
 		return Input{}, err
 	}
@@ -131,12 +134,15 @@ func (l *PGLoader) loadServiceAllowances(ctx context.Context, in *Input) error {
 }
 
 func (l *PGLoader) loadVehicles(ctx context.Context, planningDate time.Time, depotID string, in *Input) error {
-	// Availability defaults to available when no row exists for the date, then
-	// is overridden by the explicit vehicle_daily_availability row. A vehicle is
-	// included only when its home depot matches.
+	// Availability follows the repository contract that the fleet file records
+	// exceptions to a fully available fleet, so an omitted vehicle-day is
+	// available: COALESCE(a.available, TRUE). A vehicle is included only when its
+	// home depot matches. weekly_fuel_quota_l is the authoritative weekly quota;
+	// it is loaded here so the fuel rule is enforced (a positive quota enables
+	// it).
 	rows, err := l.pool.Query(ctx, `
 		SELECT v.vehicle_id, v.type, v.temp, v.weight_cap_kg, v.volume_cap_m3, v.km_per_l,
-		       COALESCE(a.available, TRUE)
+		       v.weekly_fuel_quota_l, COALESCE(a.available, TRUE)
 		FROM vehicle v
 		LEFT JOIN vehicle_daily_availability a ON a.vehicle_id = v.vehicle_id AND a.date = $1
 		WHERE v.depot_id = $2
@@ -148,11 +154,50 @@ func (l *PGLoader) loadVehicles(ctx context.Context, planningDate time.Time, dep
 	for rows.Next() {
 		var v Vehicle
 		if err := rows.Scan(&v.VehicleID, &v.Type, &v.TempClass, &v.WeightCapKg,
-			&v.VolumeCapM3, &v.KmPerL, &v.Available); err != nil {
+			&v.VolumeCapM3, &v.KmPerL, &v.WeeklyFuelQuotaL, &v.Available); err != nil {
 			return fmt.Errorf("scan vehicle: %w", err)
 		}
 		v.DepotID = depotID
 		in.Vehicles = append(in.Vehicles, v)
+		if v.WeeklyFuelQuotaL > 0 {
+			in.FuelQuotaL[v.VehicleID] = v.WeeklyFuelQuotaL
+		}
+	}
+	return rows.Err()
+}
+
+// loadFuelUsage reads the authoritative weekly fuel ledger (vehicle_fuel_usage)
+// for the planning week only. The week is keyed by the ISO week of the planning
+// date from calendar_day, using the repository's Monday-based convention: the
+// ledger's week_start_date is the Monday of that ISO week. Rows for other weeks
+// are never considered, so usage cannot bleed across weeks. An absent row means
+// zero recorded usage for the week — the planner then accumulates this run's
+// trips. No historical usage is fabricated.
+func (l *PGLoader) loadFuelUsage(ctx context.Context, planningDate time.Time, in *Input) error {
+	var weekStart time.Time
+	err := l.pool.QueryRow(ctx, `
+		SELECT (date_trunc('week', date)::date)
+		FROM calendar_day WHERE date = $1`, planningDate).Scan(&weekStart)
+	if err != nil {
+		return fmt.Errorf("derive planning ISO week: %w", err)
+	}
+
+	rows, err := l.pool.Query(ctx, `
+		SELECT vehicle_id, estimated_fuel_l
+		FROM vehicle_fuel_usage
+		WHERE week_start_date = $1
+		ORDER BY vehicle_id`, weekStart)
+	if err != nil {
+		return fmt.Errorf("load weekly fuel usage: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var vehicleID string
+		var fuelL float64
+		if err := rows.Scan(&vehicleID, &fuelL); err != nil {
+			return fmt.Errorf("scan fuel usage: %w", err)
+		}
+		in.FuelUsedL[vehicleID] = fuelL
 	}
 	return rows.Err()
 }

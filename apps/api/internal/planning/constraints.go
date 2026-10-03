@@ -203,16 +203,30 @@ func CheckTrip(in Input, c Candidate) TripVerdict {
 	}
 
 	// --- Fuel --------------------------------------------------------------
-	// Applied only when the vehicle's weekly quota is modelled (a positive quota
-	// supplied). Otherwise the constraint is skipped rather than guessed.
+	// The weekly quota is a hard constraint whenever the vehicle has one
+	// (vehicle.weekly_fuel_quota_l > 0). Distance uses the agreed reference
+	// approximation (outbound + inter-stop; no return), and fuel is the weekly
+	// ledger usage plus this run's already-committed trips plus this candidate.
+	//
+	// A non-positive km_per_l makes the fuel division unsafe: the candidate is
+	// rejected with FUEL_EFFICIENCY_INVALID, never divided by zero and never
+	// silently skipped. FUEL_QUOTA_EXCEEDED is reserved for an actual quota
+	// breach.
 	if quota, ok := in.FuelQuotaL[c.Vehicle.VehicleID]; ok && quota > 0 {
-		projected, err := tripFuelLitres(in, trip, c.Vehicle)
-		if err == nil {
-			if !WithinWeeklyFuelQuota(c.WeeklyFuelUsedL, projected, quota) {
+		if c.Vehicle.KmPerL <= 0 {
+			fail(&v, domain.ConstraintFuelEfficiencyInvalid, c.Vehicle.VehicleID,
+				fmt.Sprintf("%s has no usable km/l figure, so its fuel use cannot be calculated.", c.Vehicle.VehicleID))
+		} else {
+			projected, err := tripFuelLitres(in, trip, c.Vehicle)
+			switch {
+			case err != nil:
+				fail(&v, domain.ConstraintFuelEfficiencyInvalid, c.Vehicle.VehicleID,
+					fmt.Sprintf("%s has no usable km/l figure, so its fuel use cannot be calculated.", c.Vehicle.VehicleID))
+			case !WithinWeeklyFuelQuota(c.WeeklyFuelUsedL, projected, quota):
 				fail(&v, domain.ConstraintFuelQuotaExceeded,
 					fmt.Sprintf("%.1f + %.1f / %.1f L", c.WeeklyFuelUsedL, projected, quota),
 					fmt.Sprintf("Projected weekly fuel for %s would exceed its %.0f L quota.", c.Vehicle.VehicleID, quota))
-			} else {
+			default:
 				pass(&v, domain.ConstraintFuelQuotaExceeded, fmt.Sprintf("%.1f + %.1f / %.1f L", c.WeeklyFuelUsedL, projected, quota))
 			}
 		}

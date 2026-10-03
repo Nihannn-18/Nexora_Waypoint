@@ -53,12 +53,17 @@ func (e *Engine) Plan(in Input) Result {
 	budget := map[string]VehicleDayBudget{}
 	committed := map[string]int{} // trips per vehicle
 	openTrips := map[string]int{} // vehicleID -> index into runTrips, -1 if none
+	// fuelAccrued is the litres committed by trips already placed in this run.
+	// It is added to the vehicle's authoritative weekly ledger usage so trip 2 is
+	// checked against base weekly usage + trip 1's fuel, and never against the
+	// base alone.
+	fuelAccrued := map[string]float64{}
 	runTrips := []runTrip{}
 
 	for _, key := range sortedGroupKeys(groups) {
 		g := parseGroupKey(key)
 		for _, o := range groups[key] {
-			if !tryPlace(in, o, g, budget, committed, openTrips, &runTrips) {
+			if !tryPlace(in, o, g, budget, committed, openTrips, fuelAccrued, &runTrips) {
 				// No vehicle in this group could take it: defer with the best
 				// explanation we can produce.
 			}
@@ -81,7 +86,7 @@ func (e *Engine) Plan(in Input) Result {
 		if served[o.OrderID] {
 			continue
 		}
-		deferred = append(deferred, bestEffortDeferral(in, o, budget, committed))
+		deferred = append(deferred, bestEffortDeferral(in, o, budget, committed, fuelAccrued))
 	}
 	deferred = append(deferred, ineligible...)
 	sortDeferrals(deferred)
@@ -91,8 +96,9 @@ func (e *Engine) Plan(in Input) Result {
 
 // tryPlace attempts to place one whole order onto a run trip. It returns true on
 // success.
-func tryPlace(in Input, o Order, g groupKey, budget map[string]VehicleDayBudget, committed map[string]int, openTrips map[string]int, runTrips *[]runTrip) bool {
+func tryPlace(in Input, o Order, g groupKey, budget map[string]VehicleDayBudget, committed map[string]int, openTrips map[string]int, fuelAccrued map[string]float64, runTrips *[]runTrip) bool {
 	for _, v := range compatibleVehicles(in, g) {
+		weeklyUsed := in.FuelUsedL[v.VehicleID] + fuelAccrued[v.VehicleID]
 		// 1. Try to extend the vehicle's open trip (if it is for this group).
 		if idx, ok := openTrips[v.VehicleID]; ok && idx >= 0 && idx < len(*runTrips) {
 			rt := &(*runTrips)[idx]
@@ -100,7 +106,7 @@ func tryPlace(in Input, o Order, g groupKey, budget map[string]VehicleDayBudget,
 				extended := append(append([]Order{}, rt.orders...), o)
 				cand := Candidate{
 					Vehicle: v, TripNo: rt.tripNo, Orders: extended,
-					DayBudget: budget[v.VehicleID], WeeklyFuelUsedL: in.FuelUsedL[v.VehicleID],
+					DayBudget: budget[v.VehicleID], WeeklyFuelUsedL: weeklyUsed,
 				}
 				verdict := CheckTrip(in, cand)
 				if verdict.OK {
@@ -118,7 +124,7 @@ func tryPlace(in Input, o Order, g groupKey, budget map[string]VehicleDayBudget,
 		}
 		cand := Candidate{
 			Vehicle: v, TripNo: next, Orders: []Order{o},
-			DayBudget: budget[v.VehicleID], WeeklyFuelUsedL: in.FuelUsedL[v.VehicleID],
+			DayBudget: budget[v.VehicleID], WeeklyFuelUsedL: weeklyUsed,
 		}
 		verdict := CheckTrip(in, cand)
 		if verdict.OK {
@@ -129,6 +135,9 @@ func tryPlace(in Input, o Order, g groupKey, budget map[string]VehicleDayBudget,
 			openTrips[v.VehicleID] = len(*runTrips) - 1
 			committed[v.VehicleID]++
 			accrue(budget, v.VehicleID, verdict.Trip)
+			if fuel, err := tripFuelLitres(in, verdict.Trip, v); err == nil {
+				fuelAccrued[v.VehicleID] += fuel
+			}
 			return true
 		}
 	}
@@ -162,8 +171,9 @@ func accrue(budget map[string]VehicleDayBudget, vehicleID string, t PlannedTrip)
 }
 
 // bestEffortDeferral explains why an order could not be placed: it re-checks it
-// against the group's fleet and reports the binding constraint.
-func bestEffortDeferral(in Input, o Order, budget map[string]VehicleDayBudget, committed map[string]int) DeferredOrder {
+// against the group's fleet and reports the binding constraint. It uses the same
+// weekly-used figure as the placement path (ledger + this run's accrued fuel).
+func bestEffortDeferral(in Input, o Order, budget map[string]VehicleDayBudget, committed map[string]int, fuelAccrued map[string]float64) DeferredOrder {
 	base := DeferredOrder{
 		OrderID: o.OrderID, OrderNumber: o.OrderNumber, OutletID: o.OutletID,
 		Brand: o.Brand, District: o.District,
@@ -200,7 +210,7 @@ func bestEffortDeferral(in Input, o Order, budget map[string]VehicleDayBudget, c
 		}
 		cand := Candidate{
 			Vehicle: v, TripNo: next, Orders: []Order{o},
-			DayBudget: budget[v.VehicleID], WeeklyFuelUsedL: in.FuelUsedL[v.VehicleID],
+			DayBudget: budget[v.VehicleID], WeeklyFuelUsedL: in.FuelUsedL[v.VehicleID] + fuelAccrued[v.VehicleID],
 		}
 		verdict := CheckTrip(in, cand)
 		if best == nil || fewerViolations(verdict, *best) {

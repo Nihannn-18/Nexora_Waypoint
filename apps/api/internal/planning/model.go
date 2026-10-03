@@ -82,8 +82,12 @@ type Vehicle struct {
 	VolumeCapM3 float64
 	// KmPerL is the vehicle's fuel efficiency, used only when the weekly quota
 	// is modelled.
-	KmPerL  float64
-	DepotID string
+	KmPerL float64
+	// WeeklyFuelQuotaL is the vehicle's ISO-week fuel allowance
+	// (vehicle.weekly_fuel_quota_l). A positive value means the fuel quota is
+	// enforced for this vehicle.
+	WeeklyFuelQuotaL float64
+	DepotID          string
 	// Available is false when the vehicle is in the workshop / broken down on
 	// the planning date. Only available vehicles may be used.
 	Available bool
