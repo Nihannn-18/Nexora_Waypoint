@@ -253,7 +253,82 @@ A shortfall is always recorded against a specific order line, never as a trip-le
 the dispatcher needs to know _which_ SKU is short to decide whether the stop can still go.
 
 ---
-.
+
+## Media (proof photos)
+
+Proof-of-delivery and shortfall photos are the only uploaded media. There is **no generic
+file-upload endpoint**: every object key is generated server-side from a `purpose` and a
+business owner, and the caller is authorised against that owner before any key is minted or
+any byte is read.
+
+The backend is chosen by configuration (`MEDIA_STORAGE`):
+
+- **`local`** (Docker Compose default) — files are written under `MEDIA_ROOT`; upload and
+  download both go through the API's own routes below, and the "upload URL" is same-origin.
+- **`s3`** — files live in a **private** S3 bucket. `POST /media/uploads` returns a presigned
+  `PUT` URL; `GET /media/{key}` returns a presigned `GET` URL. The bucket is never public.
+
+Object keys have the shape `<purpose>/<ownerId>/<uuid>` (`pod/LEG1/…`, `shortfall/OI1/…`),
+so a key is self-describing and can never be repurposed; a client-supplied key is never
+trusted.
+
+| Method | Endpoint         | Role                   | Purpose                                             | Server must                                                                                |
+| ------ | ---------------- | ---------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `POST` | `/media/uploads` | loader, driver         | Request an upload slot for a shortfall or POD photo | Authorise the caller against the owner; generate the key server-side; return an upload URL |
+| `PUT`  | `/media/{key}`   | loader, driver         | Upload bytes to a server-minted key (local backend) | Re-authorise; reject traversal keys and non-images; cap the body size                      |
+| `GET`  | `/media/{key}`   | dispatcher, store, etc | Read an authorised object (local backend)           | Re-authorise against the key's purpose/owner; stream with the stored content type          |
+
+### `POST /media/uploads`
+
+```json
+{ "purpose": "POD", "legId": "LEG1", "contentType": "image/jpeg" }
+```
+
+For a shortfall photo, send `orderItemId` instead of `legId`:
+
+```json
+{ "purpose": "SHORTFALL", "orderItemId": "OI1", "contentType": "image/jpeg" }
+```
+
+```json
+{ "fileRef": "pod/LEG1/9f2c…", "uploadMode": "inline", "uploadUrl": "/api/v1/media/pod/LEG1/9f2c…" }
+```
+
+With `MEDIA_STORAGE=s3` the response carries a presigned URL and the headers to send:
+
+```json
+{
+  "fileRef": "pod/LEG1/9f2c…",
+  "uploadMode": "presigned",
+  "uploadUrl": "https://waypoint-media.s3.ap-southeast-1.amazonaws.com/pod/LEG1/9f2c…?X-Amz-…",
+  "headers": { "Content-Type": "image/jpeg" }
+}
+```
+
+`contentType` must be one of `image/jpeg`, `image/png`, `image/webp`, `image/heic`.
+`purpose` must be `SHORTFALL` or `POD`. Anything else is `400`.
+
+### `PUT /media/{key}` (local backend)
+
+Upload the image bytes with the matching `Content-Type`. Returns `{ "fileRef": "<key>" }`.
+Bodies over 8 MiB are rejected with `413`. The object is written to a temp file and renamed,
+so a partial upload never appears under the real key.
+
+### `GET /media/{key}` (local backend)
+
+Streams the object with its recorded content type. Out-of-scope reads return `404` (found but
+not yours) or `403` per the standard error rules; a missing object is `404`.
+
+**Association.** A POD photo's `fileRef` is stored on the delivery event (`delivery_event.pod_photo`).
+A shortfall photo's `fileRef` is stored on the order line (`load_item.photo_ref`). The `POST
+/legs/{id}/events` and `POST /routes/{id}/shortfalls` payloads carry the `fileRef` returned
+here; there is no separate "attach media" step.
+
+> Authentication for these endpoints uses the same Better Auth session as the rest of the
+> API. The Go-side verification mechanism is **TBD** (see AGENTS.md "Authentication
+> boundary"); until it lands the handlers reject every request rather than guess.
+
+---
 
 ## Driver
 

@@ -18,7 +18,14 @@ import (
 // cover this API's routing needs, so there is no third-party router dependency
 // yet. Swap in chi or gin if you want middleware groups; nothing here depends
 // on the choice.
-func Router(cfg config.Config, started time.Time) http.Handler {
+// RouteRegistrar lets feature packages register their own routes without the
+// router importing them (which would create an import cycle, since those
+// packages use the JSON helpers in this one).
+type RouteRegistrar func(mux *http.ServeMux)
+
+// Router builds the HTTP handler for the whole API. Feature packages register
+// their routes through the extra registrars.
+func Router(cfg config.Config, started time.Time, registrars ...RouteRegistrar) http.Handler {
 	mux := http.NewServeMux()
 
 	// --- Operational -------------------------------------------------------
@@ -51,6 +58,13 @@ func Router(cfg config.Config, started time.Time) http.Handler {
 			"apiBase":  "/api/v1",
 		})
 	})
+
+	// --- Feature routes ----------------------------------------------------
+	// Each feature package registers its own routes, so this package never
+	// imports them.
+	for _, register := range registrars {
+		register(mux)
+	}
 
 	// --- API v1 ------------------------------------------------------------
 	// Register handlers as they are implemented, e.g.

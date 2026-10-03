@@ -1,0 +1,289 @@
+package media
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+
+	"waypoint.lk/api/internal/httpx"
+)
+
+// maxUploadBytes caps a single media upload. A phone photo is a few megabytes;
+// 8 MiB leaves headroom without letting a client exhaust the disk.
+const maxUploadBytes = 8 << 20
+
+// presignTTL is how long an upload or download URL stays valid, in seconds.
+const presignTTL = 300
+
+// Principal is the authenticated caller, reduced to what authorisation needs.
+// It is produced by the auth layer once Better Auth integration lands; until
+// then the resolver returns an error and every media request is 401.
+type Principal struct {
+	UserID string
+	Role   string
+}
+
+// Resolver turns an authenticated HTTP request into a Principal. The real
+// implementation verifies the Better Auth session and loads the user's role and
+// scope. It is deliberately unimplemented: the Better Auth -> Go verification
+// mechanism is TBD (see AGENTS.md "Authentication boundary"), so media endpoints
+// reject unauthenticated calls rather than guess.
+type Resolver interface {
+	Resolve(r *http.Request) (Principal, error)
+}
+
+// UnimplementedResolver is the placeholder wired in until Better Auth lands. It
+// refuses every request, so no media can be read or written without
+// authorisation — the safe default.
+type UnimplementedResolver struct{}
+
+// Resolve always returns ErrUnauthenticated.
+func (UnimplementedResolver) Resolve(*http.Request) (Principal, error) {
+	return Principal{}, ErrUnauthenticated
+}
+
+// ErrUnauthenticated is returned when no valid session is present.
+var ErrUnauthenticated = errors.New("unauthenticated")
+
+// Authorizer decides whether a principal may touch a given media purpose and
+// owner. The real implementation checks depot/outlet/route scope. The default
+// denies everything until auth exists.
+type Authorizer interface {
+	// AuthorizeUpload reports whether p may upload for purpose/owner, and the
+	// content-type/extension policy is the caller's concern.
+	AuthorizeUpload(ctx context.Context, p Principal, purpose Purpose, ownerID string) error
+	// AuthorizeRead reports whether p may read an existing object key.
+	AuthorizeRead(ctx context.Context, p Principal, key string) error
+}
+
+// DenyAuthorizer refuses everything, matching UnimplementedResolver.
+type DenyAuthorizer struct{}
+
+// AuthorizeUpload always denies.
+func (DenyAuthorizer) AuthorizeUpload(context.Context, Principal, Purpose, string) error {
+	return ErrUnauthenticated
+}
+
+// AuthorizeRead always denies.
+func (DenyAuthorizer) AuthorizeRead(context.Context, Principal, string) error {
+	return ErrUnauthenticated
+}
+
+// Handler serves the media endpoints. It depends on a Storage, a Resolver and
+// an Authorizer, all injected so the HTTP layer stays thin.
+type Handler struct {
+	storage    Storage
+	resolver   Resolver
+	authorizer Authorizer
+}
+
+// NewHandler builds the media handler.
+func NewHandler(storage Storage, resolver Resolver, authorizer Authorizer) *Handler {
+	return &Handler{storage: storage, resolver: resolver, authorizer: authorizer}
+}
+
+// RegisterRoutes mounts the media endpoints on the API mux. Upload URLs and
+// keys are minted server-side; the handlers authorise the caller before any
+// byte moves.
+func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/v1/media/uploads", h.CreateUpload)
+	mux.HandleFunc("PUT /api/v1/media/{key...}", h.PutBytes)
+	mux.HandleFunc("GET /api/v1/media/{key...}", h.GetBytes)
+}
+
+type createUploadRequest struct {
+	// Purpose is the workflow: "SHORTFALL" or "POD".
+	Purpose string `json:"purpose"`
+	// OrderItemID is required for SHORTFALL.
+	OrderItemID string `json:"orderItemId,omitempty"`
+	// LegID is required for POD.
+	LegID string `json:"legId,omitempty"`
+	// ContentType is the upload's media type, e.g. "image/jpeg".
+	ContentType string `json:"contentType"`
+}
+
+type createUploadResponse struct {
+	FileRef    string            `json:"fileRef"`
+	UploadMode string            `json:"uploadMode"`
+	UploadURL  string            `json:"uploadUrl"`
+	Headers    map[string]string `json:"headers,omitempty"`
+}
+
+// CreateUpload registers an intent to upload and returns a server-generated
+// key plus a URL to put bytes at. It never accepts a client-supplied key.
+func (h *Handler) CreateUpload(w http.ResponseWriter, r *http.Request) {
+	principal, err := h.resolver.Resolve(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	var req createUploadRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	purpose, ownerID, err := purposeAndOwner(req)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !isImageContentType(req.ContentType) {
+		httpx.WriteError(w, http.StatusBadRequest, "Only image uploads are accepted")
+		return
+	}
+	if err := h.authorizer.AuthorizeUpload(r.Context(), principal, purpose, ownerID); err != nil {
+		writeAuthzError(w, err)
+		return
+	}
+
+	key, err := KeyFor(purpose, ownerID, newObjectID())
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Could not allocate media key")
+		return
+	}
+
+	url, headers, err := h.storage.PresignPut(r.Context(), key, req.ContentType, presignTTL)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Could not prepare upload")
+		return
+	}
+
+	mode := "presigned"
+	if _, ok := h.storage.(*LocalStorage); ok {
+		mode = "inline"
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, createUploadResponse{
+		FileRef:    key,
+		UploadMode: mode,
+		UploadURL:  url,
+		Headers:    headers,
+	})
+}
+
+// PutBytes stores the uploaded object for a key minted by CreateUpload. It is
+// the local-backend upload route; with S3 the client uploads directly to the
+// presigned URL and never calls this.
+func (h *Handler) PutBytes(w http.ResponseWriter, r *http.Request) {
+	principal, err := h.resolver.Resolve(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	key := r.PathValue("key")
+	if _, err := safeKey(key); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid media key")
+		return
+	}
+	if err := h.authorizer.AuthorizeRead(r.Context(), principal, key); err != nil {
+		writeAuthzError(w, err)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if !isImageContentType(contentType) {
+		httpx.WriteError(w, http.StatusBadRequest, "Only image uploads are accepted")
+		return
+	}
+
+	body := http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	if err := h.storage.Put(r.Context(), key, body, contentType); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "Image exceeds the size limit")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Could not store image")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, map[string]string{"fileRef": key})
+}
+
+// GetBytes streams an authorised object for the local backend. With S3 the
+// client follows the presigned URL returned by the create step instead.
+func (h *Handler) GetBytes(w http.ResponseWriter, r *http.Request) {
+	principal, err := h.resolver.Resolve(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	key := r.PathValue("key")
+	if _, err := safeKey(key); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid media key")
+		return
+	}
+	if err := h.authorizer.AuthorizeRead(r.Context(), principal, key); err != nil {
+		writeAuthzError(w, err)
+		return
+	}
+
+	rc, contentType, err := h.storage.Get(r.Context(), key)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			httpx.WriteError(w, http.StatusNotFound, "Media not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Could not read media")
+		return
+	}
+	defer rc.Close()
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, rc)
+}
+
+func purposeAndOwner(req createUploadRequest) (Purpose, string, error) {
+	switch strings.ToUpper(strings.TrimSpace(req.Purpose)) {
+	case "SHORTFALL":
+		if strings.TrimSpace(req.OrderItemID) == "" {
+			return "", "", errors.New("orderItemId is required for a shortfall photo")
+		}
+		return PurposeShortfall, req.OrderItemID, nil
+	case "POD":
+		if strings.TrimSpace(req.LegID) == "" {
+			return "", "", errors.New("legId is required for a POD photo")
+		}
+		return PurposePOD, req.LegID, nil
+	default:
+		return "", "", errors.New(`purpose must be "SHORTFALL" or "POD"`)
+	}
+}
+
+func isImageContentType(ct string) bool {
+	switch strings.ToLower(strings.TrimSpace(ct)) {
+	case "image/jpeg", "image/png", "image/webp", "image/heic":
+		return true
+	default:
+		return false
+	}
+}
+
+// newObjectID returns a random hex identifier for an object key.
+func newObjectID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(fmt.Sprintf("media: random id: %v", err))
+	}
+	return hex.EncodeToString(b[:])
+}
+
+func writeAuthzError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrUnauthenticated) {
+		httpx.WriteError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+	httpx.WriteError(w, http.StatusForbidden, "Out of scope for this record")
+}

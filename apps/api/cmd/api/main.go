@@ -26,6 +26,9 @@ import (
 
 	"waypoint.lk/api/internal/config"
 	"waypoint.lk/api/internal/httpx"
+	"waypoint.lk/api/internal/media"
+	"waypoint.lk/api/internal/seed"
+	"waypoint.lk/api/internal/store"
 )
 
 func main() {
@@ -43,10 +46,50 @@ func run() error {
 
 	setupLogging(cfg)
 
+	// Connect, apply migrations, then seed reference data — in that order. A
+	// failure here is fatal: serving requests against an unmigrated or
+	// unseeded database would produce wrong answers rather than errors.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if err := db.Migrate(ctx); err != nil {
+		return err
+	}
+	slog.Info("migrations applied")
+
+	if res, err := seed.Run(ctx, db.Pool()); err != nil {
+		return err
+	} else {
+		slog.Info("reference data seeded",
+			"depots", res.Depots,
+			"outlets", res.Outlets,
+			"vehicles", res.Vehicles,
+			"districtTravel", res.DistrictTravel,
+			"serviceAllowance", res.ServiceAllowance,
+			"calendarDays", res.CalendarDays,
+		)
+	}
+
+	// Media backend: local filesystem in Compose, private S3 when configured.
+	// The auth resolver/authorizer are placeholders until Better Auth lands, so
+	// media endpoints reject unauthenticated calls rather than allow them.
+	storage, err := media.NewStorage(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	mediaHandler := media.NewHandler(storage, media.UnimplementedResolver{}, media.DenyAuthorizer{})
+	slog.Info("media storage ready", "backend", cfg.MediaStorage)
+
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, started),
+		Handler: httpx.Router(cfg, started, mediaHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
@@ -56,11 +99,8 @@ func run() error {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	// Shut down on SIGINT/SIGTERM so an in-flight allocation confirmation is
-	// allowed to finish its transaction instead of being cut mid-write.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
+	// Shutdown is triggered by the same signal context created above, so an
+	// in-flight allocation confirmation can finish instead of being cut off.
 	serverError := make(chan error, 1)
 	go func() {
 		slog.Info("waypoint api listening",

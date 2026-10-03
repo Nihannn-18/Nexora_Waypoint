@@ -23,16 +23,41 @@ type Config struct {
 	DatabaseURL string
 	// RabbitURL is the AMQP URL for the planning job queue.
 	RabbitURL string
-	// JWTSecret signs access tokens.
+	// JWTSecret is legacy scaffolding. Authentication is being moved to Better
+	// Auth in the web app; the Go API will verify the authenticated request
+	// rather than issue tokens. The exact verification mechanism is TBD, so
+	// this field is retained only until that decision is made.
 	JWTSecret string
-	// TokenTTL is how long an access token stays valid.
+	// TokenTTL is legacy scaffolding, tied to JWTSecret and pending the same
+	// Better Auth decision.
 	TokenTTL time.Duration
 	// CORSOrigin is the web origin allowed to call this API.
 	CORSOrigin string
 	// Timezone the business day is reckoned in. The 16:00 cutoff and all
 	// delivery windows are wall-clock times in this zone.
 	Timezone string
+
+	// MediaStorage selects the media backend: "local" or "s3". Defaults to
+	// "local" so Docker Compose works with no AWS configuration at all.
+	MediaStorage string
+	// MediaRoot is the filesystem root for local media. Only used when
+	// MediaStorage is "local".
+	MediaRoot string
+	// S3Bucket is the private bucket for media. Only used when MediaStorage is
+	// "s3"; the bucket must not be public.
+	S3Bucket string
+	// AWSRegion is the region of S3Bucket. Region and credentials otherwise
+	// come from the standard AWS SDK chain (IAM role, SSO, env), never from a
+	// committed file.
+	AWSRegion string
 }
+
+const (
+	// StorageLocal persists media on the local filesystem (Compose fallback).
+	StorageLocal = "local"
+	// StorageS3 persists media in a private S3 bucket (hosted deployment).
+	StorageS3 = "s3"
+)
 
 const devJWTSecret = "dev-only-insecure-secret-change-me"
 
@@ -45,6 +70,11 @@ func Load() (Config, error) {
 		JWTSecret:   getEnv("JWT_SECRET", ""),
 		CORSOrigin:  getEnv("CORS_ORIGIN", "http://localhost:3000"),
 		Timezone:    getEnv("TZ", "Asia/Colombo"),
+
+		MediaStorage: getEnv("MEDIA_STORAGE", StorageLocal),
+		MediaRoot:    getEnv("MEDIA_ROOT", "/data/media"),
+		S3Bucket:     getEnv("S3_BUCKET", ""),
+		AWSRegion:    getEnv("AWS_REGION", ""),
 	}
 
 	port, err := strconv.Atoi(getEnv("PORT", "8080"))
@@ -68,6 +98,24 @@ func Load() (Config, error) {
 
 	if _, err := time.LoadLocation(cfg.Timezone); err != nil {
 		return Config{}, fmt.Errorf("TZ %q is not a known timezone: %w", cfg.Timezone, err)
+	}
+
+	// Fail fast on a misconfigured media backend rather than at the first
+	// upload. "local" needs a root directory; "s3" needs a bucket and region.
+	switch cfg.MediaStorage {
+	case StorageLocal:
+		if cfg.MediaRoot == "" {
+			return Config{}, errors.New("MEDIA_ROOT must be set when MEDIA_STORAGE=local")
+		}
+	case StorageS3:
+		if cfg.S3Bucket == "" {
+			return Config{}, errors.New("S3_BUCKET must be set when MEDIA_STORAGE=s3")
+		}
+		if cfg.AWSRegion == "" {
+			return Config{}, errors.New("AWS_REGION must be set when MEDIA_STORAGE=s3")
+		}
+	default:
+		return Config{}, fmt.Errorf("MEDIA_STORAGE must be %q or %q, got %q", StorageLocal, StorageS3, cfg.MediaStorage)
 	}
 
 	return cfg, nil
