@@ -17,6 +17,8 @@ to build a plan but to say **which orders were deferred and why**.
 
 ## Contents
 
+- [Run with Docker Compose](#run-with-docker-compose)
+- [AWS Deployment](#aws-deployment)
 - [Quick start](#quick-start)
 - [Seeded accounts](#seeded-accounts)
 - [Judge walkthrough](#judge-walkthrough)
@@ -26,6 +28,57 @@ to build a plan but to say **which orders were deferred and why**.
 - [Departures from the Day 5 design and the specification](#departures-from-the-day-5-design-and-the-specification)
 - [Build status](#build-status)
 - [Documentation](#documentation)
+
+---
+
+## Run with Docker Compose
+
+**This is the guaranteed, reproducible way to run Waypoint. It needs no cloud account and no
+AWS credentials.** A fresh clone runs the complete application with one command.
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+`JWT_SECRET` in `.env.example` already has a working local value, so no editing is required to
+start.
+
+1. **Configure (optional).** The defaults work as-is. To change ports or the database
+   password, edit `.env` after copying it.
+2. **Start the stack.** The command above builds and starts PostgreSQL 17, RabbitMQ 4, the Go
+   API (which runs migrations then seeds reference data) and the Next.js web app.
+3. **Open the frontend** at <http://localhost:3000>. The API health check is
+   <http://localhost:8080/healthz>; the RabbitMQ management UI is <http://localhost:15672>.
+4. **Sign in** using the [seeded demo accounts](#seeded-accounts) (password `waypoint2026`).
+5. **Local media storage.** Loader shortfall photos and driver POD photos are stored on the
+   local filesystem at `MEDIA_ROOT` (`/data/media`), backed by a named Docker volume
+   (`media-data`). `docker compose down` keeps them; `docker compose down -v` deletes them.
+   No S3 bucket or AWS credentials are involved (see
+   [`docs/deployment.md`](docs/deployment.md)).
+6. **Stop** with `docker compose down` (keeps data) or `docker compose down -v` (wipes data
+   and media).
+
+| Service             | URL                             |
+| ------------------- | ------------------------------- |
+| Web app             | <http://localhost:3000>         |
+| API health          | <http://localhost:8080/healthz> |
+| RabbitMQ management | <http://localhost:15672>        |
+
+---
+
+## AWS Deployment
+
+AWS is the **hosted deployment target**; Docker Compose above is the reproducible fallback.
+Neither replaces the other, and AWS is never required to run locally.
+
+The hosted stack is EC2 (Nginx + Next.js + Go API) with a private **S3** bucket for media,
+**Neon** PostgreSQL and **RabbitMQ**. Configuration is entirely environment-driven
+(`MEDIA_STORAGE=s3`, `S3_BUCKET`, `AWS_REGION`, `DATABASE_URL`); credentials come from an EC2
+instance role, never the repository. `/healthz` and `/readyz` expose liveness and readiness.
+
+Full procedure: [`docs/deployment.md`](docs/deployment.md). Media storage is a **team
+deployment decision**, not a Challenge Booklet requirement.
 
 ---
 
@@ -335,15 +388,18 @@ screen sets, the planning engine and worker, the offline outbox, and realtime pr
 
 ## Documentation
 
-| Document                                                         | Contents                                                                      |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [`docs/architecture.md`](docs/architecture.md)                   | Components, request flows, degradation behaviour                              |
-| [`docs/data-model.md`](docs/data-model.md)                       | Tables, relationships, the constraint catalogue                               |
-| [`docs/api.md`](docs/api.md)                                     | Every endpoint with role, purpose and payload                                 |
-| [`docs/prioritisation-policy.md`](docs/prioritisation-policy.md) | The documented fairness ordering behind deferrals                             |
-| [`docs/ai-disclosure.md`](docs/ai-disclosure.md)                 | Required AI tool disclosure                                                   |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md)                             | Conventions, branch naming, and the backend handoff                           |
-| [`CLAUDE.md`](CLAUDE.md)                                         | Guidance for coding agents: rules, architecture, domain, screens, build order |
+| Document                                                         | Contents                                                                             |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [`docs/architecture.md`](docs/architecture.md)                   | Components, request flows, degradation behaviour                                     |
+| [`docs/data-model.md`](docs/data-model.md)                       | Tables, relationships, the constraint catalogue                                      |
+| [`docs/api.md`](docs/api.md)                                     | Every endpoint with role, purpose and payload                                        |
+| [`docs/prioritisation-policy.md`](docs/prioritisation-policy.md) | The documented fairness ordering behind deferrals                                    |
+| [`docs/ai-disclosure.md`](docs/ai-disclosure.md)                 | Required AI tool disclosure                                                          |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md)                             | Conventions, branch naming, and the backend handoff                                  |
+| [`CLAUDE.md`](CLAUDE.md)                                         | Guidance for coding agents: rules, architecture, domain, screens, build order        |
+| [`AGENTS.md`](AGENTS.md)                                         | Consolidated booklet/spec checklist: invariants, offline/sync, test matrix, delivery |
+| [`docs/skills.md`](docs/skills.md)                               | Agent skills installed, skipped and why                                              |
+| [`docs/deployment.md`](docs/deployment.md)                       | Compose fallback, local media, AWS EC2/S3/Nginx/Neon, procedures                     |
 
 ---
 
