@@ -7,23 +7,27 @@
  */
 
 import type {
+  Brand,
+  ClockTime,
   ConfirmAllocationRequest,
   CreateOrderRequest,
   CreateReceiptRequest,
   CustomerOrder,
   DeferralLogEntry,
   DeferralRequest,
-  DeliveryEvent,
   DeliveryEventRequest,
   DemandForecastPoint,
   DemandForecastQuery,
+  DockType,
   IsoDate,
+  IsoDateTime,
   LiveRouteState,
   LoadItemRecord,
   LoginRequest,
   LoginResponse,
   MetaResponse,
   Outlet,
+  ParkingConstraint,
   PlanningJob,
   PlanningResults,
   RecordShortfallRequest,
@@ -34,6 +38,8 @@ import type {
   SuggestPlanRequest,
   SyncEventsRequest,
   SyncResult,
+  TempRequirement,
+  TripNumber,
   ValidateAllocationRequest,
   ValidationResponse,
   Vehicle,
@@ -45,7 +51,82 @@ export interface SyncEventOutcome {
   readonly clientEventId: string;
   readonly status: SyncResult;
   readonly serverEventId?: string;
-  readonly message?: string;
+  /** Short, non-sensitive explanation on REJECTED / CONFLICT. */
+  readonly reason?: string;
+}
+
+/** A route's header as a driver sees it. `status` is the DB route status. */
+export interface DriverRouteSummary {
+  readonly routeId: string;
+  readonly routeDate: IsoDate;
+  readonly vehicleId: string;
+  readonly tripNo: TripNumber;
+  readonly brand: Brand;
+  readonly district: string;
+  readonly status: string;
+}
+
+/** One stop on GET /driver/routes. Absent `plannedArrival` = none stored. */
+export interface DriverRouteStop {
+  readonly legId: string;
+  readonly seq: number;
+  readonly outletId: string;
+  readonly outletName: string;
+  readonly windowOpen: ClockTime;
+  readonly windowClose: ClockTime;
+  readonly plannedArrival?: IsoDateTime;
+  readonly status: string;
+}
+
+export interface DriverRoute extends DriverRouteSummary {
+  readonly stops: readonly DriverRouteStop[];
+}
+
+/** The driver-visible stop (GET /legs/{id}): route, outlet window, orders. */
+export interface LegContext {
+  readonly legId: string;
+  readonly routeId: string;
+  readonly depotId: string;
+  readonly routeDate: IsoDate;
+  readonly toOutletId: string;
+  readonly status: string;
+  readonly orderIds: readonly string[];
+  readonly seq: number;
+  readonly plannedArrival?: IsoDateTime;
+  readonly route: DriverRouteSummary;
+  readonly outlet: {
+    readonly outletId: string;
+    readonly name: string;
+    readonly district: string;
+    readonly dockType: DockType;
+    readonly parkingConstraint: ParkingConstraint;
+    readonly windowOpen: ClockTime;
+    readonly windowClose: ClockTime;
+    readonly mallWindowOpen?: ClockTime;
+    readonly mallWindowClose?: ClockTime;
+  };
+  readonly orders: readonly {
+    readonly orderId: string;
+    readonly orderNumber: string;
+    readonly tempRequirement: TempRequirement;
+    readonly totalUnits: number;
+    readonly totalWeightKg: number;
+    readonly totalVolumeM3: number;
+    readonly lines: readonly {
+      readonly orderItemId: string;
+      readonly sku: string;
+      readonly name: string;
+      readonly quantity: number;
+    }[];
+  }[];
+}
+
+/** Where to PUT the bytes of a POD image; `fileRef` goes on the event. */
+export interface MediaUpload {
+  readonly fileRef: string;
+  readonly uploadMode: 'inline' | 'presigned';
+  readonly uploadUrl: string;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 export class WaypointClient {
@@ -205,11 +286,31 @@ export class WaypointClient {
 
   /* --- Driver ---------------------------------------------------------- */
 
+  /** Depot-scoped: every live route of the driver's depot on `date`. */
+  getDriverRoutes(date: IsoDate): Promise<readonly DriverRoute[]> {
+    return this.http.get<readonly DriverRoute[]>('/driver/routes', {
+      query: { date },
+    });
+  }
+
+  getLeg(legId: string): Promise<LegContext> {
+    return this.http.get<LegContext>(`/legs/${legId}`);
+  }
+
   recordDeliveryEvent(
     legId: string,
     body: DeliveryEventRequest,
-  ): Promise<DeliveryEvent> {
-    return this.http.post<DeliveryEvent>(`/legs/${legId}/events`, body);
+  ): Promise<SyncEventOutcome> {
+    return this.http.post<SyncEventOutcome>(`/legs/${legId}/events`, body);
+  }
+
+  /** Mints a server-side `pod/<legId>/…` key; never accepts a client key. */
+  createPodUpload(legId: string, contentType: string): Promise<MediaUpload> {
+    return this.http.post<MediaUpload>('/media/uploads', {
+      purpose: 'POD',
+      legId,
+      contentType,
+    });
   }
 
   /** Batch upload for events captured offline. Each is resolved independently. */
@@ -219,11 +320,7 @@ export class WaypointClient {
     return this.http.post('/sync/events', body);
   }
 
-  getSyncStatus(): Promise<{
-    pending: number;
-    synced: number;
-    failed: number;
-  }> {
+  getSyncStatus(): Promise<{ synced: number; conflicts: number }> {
     return this.http.get('/sync/status');
   }
 

@@ -3,7 +3,7 @@
  * Endpoint contracts are listed in docs/api.md.
  */
 
-import type { Brand, TripNumber } from './domain';
+import type { Brand, DeliveryFailureReason, TripNumber } from './domain';
 import type {
   ClockTime,
   IsoDate,
@@ -115,7 +115,8 @@ export interface DeliveryEventRequest {
     readonly damagedQty?: number;
     readonly shortQty?: number;
   }[];
-  readonly reasonCode?: string;
+  /** Required when outcome is FAILED. */
+  readonly reasonCode?: DeliveryFailureReason;
   readonly notes?: string;
   readonly proofOfDelivery?: ProofOfDelivery;
 }
