@@ -12,10 +12,15 @@
  */
 import {
   WaypointApiError,
+  type DriverRoute,
   type LegContext,
   type SyncEventOutcome,
 } from '@waypoint/api-client';
-import type { DeliveryOutcome, SyncEventsRequest } from '@waypoint/shared-types';
+import type {
+  DeliveryFailureReason,
+  DeliveryOutcome,
+  SyncEventsRequest,
+} from '@waypoint/shared-types';
 
 export type OutboxStatus = 'PENDING' | 'SYNCED' | 'REJECTED';
 
@@ -27,7 +32,7 @@ export interface OutboxEvent {
   readonly outcome: DeliveryOutcome;
   readonly occurredAt: string;
   readonly createdOffline: boolean;
-  readonly reasonCode?: string;
+  readonly reasonCode?: DeliveryFailureReason;
   readonly notes?: string;
   readonly receiverName?: string;
   readonly photo?: Blob;
@@ -57,15 +62,19 @@ export type NewEvent = Omit<
 const DB_NAME = 'waypoint-driver';
 const EVENTS = 'outbox';
 const LEGS = 'legs';
+const ROUTES = 'routes';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDb(): Promise<IDBDatabase> {
   dbPromise ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(EVENTS, { keyPath: 'clientEventId' });
-      req.result.createObjectStore(LEGS, { keyPath: 'legId' });
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = (ev) => {
+      if (ev.oldVersion < 1) {
+        req.result.createObjectStore(EVENTS, { keyPath: 'clientEventId' });
+        req.result.createObjectStore(LEGS, { keyPath: 'legId' });
+      }
+      req.result.createObjectStore(ROUTES, { keyPath: 'date' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -136,6 +145,20 @@ export function getCachedLeg(legId: string): Promise<LegContext | undefined> {
 }
 export function listLegs(): Promise<LegContext[]> {
   return run(LEGS, 'readonly', (s) => s.getAll());
+}
+
+/** The run sheet (GET /driver/routes) for one date, saved while online. */
+export interface CachedRoutes {
+  readonly date: string;
+  readonly routes: readonly DriverRoute[];
+}
+export function cacheRoutes(c: CachedRoutes): Promise<IDBValidKey> {
+  return run(ROUTES, 'readwrite', (s) => s.put(c));
+}
+/** Offline there is no API clock, so the newest saved run sheet is today's. */
+export async function latestCachedRoutes(): Promise<CachedRoutes | undefined> {
+  const all = await run<CachedRoutes[]>(ROUTES, 'readonly', (s) => s.getAll());
+  return all.sort((a, b) => a.date.localeCompare(b.date)).at(-1);
 }
 
 /* --- Sync ----------------------------------------------------------------- */

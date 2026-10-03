@@ -1,13 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { WaypointApiError, type LegContext } from '@waypoint/api-client';
+import {
+  WaypointApiError,
+  type DriverRoute,
+  type LegContext,
+} from '@waypoint/api-client';
 import { useOnlineStatus } from '@waypoint/ui';
 import { api, tokenStore } from '../../../lib/api';
 import {
   backoffMs,
   cacheLeg,
+  cacheRoutes,
   getCachedLeg,
+  latestCachedRoutes,
   isSyncing,
   listEvents,
   subscribe,
@@ -104,8 +110,24 @@ export function useOutbox(): OutboxState {
 
 export type LegState =
   | { readonly status: 'loading' }
-  | { readonly status: 'ready'; readonly leg: LegContext; readonly cached: boolean }
+  | {
+      readonly status: 'ready';
+      readonly leg: LegContext;
+      readonly cached: boolean;
+    }
   | { readonly status: 'error'; readonly message: string };
+
+/** Says why a driver read failed; a 401 is never dressed up as success. */
+export function loadError(err: unknown, offline: string, what: string): string {
+  if (!(err instanceof WaypointApiError))
+    return `Couldn’t load ${what}. Try again in a moment.`;
+  if (err.isOffline) return offline;
+  if (err.status === 401)
+    return 'Your session has ended. Sign in again to load ' + what + '.';
+  if (err.status === 403 || err.status === 404)
+    return `Couldn’t find ${what} on your depot’s routes.`;
+  return `Couldn’t load ${what}. Try again in a moment.`;
+}
 
 /** GET /legs/{id}, cached in IndexedDB; offline falls back to the cached copy. */
 export function useLeg(legId: string): LegState {
@@ -125,12 +147,11 @@ export function useLeg(legId: string): LegState {
         if (leg) return done({ status: 'ready', leg, cached: true });
         done({
           status: 'error',
-          message:
-            err instanceof WaypointApiError && err.isOffline
-              ? 'This stop isn’t saved on the phone yet. Open it once with signal.'
-              : err instanceof WaypointApiError && err.status === 404
-                ? 'This stop doesn’t exist or isn’t on your depot’s routes.'
-                : 'Couldn’t load this stop. Try again in a moment.',
+          message: loadError(
+            err,
+            'This stop isn’t saved on the phone yet. Open it once with signal.',
+            'this stop',
+          ),
         });
       });
     return () => {
@@ -139,4 +160,59 @@ export function useLeg(legId: string): LegState {
   }, [legId]);
 
   return state;
+}
+
+export type RoutesState =
+  | { readonly status: 'loading' }
+  | {
+      readonly status: 'ready';
+      readonly date: string;
+      readonly routes: readonly DriverRoute[];
+      readonly cached: boolean;
+    }
+  | { readonly status: 'error'; readonly message: string };
+
+/**
+ * Today's run sheet: "today" is the API clock (demo clock in demo mode), never
+ * the phone's. Cached in IndexedDB; offline falls back to the saved copy.
+ */
+export function useRoutes(): RoutesState {
+  const [state, setState] = useState<RoutesState>({ status: 'loading' });
+
+  useEffect(() => {
+    let live = true;
+    const done = (s: RoutesState) => live && setState(s);
+    (async () => {
+      try {
+        // `now` carries the Asia/Colombo offset, so its date part is the business date.
+        const date = (await api.meta()).now.slice(0, 10);
+        const routes = await api.getDriverRoutes(date);
+        await cacheRoutes({ date, routes });
+        done({ status: 'ready', date, routes, cached: false });
+      } catch (err) {
+        const saved = await latestCachedRoutes().catch(() => undefined);
+        if (saved) return done({ status: 'ready', ...saved, cached: true });
+        done({
+          status: 'error',
+          message: loadError(
+            err,
+            'Today’s route isn’t saved on this phone yet. Open the cockpit once with signal.',
+            'today’s route',
+          ),
+        });
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  return state;
+}
+
+/** Saves every stop of a route on the phone so each opens without signal. */
+export function prefetchLegs(route: DriverRoute): void {
+  for (const s of route.stops) {
+    api.getLeg(s.legId).then(cacheLeg, () => undefined);
+  }
 }

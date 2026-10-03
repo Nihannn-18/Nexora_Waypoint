@@ -157,6 +157,16 @@ export type DeliveryOutcome = (typeof DELIVERY_OUTCOMES)[number];
 export const POD_TYPES = ['PHOTO', 'SIGNATURE', 'NONE'] as const;
 export type PodType = (typeof POD_TYPES)[number];
 
+/** R-02 reason chips. Required on a FAILED outcome; stored on delivery_event.reason_code. */
+export const DELIVERY_FAILURE_REASONS = [
+  'OUTLET_CLOSED',
+  'ACCESS_BLOCKED',
+  'REFUSED_BY_STORE',
+  'GOODS_DAMAGED',
+  'OTHER',
+] as const;
+export type DeliveryFailureReason = (typeof DELIVERY_FAILURE_REASONS)[number];
+
 /** Result of reconciling one offline-captured event. Never silently overwrite. */
 export const SYNC_RESULTS = [
   'ACCEPTED',

@@ -2,7 +2,11 @@
 
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
-import { DELIVERY_OUTCOMES, type DeliveryOutcome } from '@waypoint/shared-types';
+import {
+  DELIVERY_OUTCOMES,
+  type DeliveryFailureReason,
+  type DeliveryOutcome,
+} from '@waypoint/shared-types';
 import { enqueue } from '../../../_lib/outbox';
 import { useLeg } from '../../../_lib/use-outbox';
 import {
@@ -27,7 +31,7 @@ const REASONS = [
   ['REFUSED_BY_STORE', 'Refused by store'],
   ['GOODS_DAMAGED', 'Goods damaged'],
   ['OTHER', 'Other'],
-] as const;
+] as const satisfies readonly (readonly [DeliveryFailureReason, string])[];
 
 /** R-02 Record outcome — Figma 35:5426, validation 35:5561. */
 export default function OutcomePage() {
@@ -48,7 +52,7 @@ function RecordOutcome() {
   const [outcome, setOutcome] = useState<DeliveryOutcome>(
     DELIVERY_OUTCOMES.find((o) => o === initial) ?? 'DELIVERED',
   );
-  const [reason, setReason] = useState<string | null>(null);
+  const [reason, setReason] = useState<DeliveryFailureReason | null>(null);
   const [notes, setNotes] = useState('');
   const [photo, setPhoto] = useState<File | null>(null);
   const [tried, setTried] = useState(false);
