@@ -49,7 +49,11 @@ RUN mkdir -p /data/media && chown -R waypoint:waypoint /data
 WORKDIR /app
 COPY --from=builder /out/waypoint-api /app/waypoint-api
 COPY --chown=root:root apps/api/docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod 0755 /app/docker-entrypoint.sh
+# Normalise line endings in the image. A Windows checkout can carry CRLF, which
+# leaves the shebang as "#!/bin/sh\r" and makes the container fail to exec the
+# entrypoint ("no such file or directory") even though the file is present.
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh \
+    && chmod 0755 /app/docker-entrypoint.sh
 
 ENV APP_ENV=production \
     PORT=8080 \

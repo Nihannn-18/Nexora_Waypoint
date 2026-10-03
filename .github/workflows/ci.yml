@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # `development` is the integration branch: PRs target it, so CI must run there
+  # or a regression (for example a Windows CRLF entrypoint) reaches it unchecked.
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
-    branches: [main]
+    branches: [main, development]
 
 # A new push to the same branch makes the previous run irrelevant. Cancelling it
 # keeps the queue short, which matters when four people are pushing in one afternoon.
@@ -102,20 +104,8 @@ jobs:
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
-      - name: Smoke-test the API container
-        run: |
-          docker run -d --name api-smoke -p 8080:8080 \
-            -e APP_ENV=development \
-            waypoint-api:ci
-          for i in $(seq 1 30); do
-            if curl -fsS http://localhost:8080/healthz; then
-              echo "API is healthy"
-              docker rm -f api-smoke
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "API did not become healthy:"
-          docker logs api-smoke
-          docker rm -f api-smoke
-          exit 1
+      - name: Smoke-test the API container (build, entrypoint, health)
+        # Builds and starts the API through Compose with its dependencies, then
+        # proves the entrypoint ran and /healthz and /readyz answer. Catches the
+        # CRLF-shebang failure that stops the container from starting on Windows.
+        run: bash scripts/smoke-api-container.sh
