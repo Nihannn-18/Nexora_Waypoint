@@ -58,6 +58,7 @@ export const CONSTRAINT_CODES = [
   'DELIVERY_WINDOW_MISSED',
   'MALL_WINDOW_MISSED',
   'FUEL_QUOTA_EXCEEDED',
+  'FUEL_EFFICIENCY_INVALID',
   'DUPLICATE_ASSIGNMENT',
   'NON_OPERATING_DAY',
 ] as const;
@@ -169,6 +170,13 @@ export const CONSTRAINT_CATALOG: Readonly<
     designRuleId: 'E-07',
     label: 'Weekly fuel quota',
     explanation: 'Projected weekly fuel use would exceed this vehicle’s quota.',
+  },
+  FUEL_EFFICIENCY_INVALID: {
+    code: 'FUEL_EFFICIENCY_INVALID',
+    designRuleId: 'E-07',
+    label: 'Fuel efficiency data',
+    explanation:
+      'The vehicle’s fuel efficiency is missing or non-positive, so fuel use cannot be calculated.',
   },
   BRAND_DISTRICT_MIX: {
     code: 'BRAND_DISTRICT_MIX',

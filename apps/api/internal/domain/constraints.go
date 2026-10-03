@@ -13,23 +13,24 @@ package domain
 type ConstraintCode string
 
 const (
-	ConstraintVehicleUnavailable ConstraintCode = "VEHICLE_UNAVAILABLE"
-	ConstraintDepotMismatch      ConstraintCode = "DEPOT_MISMATCH"
-	ConstraintBrandDistrictMix   ConstraintCode = "BRAND_DISTRICT_MIX"
-	ConstraintReeferRequired     ConstraintCode = "REEFER_REQUIRED"
-	ConstraintVanOnlyAccess      ConstraintCode = "VAN_ONLY_ACCESS"
-	ConstraintOrderSplit         ConstraintCode = "ORDER_SPLIT_FORBIDDEN"
-	ConstraintTripNumberInvalid  ConstraintCode = "TRIP_NUMBER_INVALID"
-	ConstraintTripLimitExceeded  ConstraintCode = "TRIP_LIMIT_EXCEEDED"
-	ConstraintWeightExceeded     ConstraintCode = "WEIGHT_CAPACITY_EXCEEDED"
-	ConstraintVolumeExceeded     ConstraintCode = "VOLUME_CAPACITY_EXCEEDED"
-	ConstraintFreshTimeBudget    ConstraintCode = "FRESH_TIME_BUDGET"
-	ConstraintStyleTechBudget    ConstraintCode = "STYLE_TECH_TIME_BUDGET"
-	ConstraintWindowMissed       ConstraintCode = "DELIVERY_WINDOW_MISSED"
-	ConstraintMallWindowMissed   ConstraintCode = "MALL_WINDOW_MISSED"
-	ConstraintFuelQuotaExceeded  ConstraintCode = "FUEL_QUOTA_EXCEEDED"
-	ConstraintDuplicateAssign    ConstraintCode = "DUPLICATE_ASSIGNMENT"
-	ConstraintNonOperatingDay    ConstraintCode = "NON_OPERATING_DAY"
+	ConstraintVehicleUnavailable    ConstraintCode = "VEHICLE_UNAVAILABLE"
+	ConstraintDepotMismatch         ConstraintCode = "DEPOT_MISMATCH"
+	ConstraintBrandDistrictMix      ConstraintCode = "BRAND_DISTRICT_MIX"
+	ConstraintReeferRequired        ConstraintCode = "REEFER_REQUIRED"
+	ConstraintVanOnlyAccess         ConstraintCode = "VAN_ONLY_ACCESS"
+	ConstraintOrderSplit            ConstraintCode = "ORDER_SPLIT_FORBIDDEN"
+	ConstraintTripNumberInvalid     ConstraintCode = "TRIP_NUMBER_INVALID"
+	ConstraintTripLimitExceeded     ConstraintCode = "TRIP_LIMIT_EXCEEDED"
+	ConstraintWeightExceeded        ConstraintCode = "WEIGHT_CAPACITY_EXCEEDED"
+	ConstraintVolumeExceeded        ConstraintCode = "VOLUME_CAPACITY_EXCEEDED"
+	ConstraintFreshTimeBudget       ConstraintCode = "FRESH_TIME_BUDGET"
+	ConstraintStyleTechBudget       ConstraintCode = "STYLE_TECH_TIME_BUDGET"
+	ConstraintWindowMissed          ConstraintCode = "DELIVERY_WINDOW_MISSED"
+	ConstraintMallWindowMissed      ConstraintCode = "MALL_WINDOW_MISSED"
+	ConstraintFuelQuotaExceeded     ConstraintCode = "FUEL_QUOTA_EXCEEDED"
+	ConstraintFuelEfficiencyInvalid ConstraintCode = "FUEL_EFFICIENCY_INVALID"
+	ConstraintDuplicateAssign       ConstraintCode = "DUPLICATE_ASSIGNMENT"
+	ConstraintNonOperatingDay       ConstraintCode = "NON_OPERATING_DAY"
 )
 
 // DesignRuleID is the E-0x group shown in the dispatcher's D-03 rule panel.
@@ -38,23 +39,24 @@ type DesignRuleID string
 
 // DesignRuleOf maps a constraint to the rule-panel group it appears under.
 var DesignRuleOf = map[ConstraintCode]DesignRuleID{
-	ConstraintWeightExceeded:     "E-01",
-	ConstraintVolumeExceeded:     "E-01",
-	ConstraintOrderSplit:         "E-01",
-	ConstraintDuplicateAssign:    "E-01",
-	ConstraintReeferRequired:     "E-02",
-	ConstraintVanOnlyAccess:      "E-03",
-	ConstraintDepotMismatch:      "E-04",
-	ConstraintTripLimitExceeded:  "E-05",
-	ConstraintTripNumberInvalid:  "E-05",
-	ConstraintFreshTimeBudget:    "E-05",
-	ConstraintStyleTechBudget:    "E-05",
-	ConstraintBrandDistrictMix:   "E-05",
-	ConstraintVehicleUnavailable: "E-05",
-	ConstraintNonOperatingDay:    "E-05",
-	ConstraintWindowMissed:       "E-06",
-	ConstraintMallWindowMissed:   "E-06",
-	ConstraintFuelQuotaExceeded:  "E-07",
+	ConstraintWeightExceeded:        "E-01",
+	ConstraintVolumeExceeded:        "E-01",
+	ConstraintOrderSplit:            "E-01",
+	ConstraintDuplicateAssign:       "E-01",
+	ConstraintReeferRequired:        "E-02",
+	ConstraintVanOnlyAccess:         "E-03",
+	ConstraintDepotMismatch:         "E-04",
+	ConstraintTripLimitExceeded:     "E-05",
+	ConstraintTripNumberInvalid:     "E-05",
+	ConstraintFreshTimeBudget:       "E-05",
+	ConstraintStyleTechBudget:       "E-05",
+	ConstraintBrandDistrictMix:      "E-05",
+	ConstraintVehicleUnavailable:    "E-05",
+	ConstraintNonOperatingDay:       "E-05",
+	ConstraintWindowMissed:          "E-06",
+	ConstraintMallWindowMissed:      "E-06",
+	ConstraintFuelQuotaExceeded:     "E-07",
+	ConstraintFuelEfficiencyInvalid: "E-07",
 }
 
 // ConstraintResult is one rule's verdict. The dispatcher's rule panel renders
@@ -172,4 +174,34 @@ const (
 	ParkingVanOnly ParkingConstraint = "VAN_ONLY"
 	// ParkingMallDock: access is limited to the mall's fixed delivery window.
 	ParkingMallDock ParkingConstraint = "MALL_DOCK"
+)
+
+// VehicleType mirrors vehicles.csv `type`. A van is required for a van_only
+// outlet; a truck may never serve one.
+type VehicleType string
+
+const (
+	VehicleTruck VehicleType = "TRUCK"
+	VehicleVan   VehicleType = "VAN"
+)
+
+// VehicleTempClass mirrors vehicles.csv `temp`. A REEFER may also carry ambient
+// goods; an AMBIENT vehicle may never carry chilled or frozen.
+type VehicleTempClass string
+
+const (
+	VehicleTempAmbient VehicleTempClass = "AMBIENT"
+	VehicleTempReefer  VehicleTempClass = "REEFER"
+)
+
+// String returns the wire value, so it can be used directly in messages.
+func (v VehicleTempClass) String() string { return string(v) }
+
+// DockType mirrors outlets.csv `dock_type`. Drives the service-allowance lookup.
+type DockType string
+
+const (
+	DockRearDock DockType = "REAR_DOCK"
+	DockStreet   DockType = "STREET"
+	DockMallBay  DockType = "MALL_BAY"
 )

@@ -190,25 +190,26 @@ Defined once in `libs/shared-types/src/lib/constraints.ts` and mirrored in
 `apps/api/internal/domain/constraints.go`. `E-0x` is the rule-panel group from the Day 5
 design (screen D-03) — kept because judges compare the two.
 
-| Code                       | Rule | Check                                         |
-| -------------------------- | ---- | --------------------------------------------- |
-| `WEIGHT_CAPACITY_EXCEEDED` | E-01 | trip weight + order weight ≤ `weight_cap_kg`  |
-| `VOLUME_CAPACITY_EXCEEDED` | E-01 | trip volume + order volume ≤ `volume_cap_m3`  |
-| `ORDER_SPLIT_FORBIDDEN`    | E-01 | an order goes to exactly one vehicle and trip |
-| `DUPLICATE_ASSIGNMENT`     | E-01 | an order is not already allocated elsewhere   |
-| `REEFER_REQUIRED`          | E-02 | chilled or frozen requires `temp = reefer`    |
-| `VAN_ONLY_ACCESS`          | E-03 | a `van_only` outlet requires `type = van`     |
-| `DEPOT_MISMATCH`           | E-04 | `vehicle.depot_id = outlet.depot_id`          |
-| `TRIP_LIMIT_EXCEEDED`      | E-05 | at most 2 trips per vehicle per day           |
-| `TRIP_NUMBER_INVALID`      | E-05 | `trip_no ∈ {1, 2}`                            |
-| `FRESH_TIME_BUDGET`        | E-05 | Fresh minutes for the vehicle ≤ 270           |
-| `STYLE_TECH_TIME_BUDGET`   | E-05 | Style **+** Tech minutes ≤ 480 combined       |
-| `BRAND_DISTRICT_MIX`       | E-05 | one brand and one district per vehicle + trip |
-| `VEHICLE_UNAVAILABLE`      | E-05 | not in workshop or otherwise unavailable      |
-| `NON_OPERATING_DAY`        | E-05 | the planning date is an operating day         |
-| `DELIVERY_WINDOW_MISSED`   | E-06 | planned arrival ≤ `window_close_time`         |
-| `MALL_WINDOW_MISSED`       | E-06 | arrival inside the mall access window         |
-| `FUEL_QUOTA_EXCEEDED`      | E-07 | projected weekly fuel ≤ `weekly_fuel_quota_l` |
+| Code                       | Rule | Check                                                     |
+| -------------------------- | ---- | --------------------------------------------------------- |
+| `WEIGHT_CAPACITY_EXCEEDED` | E-01 | trip weight + order weight ≤ `weight_cap_kg`              |
+| `VOLUME_CAPACITY_EXCEEDED` | E-01 | trip volume + order volume ≤ `volume_cap_m3`              |
+| `ORDER_SPLIT_FORBIDDEN`    | E-01 | an order goes to exactly one vehicle and trip             |
+| `DUPLICATE_ASSIGNMENT`     | E-01 | an order is not already allocated elsewhere               |
+| `REEFER_REQUIRED`          | E-02 | chilled or frozen requires `temp = reefer`                |
+| `VAN_ONLY_ACCESS`          | E-03 | a `van_only` outlet requires `type = van`                 |
+| `DEPOT_MISMATCH`           | E-04 | `vehicle.depot_id = outlet.depot_id`                      |
+| `TRIP_LIMIT_EXCEEDED`      | E-05 | at most 2 trips per vehicle per day                       |
+| `TRIP_NUMBER_INVALID`      | E-05 | `trip_no ∈ {1, 2}`                                        |
+| `FRESH_TIME_BUDGET`        | E-05 | Fresh minutes for the vehicle ≤ 270                       |
+| `STYLE_TECH_TIME_BUDGET`   | E-05 | Style **+** Tech minutes ≤ 480 combined                   |
+| `BRAND_DISTRICT_MIX`       | E-05 | one brand and one district per vehicle + trip             |
+| `VEHICLE_UNAVAILABLE`      | E-05 | not in workshop or otherwise unavailable                  |
+| `NON_OPERATING_DAY`        | E-05 | the planning date is an operating day                     |
+| `DELIVERY_WINDOW_MISSED`   | E-06 | planned arrival ≤ `window_close_time`                     |
+| `MALL_WINDOW_MISSED`       | E-06 | arrival inside the mall access window                     |
+| `FUEL_QUOTA_EXCEEDED`      | E-07 | projected weekly fuel ≤ `weekly_fuel_quota_l`             |
+| `FUEL_EFFICIENCY_INVALID`  | E-07 | `vehicle.km_per_l` is positive, so fuel use is calculable |
 
 Boundary behaviour, tested on both sides: **exactly at a limit is accepted; one unit over is
 rejected.** 270 minutes passes, 271 fails. Arrival at the closing minute is on time; one
