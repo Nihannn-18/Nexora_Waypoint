@@ -21,21 +21,46 @@ const maxUploadBytes = 8 << 20
 // presignTTL is how long an upload or download URL stays valid, in seconds.
 const presignTTL = 300
 
-// Principal is the authenticated caller, reduced to what authorisation needs.
-// It is produced by the auth layer once Better Auth integration lands; until
-// then the resolver returns an error and every media request is 401.
+// Principal is the authenticated caller, reduced to what media authorisation
+// needs. It is produced by the auth layer (internal/auth) once Better Auth
+// integration lands; until then the resolver returns an error and every media
+// request is 401.
+//
+// This is a local, intentionally narrow view: the media package must not import
+// internal/auth's full Identity, so AuthResolver adapts one to the other at the
+// composition root.
 type Principal struct {
 	UserID string
 	Role   string
 }
 
-// Resolver turns an authenticated HTTP request into a Principal. The real
-// implementation verifies the Better Auth session and loads the user's role and
-// scope. It is deliberately unimplemented: the Better Auth -> Go verification
-// mechanism is TBD (see AGENTS.md "Authentication boundary"), so media endpoints
-// reject unauthenticated calls rather than guess.
+// Resolver turns an authenticated HTTP request into a Principal.
+//
+// It is implemented by AuthResolver, which delegates to internal/auth. Kept as
+// an interface so the media handler does not depend on the auth package.
 type Resolver interface {
 	Resolve(r *http.Request) (Principal, error)
+}
+
+// AuthResolver adapts internal/auth to the media Resolver interface. It is
+// wired in main; the media package never imports auth directly.
+//
+// loadFn is auth.IdentityLoader.Load wrapped to the minimal surface — the media
+// package only needs user id and role, not the whole identity.
+type AuthResolver struct {
+	Load func(r *http.Request) (userID, role string, err error)
+}
+
+// Resolve delegates to the injected loader.
+func (a AuthResolver) Resolve(r *http.Request) (Principal, error) {
+	if a.Load == nil {
+		return Principal{}, ErrUnauthenticated
+	}
+	userID, role, err := a.Load(r)
+	if err != nil {
+		return Principal{}, err
+	}
+	return Principal{UserID: userID, Role: role}, nil
 }
 
 // UnimplementedResolver is the placeholder wired in until Better Auth lands. It
