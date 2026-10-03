@@ -24,7 +24,9 @@ func TestValidateEvent(t *testing.T) {
 	}{
 		{"valid delivered with photo", func(*EventInput) {}, false, ""},
 		{"valid delivered with signature", func(e *EventInput) { e.Pod = Pod{Type: PodSignature, ReceiverName: "N", SignatureRef: "pod/LEG1/sig"} }, false, ""},
-		{"valid failed without pod", func(e *EventInput) { e.Outcome = OutcomeFailed; e.Pod = Pod{} }, false, ""},
+		{"valid failed without pod", func(e *EventInput) { e.Outcome = OutcomeFailed; e.ReasonCode = "OUTLET_CLOSED"; e.Pod = Pod{} }, false, ""},
+		{"failed without reason", func(e *EventInput) { e.Outcome = OutcomeFailed; e.Pod = Pod{} }, true, "reasonCode"},
+		{"failed with unknown reason", func(e *EventInput) { e.Outcome = OutcomeFailed; e.ReasonCode = "ALIENS"; e.Pod = Pod{} }, true, "reasonCode"},
 		{"valid delayed without pod", func(e *EventInput) { e.Outcome = OutcomeDelayed; e.Pod = Pod{} }, false, ""},
 		{"missing leg", func(e *EventInput) { e.LegID = "" }, true, "legId"},
 		{"missing client event id", func(e *EventInput) { e.ClientEventID = "" }, true, "clientEventId"},

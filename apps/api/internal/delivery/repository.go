@@ -30,6 +30,10 @@ type LegContext struct {
 type Repository interface {
 	// LegContext returns the operational context for a leg, or ErrNotFound.
 	LegContext(ctx context.Context, legID string) (LegContext, error)
+	// LegDetail returns the stop screen's read model for a leg, or ErrNotFound.
+	LegDetail(ctx context.Context, legID string) (LegDetail, error)
+	// DriverRoutes returns a depot's driveable routes on a date with their stops.
+	DriverRoutes(ctx context.Context, depotID, date string) ([]DriverRoute, error)
 	// Record applies one delivery event in a transaction. It returns the sync
 	// result: ACCEPTED for a new event, DUPLICATE when the client_event_id was
 	// already stored. Validation failures the caller should have caught are
@@ -168,12 +172,12 @@ func (r *PGRepository) Record(ctx context.Context, actor string, in EventInput, 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO delivery_event (
 			leg_id, recorded_by, outcome, pod_receiver_name, pod_signature, pod_photo,
-			note, client_event_id, created_offline, client_created_at, synced_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+			note, client_event_id, created_offline, client_created_at, synced_at, reason_code
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), $11)
 		RETURNING event_id`,
 		leg.LegID, nullable(actor), in.Outcome, nullable(in.Pod.ReceiverName),
 		nullable(in.Pod.SignatureRef), nullable(in.Pod.PhotoRef), nullable(in.Notes),
-		in.ClientEventID, in.CreatedOffline, occurredAt).Scan(&eventID)
+		in.ClientEventID, in.CreatedOffline, occurredAt, nullable(in.ReasonCode)).Scan(&eventID)
 	if err != nil {
 		return EventResult{}, fmt.Errorf("insert delivery event: %w", err)
 	}
@@ -216,7 +220,7 @@ func (r *PGRepository) emitSideEffects(ctx context.Context, tx pgx.Tx, actor str
 		if err := r.audit.RecordTx(ctx, tx, AuditEvent{
 			Action: "DELIVERY_RECORDED", EntityType: "DELIVERY_EVENT", EntityID: eventID,
 			Actor: actor, DepotID: leg.DepotID, OutletID: leg.ToOutlet, Result: "SUCCESS",
-			Detail: map[string]any{"outcome": in.Outcome, "clientEventId": in.ClientEventID, "orderStatus": orderStatus},
+			Detail: map[string]any{"outcome": in.Outcome, "clientEventId": in.ClientEventID, "orderStatus": orderStatus, "reasonCode": in.ReasonCode},
 		}); err != nil {
 			return fmt.Errorf("audit delivery event: %w", err)
 		}
@@ -297,11 +301,11 @@ func (r *PGRepository) GetEvent(ctx context.Context, clientEventID string) (Even
 	var syncedAt *time.Time
 	err := r.pool.QueryRow(ctx, `
 		SELECT event_id, leg_id, outcome, client_event_id, client_created_at, synced_at,
-		       created_offline, COALESCE(note, ''), COALESCE(pod_receiver_name, ''),
+		       created_offline, COALESCE(reason_code, ''), COALESCE(note, ''), COALESCE(pod_receiver_name, ''),
 		       COALESCE(pod_signature, ''), COALESCE(pod_photo, '')
 		FROM delivery_event WHERE client_event_id = $1`, clientEventID).
 		Scan(&e.EventID, &e.LegID, &e.Outcome, &e.ClientEventID, &occurredAt, &syncedAt,
-			&e.CreatedOffline, &e.Notes, &e.Pod.ReceiverName, &e.Pod.SignatureRef, &e.Pod.PhotoRef)
+			&e.CreatedOffline, &e.ReasonCode, &e.Notes, &e.Pod.ReceiverName, &e.Pod.SignatureRef, &e.Pod.PhotoRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Event{}, fmt.Errorf("%w: event %s", ErrNotFound, clientEventID)
 	}

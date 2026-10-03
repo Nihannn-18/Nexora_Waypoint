@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -192,5 +193,45 @@ func TestDeliveryIntegration(t *testing.T) {
 	_ = db.Pool().QueryRow(ctx, `SELECT count(*) FROM delivery_event WHERE client_event_id = '22222222-2222-2222-2222-222222222222'`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("concurrent same-id events = %d, want 1", n)
+	}
+
+	// Driver read model: route, outlet window and order lines come from the DB.
+	detail, err := repo.LegDetail(ctx, legID)
+	if err != nil {
+		t.Fatalf("leg detail: %v", err)
+	}
+	if detail.Route.VehicleID != "VEHD1" || detail.Outlet.WindowOpen != "05:00" || detail.Outlet.WindowClose != "08:00" ||
+		len(detail.Orders) != 1 || len(detail.Orders[0].Lines) != 1 || detail.Orders[0].Lines[0].Quantity != 10 {
+		t.Fatalf("detail = %+v", detail)
+	}
+	routes, err := repo.DriverRoutes(ctx, depotID, "2026-09-26")
+	if err != nil || len(routes) != 1 || len(routes[0].Stops) != 1 || routes[0].Stops[0].LegID != legID {
+		t.Fatalf("routes = %+v, %v", routes, err)
+	}
+	if _, err := repo.LegDetail(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing leg = %v, want ErrNotFound", err)
+	}
+
+	// FAILED with a reason: persisted, read back, and a replay stays one row.
+	failed := EventInput{
+		LegID: legID, ClientEventID: "33333333-3333-3333-3333-333333333333",
+		Outcome: OutcomeFailed, OccurredAt: "2026-09-26T08:10:00+05:30", CreatedOffline: true,
+		ReasonCode: "OUTLET_CLOSED",
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := repo.Record(ctx, "", failed, leg); err != nil {
+			t.Fatalf("record failed #%d: %v", i, err)
+		}
+	}
+	gotFailed, err := repo.GetEvent(ctx, failed.ClientEventID)
+	if err != nil || gotFailed.ReasonCode != "OUTLET_CLOSED" || gotFailed.Outcome != OutcomeFailed {
+		t.Fatalf("failed event = %+v, %v", gotFailed, err)
+	}
+	_ = db.Pool().QueryRow(ctx, `SELECT count(*) FROM delivery_event WHERE client_event_id = $1`, failed.ClientEventID).Scan(&n)
+	if n != 1 {
+		t.Fatalf("failed events after replay = %d, want 1", n)
+	}
+	if got.ReasonCode != "" {
+		t.Fatalf("delivered event reasonCode = %q, want empty", got.ReasonCode)
 	}
 }

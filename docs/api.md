@@ -445,6 +445,8 @@ here; there is no separate "attach media" step.
 | `POST` | `/legs/{id}/events` | Record an outcome with proof of delivery | Check driver authorisation and leg ownership; enforce idempotency on `clientEventId`; update actual arrival and delay |
 | `POST` | `/sync/events`      | Batch upload of offline events           | Process each event **independently**; return accepted, duplicate, rejected or conflict without ever double-applying   |
 | `GET`  | `/sync/status`      | Pending, synced and failed counts        | —                                                                                                                     |
+| `GET`  | `/driver/routes?date=` | The depot's routes and stops on a date | Depot-scoped (no driver→vehicle link exists in the schema); `DRAFT`/`CANCELLED` routes excluded; `date` is `YYYY-MM-DD` |
+| `GET`  | `/legs/{id}`        | One stop: route, outlet window, orders and lines | Depot-scoped; another depot's leg is `404`, never its data                                                       |
 
 ### `POST /legs/{legId}/events`
 
@@ -465,6 +467,35 @@ which would race.
 
 `occurredAt` is the device's clock at capture time and is preserved through sync. An event
 recorded offline at 07:42 and uploaded at 11:15 is recorded as having happened at 07:42.
+
+A `FAILED` outcome **requires** `reasonCode`, one of `DELIVERY_FAILURE_REASONS`
+(`OUTLET_CLOSED`, `ACCESS_BLOCKED`, `REFUSED_BY_STORE`, `GOODS_DAMAGED`, `OTHER`); it is stored on
+`delivery_event.reason_code` and in the audit detail. A missing or unknown code is a `400`
+validation error (or `REJECTED` inside `/sync/events`).
+
+### `GET /driver/routes?date=2026-09-26`
+
+```json
+[
+  {
+    "routeId": "R1", "routeDate": "2026-09-26", "vehicleId": "VEH014", "tripNo": 1,
+    "brand": "FRESH", "district": "Colombo", "status": "DISPATCHED",
+    "stops": [
+      { "legId": "LEG1", "seq": 0, "outletId": "OUT014", "outletName": "…",
+        "windowOpen": "05:00", "windowClose": "08:00", "status": "PENDING" }
+    ]
+  }
+]
+```
+
+### `GET /legs/{id}`
+
+The fields above (`legId`, `routeId`, `depotId`, `routeDate`, `toOutletId`, `status`, `orderIds`)
+plus `seq`, `route` (the summary above), `outlet` (`name`, `district`, `dockType`,
+`parkingConstraint`, `windowOpen`, `windowClose`, optional `mallWindowOpen`/`mallWindowClose`) and
+`orders` (`orderNumber`, `tempRequirement`, totals and `lines` of `sku`, `name`, `quantity`).
+`plannedArrival` is `route_leg.planned_arrival` and is omitted when unset. No ETA, distance or
+location is derived here.
 
 ### `POST /sync/events`
 
@@ -488,12 +519,13 @@ silently applied; both of those lose information a human needs.
 **Implemented (delivery foundation):** `POST /legs/{id}/events`, `POST /sync/events`,
 `GET /sync/status` and `GET /legs/{id}` are mounted, driver-only and depot-scoped. `delivery_event`
 is the authoritative record; idempotency is the unique `client_event_id`. `DELIVERED` requires a
-receiver name and a POD artefact (photo `pod/<legId>/…` or signature); `FAILED`/`DELAYED` do not.
+receiver name and a POD artefact (photo `pod/<legId>/…` or signature); `FAILED`/`DELAYED` do not;
+`FAILED` requires a `reasonCode`.
 An event updates the leg and order status in one transaction. Not yet implemented: the media
 upload endpoints still 401 (the Better Auth → Go bridge is TBD), so a POD photo cannot yet be
 uploaded end-to-end; `GET /sync/status` reports server-synced counts and a `0` conflict count
-(there is no separate conflict store). The driver's outbox, run-sheet cache and service worker
-are the next (Driver PWA) agent's work.
+(there is no separate conflict store). The Driver PWA reads `GET /driver/routes` and
+`GET /legs/{id}`, caches both in IndexedDB, and uploads its outbox through `/sync/events`.
 
 ---
 

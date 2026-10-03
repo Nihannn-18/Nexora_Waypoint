@@ -38,6 +38,16 @@ const (
 	PodNone      = "NONE"
 )
 
+// Failure reasons, mirroring DELIVERY_FAILURE_REASONS in libs/shared-types and
+// delivery_event.reason_code's CHECK. Required on a FAILED outcome (R-02).
+var failureReasons = map[string]bool{
+	"OUTLET_CLOSED": true, "ACCESS_BLOCKED": true, "REFUSED_BY_STORE": true,
+	"GOODS_DAMAGED": true, "OTHER": true,
+}
+
+// ValidFailureReason reports whether r is a canonical failure reason code.
+func ValidFailureReason(r string) bool { return failureReasons[r] }
+
 // Sync reconciliation results, mirroring SYNC_RESULTS in libs/shared-types.
 const (
 	SyncAccepted  = "ACCEPTED"
@@ -102,6 +112,7 @@ type Event struct {
 	OccurredAt     string
 	SyncedAt       string
 	CreatedOffline bool
+	ReasonCode     string
 	Notes          string
 	Pod            Pod
 	Items          []ItemDelivery
@@ -164,6 +175,7 @@ func ValidPodRef(legID, ref string) bool {
 //     signature), exactly as delivery_event's CHECK and the POD contract state;
 //   - POD references are pod/<legID>/ keys (photo and signature), never another
 //     purpose or leg;
+//   - FAILED carries a reasonCode; any reasonCode is a canonical value;
 //   - item quantities are non-negative.
 //
 // Ordered-quantity reconciliation for items is enforced in the repository, which
@@ -189,6 +201,12 @@ func ValidateEvent(e EventInput) error {
 	}
 	if e.Pod.SignatureRef != "" && !strings.HasPrefix(e.Pod.SignatureRef, PhotoPrefixFor(e.LegID)) {
 		return ValidationError{Field: "proofOfDelivery.signature", Message: "must be a POD media key for this leg"}
+	}
+	if e.Outcome == OutcomeFailed && e.ReasonCode == "" {
+		return ValidationError{Field: "reasonCode", Message: "a failed delivery requires a reason"}
+	}
+	if e.ReasonCode != "" && !ValidFailureReason(e.ReasonCode) {
+		return ValidationError{Field: "reasonCode", Message: "must be OUTLET_CLOSED, ACCESS_BLOCKED, REFUSED_BY_STORE, GOODS_DAMAGED or OTHER"}
 	}
 	for i, it := range e.Items {
 		if strings.TrimSpace(it.OrderItemID) == "" {
