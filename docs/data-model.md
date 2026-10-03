@@ -7,6 +7,24 @@ minutes, remaining fuel — are **never** persisted as authoritative. They are c
 route and its current orders on read. A stored copy can go stale after a route edit, and a
 stale number that looks authoritative is worse than no number.
 
+## Schema and seed files
+
+- **Schema:** `apps/api/internal/store/migrations/00001_init.sql`, a numbered forward-only
+  goose migration embedded in the binary and applied at start-up (`store.Migrate`).
+- **Reference seed:** the five operational CSVs are copied into
+  `apps/api/internal/seed/data/` and embedded with `//go:embed` (`apps/api/internal/seed`).
+  Seeding runs after migrations and is idempotent (upsert on the natural key). It is seeded
+  from Go, not SQL — there is **no** `00002_reference.sql`.
+- **Source of truth for the data:** `docs/general-data/` remains the human-supplied original;
+  the copies under `seed/data/` are what the binary embeds. Do not edit the copies by hand.
+- **Not seeded:** S1 demo orders, demo users and `vehicle_daily_availability` (the Task 2B
+  source files are not yet present); `traffic_speed` and `road_condition` are Datathon-only
+  and carry no rows.
+- **Display names.** The supplied CSVs contain no outlet names or vehicle registrations. The
+  seed derives a deterministic display name from the identifier: `Outlet OUT001 … Outlet
+OUT120` and `Vehicle VEH001 … Vehicle VEH060`. The natural identifier remains the key
+  everywhere; names are display-only.
+
 ---
 
 ## Entity relationships
@@ -121,15 +139,15 @@ allocation per `(order_id, route_date)` is the belt-and-braces version.
 
 ## Execution
 
-| Table                 | Key columns                                                                                                                                        | Notes                                                                                                                                                                           |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `load_item`           | `load_item_id` PK, `route_id`, `order_item_id`, `ordered_qty`, `loaded_qty`, `damaged_qty`, `missing_qty`, `recorded_by`, `recorded_at`            | Per order line, never per route. Invariant: `loaded + damaged + missing = ordered`, validated server-side against the database's own ordered quantity rather than the client's. |
-| `delivery_event`      | `event_id` PK, `leg_id`, `recorded_by`, `outcome`, POD metadata, `client_event_id` **UNIQUE**, `created_offline`, `client_created_at`, `synced_at` | The unique index on `client_event_id` is the entire idempotency mechanism. `client_created_at` is the device clock, preserved through sync.                                     |
-| `order_item_delivery` | `id` PK, `delivery_event_id`, `order_item_id`, `delivered_qty`, `damaged_qty`, `short_qty`, `issue_note`                                           | Item-level outcome.                                                                                                                                                             |
-| `receipt`             | `receipt_id` PK, `order_id`, `status`, `received_at`, `received_by`, `issue_type`, `notes`, `proof`                                                | Store manager's confirmation or issue report.                                                                                                                                   |
-| `vehicle_fuel_usage`  | `id` PK, `vehicle_id`, `week_start_date`, `distance_km`, `estimated_fuel_l`                                                                        | Weekly quota accounting by ISO week.                                                                                                                                            |
-| `notification`        | `id` PK, target user or outlet, `type`, `title`, `message`, `reference`, `read_at`                                                                 | ETA, deferral, shortfall, re-plan.                                                                                                                                              |
-| `audit_log`           | `id` PK, `actor`, `action`, `entity_type`, `entity_id`, `before_json`, `after_json`, `timestamp`                                                   | Append-only. Never updated or deleted.                                                                                                                                          |
+| Table                 | Key columns                                                                                                                                          | Notes                                                                                                                                                                                                                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `load_item`           | `load_item_id` PK, `route_id`, `order_item_id`, `ordered_qty`, `loaded_qty`, `damaged_qty`, `missing_qty`, `recorded_by`, `recorded_at`, `photo_ref` | Per order line, never per route. Invariant: `loaded + damaged + missing = ordered`, validated server-side against the database's own ordered quantity rather than the client's. `photo_ref` is a server-generated media key for an optional shortfall photo (mirrors `delivery_event.pod_photo`). |
+| `delivery_event`      | `event_id` PK, `leg_id`, `recorded_by`, `outcome`, POD metadata, `client_event_id` **UNIQUE**, `created_offline`, `client_created_at`, `synced_at`   | The unique index on `client_event_id` is the entire idempotency mechanism. `client_created_at` is the device clock, preserved through sync.                                                                                                                                                       |
+| `order_item_delivery` | `id` PK, `delivery_event_id`, `order_item_id`, `delivered_qty`, `damaged_qty`, `short_qty`, `issue_note`                                             | Item-level outcome.                                                                                                                                                                                                                                                                               |
+| `receipt`             | `receipt_id` PK, `order_id`, `status`, `received_at`, `received_by`, `issue_type`, `notes`, `proof`                                                  | Store manager's confirmation or issue report.                                                                                                                                                                                                                                                     |
+| `vehicle_fuel_usage`  | `id` PK, `vehicle_id`, `week_start_date`, `distance_km`, `estimated_fuel_l`                                                                          | Weekly quota accounting by ISO week.                                                                                                                                                                                                                                                              |
+| `notification`        | `id` PK, target user or outlet, `type`, `title`, `message`, `reference`, `read_at`                                                                   | ETA, deferral, shortfall, re-plan.                                                                                                                                                                                                                                                                |
+| `audit_log`           | `id` PK, `actor`, `action`, `entity_type`, `entity_id`, `before_json`, `after_json`, `timestamp`                                                     | Append-only. Never updated or deleted.                                                                                                                                                                                                                                                            |
 
 ---
 
