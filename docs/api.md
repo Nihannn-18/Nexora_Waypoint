@@ -335,10 +335,17 @@ the app — the two phases are judged separately.
 
 ## Loader
 
-| Method | Endpoint                  | Purpose                         | Server must                                                                                                                                    |
-| ------ | ------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/routes/{id}/legs`       | The picking list                | Return stops with their order lines. The **client renders in reverse stop order** — last delivery loads first, nearest the door                |
-| `POST` | `/routes/{id}/shortfalls` | Record missing or damaged items | Read ordered quantities **from the database**, not the request; require `loaded + damaged + missing = ordered` per line; notify the dispatcher |
+| Method | Endpoint                  | Purpose                         | Server must                                                                                                                                            |
+| ------ | ------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/routes/{id}/loading`    | The picking list                | Return stops with their order lines and current load state. The **client renders in reverse stop order** — last delivery loads first, nearest the door |
+| `POST` | `/routes/{id}/shortfalls` | Record missing or damaged items | Read ordered quantities **from the database**, not the request; require `loaded + damaged + missing = ordered` per line; notify the dispatcher         |
+
+**Implemented:** both endpoints are loader-only (`LOADER` role, depot-scoped). The picking list
+is served at `GET /routes/{id}/loading` rather than `/legs`, because `GET /routes/{id}/legs` is
+the dispatcher route/stop view; the loader needs the order lines and load state alongside the
+stops. A route must be `CONFIRMED`. The response includes `routeReady`, computed as "every line
+reconciles". `notify the dispatcher` is a Delivery/Notifications agent concern and is **not** yet
+implemented — the recorded shortfall is the trigger a later agent will publish from.
 
 ### `POST /routes/{routeId}/shortfalls`
 

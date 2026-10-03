@@ -29,6 +29,7 @@ internal/
 ├── catalog/              SKUs: lookup, filters, read API  ← tested
 ├── orders/               order intake, lifecycle, read API  ← tested
 ├── routes/               confirmation, routes, legs, allocations, deferrals  ← tested
+├── loading/              loader picking list, load counts, shortfall photo  ← tested
 ├── httpx/                router, JSON helpers, middleware
 └── planning/             trip time, budgets + deterministic planning engine  ← tested
 ```
