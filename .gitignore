@@ -62,3 +62,9 @@ apps/api/waypoint-worker
 # Seed data derived for the demo day belongs in the repo; raw supplied CSVs do not.
 /data/raw/
 .neon
+
+# Datathon Task 1 / Task 2A inputs are not part of the Hackathon contract
+# (CLAUDE.md rule 10 / section 6 lists only the reference CSVs and the two
+# Task 2B files). A teammate keeps the originals locally; they are not tracked.
+docs/general-data/task1_test_inputs.csv
+docs/general-data/task2a_test_inputs.csv

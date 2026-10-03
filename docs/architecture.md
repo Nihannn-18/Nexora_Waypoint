@@ -23,12 +23,12 @@ and an AI tool disclosure.
 │                                                                    │
 │  Driver only: IndexedDB outbox ──► POST /sync/events               │
 └───────────────────────────────┬────────────────────────────────────┘
-                                │ HTTPS · JWT bearer · /api/v1
+                                │ HTTPS · Better Auth session · /api/v1
 ┌───────────────────────────────┴────────────────────────────────────┐
 │                          Go 1.24 REST API                          │
 │                                                                    │
 │  httpx         router, strict JSON decoding, one error shape       │
-│  auth          JWT, RBAC, server-side depot/outlet scope           │
+│  auth          verify session (TBD), RBAC, depot/outlet scope       │
 │  orders        lifecycle, 16:00 cutoff, aggregate totals           │
 │  planning      ▸ ConstraintValidator — the only feasibility rule   │
 │                ▸ TripTimeCalculator — the official formula         │

@@ -84,6 +84,11 @@ func seedDemoAvailability(ctx context.Context, tx pgx.Tx) (int, error) {
 // seedDemoOrders inserts each scenario order once. An existing order number is
 // left untouched, so re-seeding never rewinds an order that has since moved
 // through the lifecycle.
+//
+// It returns the number of S1 rows read (the scenario's order count), not the
+// number newly inserted: on a re-run every row conflicts and nothing is written,
+// yet the count stays stable so callers and the idempotency test can compare
+// runs. The database row count is asserted separately where it matters.
 func seedDemoOrders(ctx context.Context, tx pgx.Tx) (int, error) {
 	rows, err := readCSV("data/task2b_peak_day_scenarios.csv")
 	if err != nil {

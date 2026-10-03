@@ -29,7 +29,8 @@ internal/
 └── planning/             trip time, budgets, windows, fuel  ← tested
 ```
 
-Packages to add as the service grows: `store` (PostgreSQL), `auth` (JWT and RBAC),
+Packages to add as the service grows: `store` (PostgreSQL), `seed`, `media`,
+`auth` (verify the Better Auth session and enforce RBAC — verification mechanism TBD),
 `orders`, `routes`, `deferrals`, `delivery`, `forecast`, `queue` (RabbitMQ), and a second
 binary at `cmd/worker` for the planning worker.
 
@@ -51,9 +52,12 @@ not exist. Add what you need:
 ```bash
 go get github.com/jackc/pgx/v5         # PostgreSQL
 go get github.com/rabbitmq/amqp091-go  # planning queue
-go get github.com/golang-jwt/jwt/v5    # auth
 go mod tidy
 ```
+
+Auth is **not** a `go get`: Better Auth in the web app owns authentication, sessions and
+identity, and the Go API verifies the authenticated request. The exact verification mechanism
+is TBD, so do not add `golang-jwt/jwt/v5` or `bcrypt` as the auth mechanism.
 
 The router is `net/http`'s `ServeMux` using Go 1.22+ method-and-path patterns
 (`"POST /api/v1/orders"`, `"GET /api/v1/orders/{id}"`), which covers this API without a
@@ -65,18 +69,19 @@ depends on the choice.
 ## Configuration
 
 Every setting has a working default except `JWT_SECRET`, which is refused when
-`APP_ENV=production`. See [`../../.env.example`](../../.env.example).
+`APP_ENV=production`. Authentication is moving to Better Auth, so `JWT_SECRET` is legacy
+scaffolding pending that decision. See [`../../.env.example`](../../.env.example).
 
-| Variable            | Default                 | Notes                                                    |
-| ------------------- | ----------------------- | -------------------------------------------------------- |
-| `APP_ENV`           | `development`           | `development` gives debug logs and human-readable output |
-| `PORT`              | `8080`                  |                                                          |
-| `DATABASE_URL`      | localhost               | libpq connection string                                  |
-| `RABBITMQ_URL`      | localhost               | AMQP URL                                                 |
-| `JWT_SECRET`        | —                       | Required when `APP_ENV=production`                       |
-| `TOKEN_TTL_MINUTES` | `720`                   | 12 hours, so a driver is not signed out mid-shift        |
-| `CORS_ORIGIN`       | `http://localhost:3000` |                                                          |
-| `TZ`                | `Asia/Colombo`          | Validated at start-up                                    |
+| Variable            | Default                 | Notes                                                          |
+| ------------------- | ----------------------- | -------------------------------------------------------------- |
+| `APP_ENV`           | `development`           | `development` gives debug logs and human-readable output       |
+| `PORT`              | `8080`                  |                                                                |
+| `DATABASE_URL`      | localhost               | libpq connection string                                        |
+| `RABBITMQ_URL`      | localhost               | AMQP URL                                                       |
+| `JWT_SECRET`        | —                       | Legacy; required when `APP_ENV=production` pending Better Auth |
+| `TOKEN_TTL_MINUTES` | `720`                   | 12 hours, so a driver is not signed out mid-shift              |
+| `CORS_ORIGIN`       | `http://localhost:3000` |                                                                |
+| `TZ`                | `Asia/Colombo`          | Validated at start-up                                          |
 
 ### Why the timezone matters more than it looks
 

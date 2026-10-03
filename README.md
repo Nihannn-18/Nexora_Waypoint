@@ -42,7 +42,8 @@ docker compose up --build
 ```
 
 `JWT_SECRET` in `.env.example` already has a working local value, so no editing is required to
-start.
+start. It is **legacy scaffolding**: authentication moves to Better Auth in the web app, and
+the exact Better Auth → Go verification mechanism is still TBD (see `docs/api.md`).
 
 1. **Configure (optional).** The defaults work as-is. To change ports or the database
    password, edit `.env` after copying it.
@@ -87,7 +88,7 @@ deployment decision**, not a Challenge Booklet requirement.
 ### With Docker — the one command a judge needs
 
 ```bash
-cp .env.example .env     # JWT_SECRET is the only required value; a default is provided
+cp .env.example .env     # JWT_SECRET has a local default; it is legacy auth scaffolding
 docker compose up --build
 ```
 
@@ -328,8 +329,8 @@ The competition requires significant departures to be recorded. These are ours.
 
 Our specification named Spring Boot. We build in **Go 1.24**. Everything the specification
 requires of the backend is unchanged — one authoritative constraint validator, DTOs at the
-boundary, transactional confirmation, optimistic locking on route edits, JWT with
-server-side depot and outlet scope, idempotent offline sync, an immutable audit trail. Only
+boundary, transactional confirmation, optimistic locking on route edits, a Better Auth session
+with server-side depot and outlet scope, idempotent offline sync, an immutable audit trail. Only
 the language and framework differ.
 
 The reasons: a static binary starts in milliseconds and produces a far smaller container,

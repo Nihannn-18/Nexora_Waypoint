@@ -37,6 +37,8 @@ var depots = []struct {
 }
 
 // Result reports how many rows each dataset contributed, for logging and tests.
+// DemoOrders counts the scenario's order rows read (stable across re-runs even
+// when nothing is inserted); DemoAvailability counts vehicle-days written.
 type Result struct {
 	Depots           int
 	Outlets          int
