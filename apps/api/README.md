@@ -21,18 +21,31 @@ Build order and conventions: [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md).
 ## Layout
 
 ```
-cmd/api/main.go           entrypoint: config, logging, server, graceful shutdown
+cmd/api/main.go           entrypoint: config, logging, DB, migrations, seed, server, graceful shutdown
 internal/
 ├── config/               environment settings, validated at start-up
 ├── domain/               shared vocabulary — constraint codes, roles, statuses
-├── httpx/                router, JSON helpers, middleware
-└── planning/             trip time, budgets, windows, fuel  ← tested
+├── httpx/                router, JSON helpers, error shape, validation, readiness
+├── media/                POD and shortfall photo storage (local or S3)
+├── planning/             trip time, budgets, windows, fuel  ← tested
+├── seed/                 embedded reference CSVs + demo day, idempotent
+└── store/                pgx pool, InTx, embedded goose migrations (advisory-locked)
 ```
 
-Packages to add as the service grows: `store` (PostgreSQL), `seed`, `media`,
+Packages to add as the service grows: `clock`,
 `auth` (verify the Better Auth session and enforce RBAC — verification mechanism TBD),
 `orders`, `routes`, `deferrals`, `delivery`, `forecast`, `queue` (RabbitMQ), and a second
 binary at `cmd/worker` for the planning worker.
+
+### Database integration tests
+
+`internal/store` and `internal/seed` have integration tests that skip unless
+`WAYPOINT_TEST_DATABASE_URL` points at a **disposable** PostgreSQL 17 database (they migrate
+and seed it). Apply `infra/postgres/init/01-extensions.sql` to it first:
+
+```bash
+WAYPOINT_TEST_DATABASE_URL="postgres://waypoint:waypoint@127.0.0.1:55432/waypoint_test?sslmode=disable" go test ./...
+```
 
 ---
 
