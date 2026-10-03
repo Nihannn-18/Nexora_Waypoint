@@ -485,6 +485,16 @@ recorded offline at 07:42 and uploaded at 11:15 is recorded as having happened a
 breakdown, say. The event is surfaced to the dispatcher rather than silently discarded or
 silently applied; both of those lose information a human needs.
 
+**Implemented (delivery foundation):** `POST /legs/{id}/events`, `POST /sync/events`,
+`GET /sync/status` and `GET /legs/{id}` are mounted, driver-only and depot-scoped. `delivery_event`
+is the authoritative record; idempotency is the unique `client_event_id`. `DELIVERED` requires a
+receiver name and a POD artefact (photo `pod/<legId>/…` or signature); `FAILED`/`DELAYED` do not.
+An event updates the leg and order status in one transaction. Not yet implemented: the media
+upload endpoints still 401 (the Better Auth → Go bridge is TBD), so a POD photo cannot yet be
+uploaded end-to-end; `GET /sync/status` reports server-synced counts and a `0` conflict count
+(there is no separate conflict store). The driver's outbox, run-sheet cache and service worker
+are the next (Driver PWA) agent's work.
+
 ---
 
 ## Client bindings
