@@ -34,6 +34,7 @@ import (
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/media"
 	"waypoint.lk/api/internal/orders"
+	"waypoint.lk/api/internal/planning"
 	"waypoint.lk/api/internal/seed"
 	"waypoint.lk/api/internal/store"
 )
@@ -124,6 +125,14 @@ func run() error {
 	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), clk)
 	orderHandler := orders.NewHandler(orderService, authMiddleware)
 
+	// Planning: deterministic, constraint-aware proposals. The engine is pure;
+	// the loader reads the run's inputs and the repository persists the
+	// proposal-only planning_result rows (never routes or allocations).
+	planningRepo := planning.NewPGRepository(db.Pool())
+	planningLoader := planning.NewPGLoader(db.Pool())
+	planningService := planning.NewService(planningRepo, planningLoader, planning.New())
+	planningHandler := planning.NewHandler(planningService, authMiddleware)
+
 	checks := []httpx.Check{
 		{Name: "database", Fn: db.Pool().Ping},
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
@@ -133,7 +142,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
