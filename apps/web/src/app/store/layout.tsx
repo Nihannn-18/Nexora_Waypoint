@@ -18,7 +18,10 @@ export default function StoreLayout({
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="flex h-topbar shrink-0 items-center gap-4 border-b border-ink/10 bg-card px-4">
-        <span className="text-sm font-medium text-ink">Fresh · Nugegoda</span>
+        {/* Placeholder until auth lands: Ishara's outlet in the Day 5 design. */}
+        <span className="text-sm font-medium text-ink">
+          OUT014 · Colombo Central
+        </span>
         <nav aria-label="Store" className="flex gap-1">
           {NAV.map((item) => (
             <Link

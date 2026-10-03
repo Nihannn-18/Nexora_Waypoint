@@ -52,6 +52,16 @@ export type TempRequirement = (typeof TEMP_REQUIREMENTS)[number];
 export const DOCK_TYPES = ['REAR_DOCK', 'STREET', 'MALL_BAY'] as const;
 export type DockType = (typeof DOCK_TYPES)[number];
 
+/**
+ * `parking_constraint` in outlets.csv. One column, three values — not two
+ * independent flags:
+ *   NORMAL    any vehicle may serve the outlet
+ *   VAN_ONLY  trucks cannot reach it; only a van may be allocated
+ *   MALL_DOCK access is limited to the mall's fixed window (`mallWindow`)
+ */
+export const PARKING_CONSTRAINTS = ['NORMAL', 'VAN_ONLY', 'MALL_DOCK'] as const;
+export type ParkingConstraint = (typeof PARKING_CONSTRAINTS)[number];
+
 export const VEHICLE_STATUSES = [
   'AVAILABLE',
   'IN_WORKSHOP',

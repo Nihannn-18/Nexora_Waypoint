@@ -118,3 +118,16 @@ const (
 func (t TempRequirement) RequiresReefer() bool {
 	return t == TempChilled || t == TempFrozen
 }
+
+// ParkingConstraint mirrors the parking_constraint column of outlets.csv.
+// It is one column with three values, not two independent flags.
+type ParkingConstraint string
+
+const (
+	// ParkingNormal: any vehicle may serve the outlet.
+	ParkingNormal ParkingConstraint = "NORMAL"
+	// ParkingVanOnly: trucks cannot reach the outlet; only a van may be allocated.
+	ParkingVanOnly ParkingConstraint = "VAN_ONLY"
+	// ParkingMallDock: access is limited to the mall's fixed delivery window.
+	ParkingMallDock ParkingConstraint = "MALL_DOCK"
+)
