@@ -27,6 +27,7 @@ import (
 	// a five-and-a-half-hour error in the one calculation that matters most.
 	_ "time/tzdata"
 
+	"waypoint.lk/api/internal/audit"
 	"waypoint.lk/api/internal/auth"
 	"waypoint.lk/api/internal/catalog"
 	"waypoint.lk/api/internal/clock"
@@ -35,6 +36,7 @@ import (
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/loading"
 	"waypoint.lk/api/internal/media"
+	"waypoint.lk/api/internal/notify"
 	"waypoint.lk/api/internal/orders"
 	"waypoint.lk/api/internal/planning"
 	"waypoint.lk/api/internal/routes"
@@ -158,6 +160,18 @@ func run() error {
 	deliveryService := delivery.NewService(deliveryRepo)
 	deliveryHandler := delivery.NewHandler(deliveryService, authMiddleware)
 
+	// Audit + notifications: append-only operational trail and in-app alerts.
+	// Both are written inside the delivery/loading transactions via the sink
+	// adapters in sinks.go, so a rolled-back mutation leaves neither.
+	auditRepo := audit.NewPGRepository(db.Pool())
+	auditService := audit.NewService(auditRepo)
+	auditHandler := audit.NewHandler(auditService, authMiddleware)
+	notifyRepo := notify.NewPGRepository(db.Pool())
+	notifyService := notify.NewService(notifyRepo)
+	notifyHandler := notify.NewHandler(notifyService, authMiddleware)
+	loadingRepo.WithSinks(loadingAudit{}, loadingNotify{})
+	deliveryRepo.WithSinks(deliveryAudit{}, deliveryNotify{})
+
 	checks := []httpx.Check{
 		{Name: "database", Fn: db.Pool().Ping},
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
@@ -167,7 +181,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.

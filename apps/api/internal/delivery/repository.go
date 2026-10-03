@@ -53,10 +53,45 @@ type SyncStatus struct {
 // PGRepository is the PostgreSQL-backed Repository.
 type PGRepository struct {
 	pool *pgxpool.Pool
+	// audit and notify are optional sinks written in the same transaction as the
+	// delivery event, so a rolled-back mutation leaves no audit/notification.
+	// They are narrow interfaces so this package does not import audit/notify.
+	audit  AuditSink
+	notify NotifySink
+}
+
+// AuditSink records one audit event inside the delivery transaction.
+type AuditSink interface {
+	RecordTx(ctx context.Context, tx pgx.Tx, e AuditEvent) error
+}
+
+// NotifySink raises a dispatcher notification inside the delivery transaction.
+type NotifySink interface {
+	NotifyDispatchersTx(ctx context.Context, tx pgx.Tx, depotID, outletID, notifType, title, message, reference string) error
+}
+
+// AuditEvent is the minimal audit fact delivery emits.
+type AuditEvent struct {
+	Action     string
+	EntityType string
+	EntityID   string
+	Actor      string
+	DepotID    string
+	OutletID   string
+	Result     string
+	Detail     map[string]any
 }
 
 // NewPGRepository builds a repository over the given pool.
 func NewPGRepository(pool *pgxpool.Pool) *PGRepository { return &PGRepository{pool: pool} }
+
+// WithSinks attaches audit and notification sinks. They are optional: a nil sink
+// disables that side-effect.
+func (r *PGRepository) WithSinks(a AuditSink, n NotifySink) *PGRepository {
+	r.audit = a
+	r.notify = n
+	return r
+}
 
 // LegContext implements Repository.
 func (r *PGRepository) LegContext(ctx context.Context, legID string) (LegContext, error) {
@@ -161,10 +196,49 @@ func (r *PGRepository) Record(ctx context.Context, actor string, in EventInput, 
 		}
 	}
 
+	// Audit and notification join this transaction: a rolled-back delivery leaves
+	// neither. The reference derives from client_event_id, so a replayed event
+	// (already returned as DUPLICATE above) never double-notifies.
+	if err := r.emitSideEffects(ctx, tx, actor, in, leg, eventID, orderStatus); err != nil {
+		return EventResult{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return EventResult{}, fmt.Errorf("commit delivery: %w", err)
 	}
 	return EventResult{ClientEventID: in.ClientEventID, Status: SyncAccepted, ServerEventID: eventID}, nil
+}
+
+// emitSideEffects writes the audit record and, for FAILED/DELAYED outcomes, a
+// dispatcher notification, all on the delivery transaction.
+func (r *PGRepository) emitSideEffects(ctx context.Context, tx pgx.Tx, actor string, in EventInput, leg LegContext, eventID, orderStatus string) error {
+	if r.audit != nil {
+		if err := r.audit.RecordTx(ctx, tx, AuditEvent{
+			Action: "DELIVERY_RECORDED", EntityType: "DELIVERY_EVENT", EntityID: eventID,
+			Actor: actor, DepotID: leg.DepotID, OutletID: leg.ToOutlet, Result: "SUCCESS",
+			Detail: map[string]any{"outcome": in.Outcome, "clientEventId": in.ClientEventID, "orderStatus": orderStatus},
+		}); err != nil {
+			return fmt.Errorf("audit delivery event: %w", err)
+		}
+	}
+	if r.notify == nil {
+		return nil
+	}
+	var nType, title, message string
+	switch in.Outcome {
+	case OutcomeFailed:
+		nType, title, message = "DELIVERY_FAILED", "Delivery failed",
+			"A delivery at "+leg.ToOutlet+" failed and needs attention."
+	case OutcomeDelayed:
+		nType, title, message = "DELIVERY_DELAYED", "Delivery delayed",
+			"A delivery at "+leg.ToOutlet+" was delayed."
+	default:
+		return nil
+	}
+	if err := r.notify.NotifyDispatchersTx(ctx, tx, leg.DepotID, leg.ToOutlet, nType, title, message, "delivery:"+in.ClientEventID); err != nil {
+		return fmt.Errorf("notify dispatcher: %w", err)
+	}
+	return nil
 }
 
 // insertItemDelivery writes one order_item_delivery row after confirming the

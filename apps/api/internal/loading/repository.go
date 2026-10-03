@@ -22,11 +22,44 @@ type Repository interface {
 // PGRepository is the PostgreSQL-backed Repository.
 type PGRepository struct {
 	pool *pgxpool.Pool
+	// audit and notify are optional sinks written in the same transaction as the
+	// load state, so a rolled-back submission leaves no audit/notification.
+	audit  AuditSink
+	notify NotifySink
+}
+
+// AuditSink records one audit event inside the loading transaction.
+type AuditSink interface {
+	RecordTx(ctx context.Context, tx pgx.Tx, e AuditEvent) error
+}
+
+// NotifySink raises a dispatcher notification inside the loading transaction.
+type NotifySink interface {
+	NotifyDispatchersTx(ctx context.Context, tx pgx.Tx, depotID, outletID, notifType, title, message, reference string) error
+}
+
+// AuditEvent is the minimal audit fact loading emits.
+type AuditEvent struct {
+	Action     string
+	EntityType string
+	EntityID   string
+	Actor      string
+	DepotID    string
+	OutletID   string
+	Result     string
+	Detail     map[string]any
 }
 
 // NewPGRepository builds a repository over the given pool.
 func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
 	return &PGRepository{pool: pool}
+}
+
+// WithSinks attaches audit and notification sinks.
+func (r *PGRepository) WithSinks(a AuditSink, n NotifySink) *PGRepository {
+	r.audit = a
+	r.notify = n
+	return r
 }
 
 // RouteLoading implements Repository.
@@ -154,12 +187,52 @@ func (r *PGRepository) RecordShortfalls(ctx context.Context, routeID, actor stri
 		}
 	}
 
+	if err := r.emitSideEffects(ctx, tx, routeID, actor, updates); err != nil {
+		return RouteLoading{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return RouteLoading{}, fmt.Errorf("commit loading tx: %w", err)
 	}
 
 	// Return the resulting state (reads committed data).
 	return r.RouteLoading(ctx, routeID)
+}
+
+// emitSideEffects writes an audit row per line and, when any line has a
+// shortfall, one dispatcher notification — all on the loading transaction.
+func (r *PGRepository) emitSideEffects(ctx context.Context, tx pgx.Tx, routeID, actor string, updates []LineUpdate) error {
+	// Resolve the route's depot and a representative outlet for scoping.
+	var depotID, outletID string
+	_ = tx.QueryRow(ctx, `
+		SELECT route.depot_id, MIN(leg.to_outlet)
+		FROM route JOIN route_leg leg ON leg.route_id = route.route_id
+		WHERE route.route_id = $1
+		GROUP BY route.depot_id`, routeID).Scan(&depotID, &outletID)
+
+	shortfall := false
+	for _, u := range updates {
+		if r.audit != nil {
+			if err := r.audit.RecordTx(ctx, tx, AuditEvent{
+				Action: "LOAD_RECORDED", EntityType: "LOAD_ITEM", EntityID: u.OrderItemID,
+				Actor: actor, DepotID: depotID, OutletID: outletID, Result: "SUCCESS",
+				Detail: map[string]any{"routeId": routeID, "loaded": u.LoadedQty, "damaged": u.DamagedQty, "missing": u.MissingQty},
+			}); err != nil {
+				return fmt.Errorf("audit load line: %w", err)
+			}
+		}
+		if u.DamagedQty+u.MissingQty > 0 {
+			shortfall = true
+		}
+	}
+	if shortfall && r.notify != nil {
+		if err := r.notify.NotifyDispatchersTx(ctx, tx, depotID, outletID, "SHORTFALL",
+			"Loading shortfall", "A load on a route at this depot has missing or damaged items.",
+			"shortfall:"+routeID); err != nil {
+			return fmt.Errorf("notify dispatcher of shortfall: %w", err)
+		}
+	}
+	return nil
 }
 
 func nullable(s string) *string {
