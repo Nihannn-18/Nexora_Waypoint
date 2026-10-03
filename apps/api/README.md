@@ -26,6 +26,7 @@ internal/
 ├── config/               environment settings, validated at start-up
 ├── domain/               shared vocabulary — constraint codes, roles, statuses
 ├── auth/                 Better Auth boundary, identity, RBAC, scope, middleware  ← tested
+├── catalog/              SKUs: lookup, filters, read API  ← tested
 ├── httpx/                router, JSON helpers, middleware
 └── planning/             trip time, budgets, windows, fuel  ← tested
 ```
