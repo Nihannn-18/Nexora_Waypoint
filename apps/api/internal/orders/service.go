@@ -205,6 +205,49 @@ func (s *Service) List(ctx context.Context, filter Filter, scope Scope) ([]Order
 	return s.repo.List(ctx, filter)
 }
 
+// Page is one page of a filtered order listing plus the total match count.
+type Page struct {
+	Orders []Order
+	Total  int
+	Limit  int
+	Offset int
+}
+
+// maxPageSize caps one page so a caller cannot pull the whole table at once.
+const maxPageSize = 200
+
+// ListPage returns one page of orders matching filter, scoped to the caller,
+// with the total number of matches. The total is counted with the same scoped
+// filter, so it never includes orders the caller may not see.
+func (s *Service) ListPage(ctx context.Context, filter Filter, scope Scope) (Page, error) {
+	if filter.Brand != "" && !domain.Brand(filter.Brand).Valid() {
+		return Page{}, ValidationError{Field: "brand", Message: "must be one of FRESH, STYLE, TECH"}
+	}
+	if filter.Limit < 0 || filter.Limit > maxPageSize {
+		return Page{}, ValidationError{Field: "limit", Message: fmt.Sprintf("must be between 1 and %d", maxPageSize)}
+	}
+	if filter.Limit == 0 {
+		filter.Limit = 50
+	}
+	if filter.Offset < 0 {
+		return Page{}, ValidationError{Field: "offset", Message: "must not be negative"}
+	}
+	orders, err := s.List(ctx, filter, scope)
+	if err != nil {
+		return Page{}, err
+	}
+	// List has already rejected an out-of-scope outlet; pin the count to the
+	// same scope it applied.
+	if !scope.AllOutlets() {
+		filter.OutletID = scope.OutletID
+	}
+	total, err := s.repo.Count(ctx, filter)
+	if err != nil {
+		return Page{}, err
+	}
+	return Page{Orders: orders, Total: total, Limit: filter.Limit, Offset: filter.Offset}, nil
+}
+
 // Confirm moves a PLACED (or re-entered DEFERRED) order to CONFIRMED, applying
 // the cutoff policy. Confirming again is a conflict, not a silent no-op.
 //

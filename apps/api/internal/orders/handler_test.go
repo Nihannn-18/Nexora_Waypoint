@@ -226,3 +226,99 @@ func TestHandlerRequiresAuthentication(t *testing.T) {
 		t.Fatal("orders served an unverifiable request")
 	}
 }
+
+// seedOrders puts orders straight into the fake repository for list tests.
+func seedOrders(repo *fakeRepo, orders ...Order) {
+	for _, o := range orders {
+		repo.byID[o.OrderID] = o
+	}
+}
+
+func listBody(t *testing.T, rec *httptest.ResponseRecorder) listResponse {
+	t.Helper()
+	var body listResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode list: %v (body=%s)", err, rec.Body)
+	}
+	return body
+}
+
+func TestHandlerList(t *testing.T) {
+	now := time.Date(2026, time.September, 25, 10, 0, 0, 0, time.UTC)
+	fixtureOrders := []Order{
+		{OrderID: "a", OrderNumber: "ORD-1", OutletID: "OUT001", Brand: domain.BrandFresh, Status: domain.OrderConfirmed},
+		{OrderID: "b", OrderNumber: "ORD-2", OutletID: "OUT002", Brand: domain.BrandStyle, Status: domain.OrderConfirmed},
+		{OrderID: "c", OrderNumber: "ORD-3", OutletID: "OUT001", Brand: domain.BrandFresh, Status: domain.OrderDeferred},
+	}
+
+	t.Run("a dispatcher pages across outlets and gets the total", func(t *testing.T) {
+		h, repo := handlerFor(t, dispatcher(), now)
+		seedOrders(repo, fixtureOrders...)
+		rec := getReq(h, "/api/v1/orders?limit=2&offset=0")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
+		}
+		body := listBody(t, rec)
+		if body.Total != 3 || len(body.Orders) != 2 || body.Limit != 2 || body.Offset != 0 {
+			t.Fatalf("page = total %d, %d orders, limit %d, offset %d", body.Total, len(body.Orders), body.Limit, body.Offset)
+		}
+		next := listBody(t, getReq(h, "/api/v1/orders?limit=2&offset=2"))
+		if len(next.Orders) != 1 || next.Orders[0].OrderNumber != "ORD-3" {
+			t.Fatalf("second page = %+v", next.Orders)
+		}
+	})
+
+	t.Run("filters are applied server-side and reflected in the total", func(t *testing.T) {
+		h, repo := handlerFor(t, dispatcher(), now)
+		seedOrders(repo, fixtureOrders...)
+		body := listBody(t, getReq(h, "/api/v1/orders?brand=FRESH&status=CONFIRMED"))
+		if body.Total != 1 || len(body.Orders) != 1 || body.Orders[0].OrderNumber != "ORD-1" {
+			t.Fatalf("filtered = total %d, orders %+v", body.Total, body.Orders)
+		}
+	})
+
+	t.Run("a store manager only ever sees their own outlet", func(t *testing.T) {
+		h, repo := handlerFor(t, storeManager(), now)
+		seedOrders(repo, fixtureOrders...)
+		body := listBody(t, getReq(h, "/api/v1/orders"))
+		if body.Total != 2 || repo.lastCount.OutletID != "OUT001" {
+			t.Fatalf("store scope = total %d, counted outlet %q", body.Total, repo.lastCount.OutletID)
+		}
+		for _, o := range body.Orders {
+			if o.OutletID != "OUT001" {
+				t.Fatalf("leaked order for %s", o.OutletID)
+			}
+		}
+	})
+
+	t.Run("invalid filters are 400 with the field named", func(t *testing.T) {
+		h, _ := handlerFor(t, dispatcher(), now)
+		for path, field := range map[string]string{
+			"/api/v1/orders?brand=FOOD":           "brand",
+			"/api/v1/orders?status=LOST":          "status",
+			"/api/v1/orders?deliveryDate=26-9-26": "deliveryDate",
+			"/api/v1/orders?limit=500":            "limit",
+			"/api/v1/orders?offset=-1":            "offset",
+			"/api/v1/orders?limit=ten":            "limit",
+		} {
+			rec := getReq(h, path)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s: status = %d, want 400", path, rec.Code)
+			}
+			var body httpx.ErrorBody
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if len(body.FieldErrors) != 1 || body.FieldErrors[0].Field != field {
+				t.Fatalf("%s: field errors = %+v, want %s", path, body.FieldErrors, field)
+			}
+		}
+	})
+
+	t.Run("a loader is refused with 403", func(t *testing.T) {
+		h, _ := handlerFor(t, auth.Identity{UserID: "u-load", Role: domain.RoleLoader, DepotID: "d1"}, now)
+		if rec := getReq(h, "/api/v1/orders"); rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+	})
+}

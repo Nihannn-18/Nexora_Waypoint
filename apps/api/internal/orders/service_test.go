@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -17,6 +18,9 @@ type fakeRepo struct {
 	byID      map[string]Order
 	statuses  map[string]string
 	createErr error
+	// lastCount is the filter the last Count call received, so a test can
+	// check the total was scoped like the page.
+	lastCount Filter
 }
 
 func newFakeRepo() *fakeRepo {
@@ -52,6 +56,22 @@ func (f *fakeRepo) GetByNumber(_ context.Context, n string) (Order, error) {
 }
 
 func (f *fakeRepo) List(_ context.Context, filter Filter) ([]Order, error) {
+	out := f.matching(filter)
+	sort.Slice(out, func(i, j int) bool { return out[i].OrderNumber < out[j].OrderNumber })
+	start := min(filter.Offset, len(out))
+	end := len(out)
+	if filter.Limit > 0 {
+		end = min(start+filter.Limit, len(out))
+	}
+	return out[start:end], nil
+}
+
+func (f *fakeRepo) Count(_ context.Context, filter Filter) (int, error) {
+	f.lastCount = filter
+	return len(f.matching(filter)), nil
+}
+
+func (f *fakeRepo) matching(filter Filter) []Order {
 	out := make([]Order, 0)
 	for _, o := range f.byID {
 		if filter.OutletID != "" && o.OutletID != filter.OutletID {
@@ -60,9 +80,12 @@ func (f *fakeRepo) List(_ context.Context, filter Filter) ([]Order, error) {
 		if filter.Status != "" && string(o.Status) != filter.Status {
 			continue
 		}
+		if filter.Brand != "" && string(o.Brand) != filter.Brand {
+			continue
+		}
 		out = append(out, o)
 	}
-	return out, nil
+	return out
 }
 
 func (f *fakeRepo) UpdateStatus(_ context.Context, id string, status string) (Order, error) {

@@ -27,6 +27,9 @@ type Repository interface {
 	GetByNumber(ctx context.Context, orderNumber string) (Order, error)
 	// List returns orders matching filter, newest first, with lines loaded.
 	List(ctx context.Context, filter Filter) ([]Order, error)
+	// Count returns how many orders match filter, ignoring Limit and Offset, so
+	// a paged listing can say "showing 50 of 186".
+	Count(ctx context.Context, filter Filter) (int, error)
 	// UpdateStatus sets a new status and returns the updated order, or
 	// ErrNotFound. The caller has already validated the transition.
 	UpdateStatus(ctx context.Context, orderID string, status string) (Order, error)
@@ -38,8 +41,17 @@ type Filter struct {
 	// DeliveryDate restricts to a requested_delivery_date (date-only).
 	DeliveryDate *time.Time
 	Status       string
+	Brand        string
+	// DepotID and District narrow by the outlet's depot and district; both are
+	// outlet facts, so they are matched through the outlet table.
+	DepotID  string
+	District string
+	// Search matches the order number or outlet id, case-insensitively.
+	Search string
 	// Limit caps the result set; 0 means the repository default.
 	Limit int
+	// Offset skips that many rows of the ordered result, for paging.
+	Offset int
 }
 
 // defaultListLimit bounds an unfiltered listing so a caller cannot accidentally
@@ -181,34 +193,17 @@ func (r *PGRepository) linesFor(ctx context.Context, orderID string) ([]OrderLin
 // List implements Repository. It loads headers, then the lines for those orders
 // in one extra query, so a listing does not issue N+1 queries.
 func (r *PGRepository) List(ctx context.Context, filter Filter) ([]Order, error) {
-	var (
-		where []string
-		args  []any
-	)
-	if filter.OutletID != "" {
-		args = append(args, filter.OutletID)
-		where = append(where, fmt.Sprintf("outlet_id = $%d", len(args)))
-	}
-	if filter.DeliveryDate != nil {
-		args = append(args, *filter.DeliveryDate)
-		where = append(where, fmt.Sprintf("requested_delivery_date = $%d", len(args)))
-	}
-	if filter.Status != "" {
-		args = append(args, filter.Status)
-		where = append(where, fmt.Sprintf("status = $%d", len(args)))
-	}
+	where, args := filterClause(filter)
 
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = defaultListLimit
 	}
-	args = append(args, limit)
+	offset := max(filter.Offset, 0)
+	args = append(args, limit, offset)
 
-	query := `SELECT ` + orderColumns + ` FROM customer_order`
-	if len(where) > 0 {
-		query += " WHERE " + strings.Join(where, " AND ")
-	}
-	query += fmt.Sprintf(" ORDER BY created_at DESC, order_id LIMIT $%d", len(args))
+	query := `SELECT ` + orderColumns + ` FROM customer_order` + where
+	query += fmt.Sprintf(" ORDER BY created_at DESC, order_number LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -241,6 +236,57 @@ func (r *PGRepository) List(ctx context.Context, filter Filter) ([]Order, error)
 		orders[i].Lines = byOrder[orders[i].OrderID]
 	}
 	return orders, nil
+}
+
+// Count implements Repository.
+func (r *PGRepository) Count(ctx context.Context, filter Filter) (int, error) {
+	where, args := filterClause(filter)
+	var n int
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM customer_order`+where, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count orders: %w", err)
+	}
+	return n, nil
+}
+
+// filterClause builds the parameterised WHERE clause shared by List and Count,
+// so a page and its total can never disagree about which orders match.
+func filterClause(filter Filter) (string, []any) {
+	var (
+		where []string
+		args  []any
+	)
+	add := func(cond string, v any) {
+		args = append(args, v)
+		where = append(where, fmt.Sprintf(cond, len(args)))
+	}
+	if filter.OutletID != "" {
+		add("outlet_id = $%d", filter.OutletID)
+	}
+	if filter.DeliveryDate != nil {
+		add("requested_delivery_date = $%d", *filter.DeliveryDate)
+	}
+	if filter.Status != "" {
+		add("status = $%d", filter.Status)
+	}
+	if filter.Brand != "" {
+		add("brand = $%d", filter.Brand)
+	}
+	// depot_id is compared as text so a malformed id matches nothing instead of
+	// failing the UUID cast.
+	if filter.DepotID != "" {
+		add("outlet_id IN (SELECT outlet_id FROM outlet WHERE depot_id::text = $%d)", filter.DepotID)
+	}
+	if filter.District != "" {
+		add("outlet_id IN (SELECT outlet_id FROM outlet WHERE district = $%d)", filter.District)
+	}
+	if s := strings.TrimSpace(filter.Search); s != "" {
+		args = append(args, "%"+s+"%")
+		where = append(where, fmt.Sprintf("(order_number ILIKE $%d OR outlet_id ILIKE $%d)", len(args), len(args)))
+	}
+	if len(where) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(where, " AND "), args
 }
 
 func (r *PGRepository) linesForMany(ctx context.Context, orderIDs []string) (map[string][]OrderLine, error) {

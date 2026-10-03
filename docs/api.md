@@ -56,16 +56,17 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 
 ## Shared
 
-| Method | Endpoint      | Role                      | Purpose                                                                                                                                      |
-| ------ | ------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/auth/login` | all                       | Better Auth sign-in; returns the user, role and scope. Go-side session verification is TBD                                                   |
-| `GET`  | `/me`         | all                       | Current user with depot or outlet scope                                                                                                      |
-| `GET`  | `/outlets`    | dispatcher, store manager | Access, window, brand, district                                                                                                              |
-| `GET`  | `/vehicles`   | dispatcher                | Availability, capacity, temperature, depot, fuel                                                                                             |
-| `GET`  | `/items`      | all authenticated         | Catalogue SKUs: dimensions and temperature requirement. Read-only                                                                            |
-| `GET`  | `/items/{id}` | all authenticated         | One SKU by `itemId`, or by `?sku=`                                                                                                           |
-| `GET`  | `/healthz`    | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API                                 |
-| `GET`  | `/readyz`     | —                         | Readiness. Pings PostgreSQL and checks RabbitMQ is reachable; `503` and `dependencies: {database, queue}` (`up`/`down`) name the failing one |
+| Method | Endpoint      | Role              | Purpose                                                                                                                                      |
+| ------ | ------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/auth/login` | all               | Better Auth sign-in; returns the user, role and scope. Go-side session verification is TBD                                                   |
+| `GET`  | `/me`         | all               | Current user with depot or outlet scope                                                                                                      |
+| `GET`  | `/depots`     | dispatcher        | The depots with their internal `depotId` (the id planning, routes and audit filter by)                                                       |
+| `GET`  | `/outlets`    | dispatcher        | Access, window, brand, district. `?depotId=` narrows to one depot                                                                            |
+| `GET`  | `/vehicles`   | dispatcher        | Availability on `?date=` (default: today on the API clock), capacity, temperature, depot, fuel. `?depotId=` narrows                          |
+| `GET`  | `/items`      | all authenticated | Catalogue SKUs: dimensions and temperature requirement. Read-only                                                                            |
+| `GET`  | `/items/{id}` | all authenticated | One SKU by `itemId`, or by `?sku=`                                                                                                           |
+| `GET`  | `/healthz`    | —                 | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API                                 |
+| `GET`  | `/readyz`     | —                 | Readiness. Pings PostgreSQL and checks RabbitMQ is reachable; `503` and `dependencies: {database, queue}` (`up`/`down`) name the failing one |
 
 ### `GET /items`
 
@@ -92,6 +93,58 @@ and `search` (case-insensitive match on SKU or name). Results are ordered by SKU
 An unknown `brand` or `temperature` value is a `400 VALIDATION_FAILED`. There is no write
 endpoint: the catalogue is reference data seeded from the authoritative source, not edited
 through the API.
+
+### Network reference: `GET /depots`, `GET /outlets`, `GET /vehicles`
+
+**Implemented**, dispatcher-only (`internal/catalog/network.go`). Read-only reference data;
+no feasibility rule is evaluated here. Each response is an envelope:
+
+```json
+{ "depots": [{ "depotId": "2bcc…", "code": "PELIYAGODA", "name": "Peliyagoda" }] }
+```
+
+```json
+{
+  "outlets": [
+    {
+      "outletId": "OUT015",
+      "name": "Outlet OUT015",
+      "brand": "STYLE",
+      "district": "Colombo",
+      "depotId": "2bcc…",
+      "dockType": "MALL_BAY",
+      "parkingConstraint": "MALL_DOCK",
+      "mallWindow": { "open": "09:00", "close": "11:00" },
+      "windowOpenTime": "09:00",
+      "windowCloseTime": "11:00"
+    }
+  ]
+}
+```
+
+```json
+{
+  "vehicles": [
+    {
+      "vehicleId": "VEH001",
+      "type": "TRUCK",
+      "tempClass": "REEFER",
+      "weightCapKg": 5510,
+      "volumeCapM3": 26.4,
+      "fuelType": "diesel",
+      "kmPerL": 4.7,
+      "weeklyFuelQuotaL": 340,
+      "depotId": "2bcc…",
+      "status": "IN_WORKSHOP"
+    }
+  ]
+}
+```
+
+`mallWindow` is `null` outside malls. A vehicle's `status` is its availability on `date`; a
+vehicle with no availability row for that day is `AVAILABLE` (the planning loader's
+convention), and a stored `BREAKDOWN` is sent as the wire enum `BROKEN_DOWN`. A malformed
+`date` is `400`; a `depotId` that matches nothing returns an empty list.
 
 ---
 
@@ -122,6 +175,7 @@ the wall clock in the business timezone.
 
 | Method | Endpoint               | Purpose                            | Server must                                                                                                                                                                           |
 | ------ | ---------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/orders`              | Filtered, paged order list         | Apply every filter in SQL and count the same filtered set; pin a store manager to their own outlet                                                                                    |
 | `POST` | `/orders`              | Create an order with its lines     | Authorise the outlet; check items exist and brands match; enforce the 16:00 cutoff; snapshot SKU dimensions; compute units, weight, volume and temperature; generate the order number |
 | `POST` | `/orders/{id}/confirm` | Confirm before cutoff              | Compare against 16:00 Asia/Colombo and the operating calendar                                                                                                                         |
 | `GET`  | `/orders/{id}`         | Order, lines, allocation, ETA      | Restrict to the caller's outlet                                                                                                                                                       |
@@ -175,8 +229,24 @@ catalogue, because they are what the capacity rules are checked against. Each li
 the SKU's unit weight and volume, so a later catalogue edit cannot change a historical order's
 totals.
 
-**Implemented:** `POST /orders`, `GET /orders/{id}` and `POST /orders/{id}/confirm` are
-mounted. A store manager may only order for and read their own outlet; a dispatcher may act
+### `GET /orders`
+
+Dispatcher and store manager (loaders and drivers reach orders through their routes: `403`).
+Query parameters, all optional and all applied server-side: `deliveryDate` (`YYYY-MM-DD`),
+`status`, `brand`, `depotId`, `district`, `outletId`, `search` (case-insensitive match on the
+order number or outlet id), `limit` (1–200, default 50) and `offset`. Newest first.
+
+```json
+{ "orders": [{ "orderId": "…", "orderNumber": "S1-001", "…": "same shape as GET /orders/{id}" }], "total": 85, "limit": 50, "offset": 0 }
+```
+
+`total` counts the whole filtered set with the caller's scope applied, so a page can say
+"showing 1–50 of 85" truthfully. An unknown `status` or `brand`, a malformed `deliveryDate`,
+or an out-of-range `limit`/`offset` is `400 VALIDATION_FAILED` naming the field. A store
+manager is pinned to their outlet; asking for another outlet is `404`.
+
+**Implemented:** `GET /orders`, `POST /orders`, `GET /orders/{id}` and
+`POST /orders/{id}/confirm` are mounted. A store manager may only order for and read their own outlet; a dispatcher may act
 across outlets. `POST /orders/{id}/confirm` moves `PLACED`/`DEFERRED` to `CONFIRMED` and returns
 `409 CONFLICT` if the order is already past that point. `GET /orders/{id}/eta` and
 `POST /orders/{id}/receipt` are **not** implemented — they need route state and delivery

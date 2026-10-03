@@ -3,6 +3,7 @@ package orders
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 // Routes implemented (docs/api.md "Store manager"):
 //
 //	POST /api/v1/orders            — create (store manager owns the outlet)
+//	GET  /api/v1/orders            — filtered, paged list (dispatcher, store manager)
 //	GET  /api/v1/orders/{id}       — read one, scope-enforced
 //	POST /api/v1/orders/{id}/confirm — confirm before the cutoff
 //
@@ -36,6 +38,10 @@ func NewHandler(service *Service, authMiddleware *auth.Middleware) *Handler {
 // RegisterRoutes mounts the order endpoints on the API mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/orders", h.auth.RequireAuthenticated(http.HandlerFunc(h.Create)))
+	// Listing is for the roles that work with orders as orders. Loaders and
+	// drivers reach their orders through their routes instead.
+	mux.Handle("GET /api/v1/orders", h.auth.RequireAnyRole(
+		[]domain.Role{domain.RoleDispatcher, domain.RoleStoreManager}, http.HandlerFunc(h.List)))
 	mux.Handle("GET /api/v1/orders/{id}", h.auth.RequireAuthenticated(http.HandlerFunc(h.Get)))
 	mux.Handle("POST /api/v1/orders/{id}/confirm", h.auth.RequireAuthenticated(http.HandlerFunc(h.Confirm)))
 }
@@ -168,6 +174,64 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toResponse(order))
+}
+
+type listResponse struct {
+	Orders []orderResponse `json:"orders"`
+	Total  int             `json:"total"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
+}
+
+// List handles GET /api/v1/orders. Every filter is applied in SQL, so a page
+// and its total always describe the same filtered set.
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	identity, err := auth.MustIdentity(r.Context())
+	if err != nil {
+		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
+		return
+	}
+	q := r.URL.Query()
+	filter := Filter{
+		OutletID: strings.TrimSpace(q.Get("outletId")),
+		Status:   strings.TrimSpace(q.Get("status")),
+		Brand:    strings.TrimSpace(q.Get("brand")),
+		DepotID:  strings.TrimSpace(q.Get("depotId")),
+		District: strings.TrimSpace(q.Get("district")),
+		Search:   q.Get("search"),
+	}
+	if v := q.Get("deliveryDate"); v != "" {
+		d, err := parseDate(v)
+		if err != nil {
+			httpx.WriteValidation(w, []httpx.FieldError{{Field: "deliveryDate", Message: "must be YYYY-MM-DD"}})
+			return
+		}
+		filter.DeliveryDate = &d
+	}
+	for _, p := range []struct {
+		name string
+		dst  *int
+	}{{"limit", &filter.Limit}, {"offset", &filter.Offset}} {
+		if v := q.Get(p.name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				httpx.WriteValidation(w, []httpx.FieldError{{Field: p.name, Message: "must be a whole number"}})
+				return
+			}
+			*p.dst = n
+		}
+	}
+
+	page, err := h.service.ListPage(r.Context(), filter, scopeOf(identity))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := listResponse{Orders: make([]orderResponse, 0, len(page.Orders)), Total: page.Total, Limit: page.Limit, Offset: page.Offset}
+	for _, o := range page.Orders {
+		out.Orders = append(out.Orders, toResponse(o))
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // Confirm handles POST /api/v1/orders/{id}/confirm.

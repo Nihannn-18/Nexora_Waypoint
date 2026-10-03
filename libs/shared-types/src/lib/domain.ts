@@ -132,6 +132,7 @@ export function isTerminalForDay(status: OrderStatus): boolean {
 export const ROUTE_STATUSES = [
   'DRAFT',
   'CONFIRMED',
+  'DISPATCHED',
   'LOADING',
   'LOADED',
   'IN_TRANSIT',

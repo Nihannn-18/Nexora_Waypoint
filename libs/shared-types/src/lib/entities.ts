@@ -131,8 +131,9 @@ export interface Item {
 export interface OrderLine {
   readonly orderItemId: string;
   readonly itemId: string;
-  readonly sku: string;
-  readonly name: string;
+  /** Not on the order response today; resolve from GET /items by itemId. */
+  readonly sku?: string;
+  readonly name?: string;
   readonly quantity: number;
   /** Dimensions are snapshotted at order time so later catalogue edits
       cannot retroactively change a historical order's totals. */
@@ -161,13 +162,22 @@ export interface CustomerOrder {
   readonly lines?: readonly OrderLine[];
 }
 
+/** Response of GET /orders: one page plus the total matching the filter. */
+export interface OrderPage {
+  readonly orders: readonly CustomerOrder[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Routes and legs                                                            */
 /* -------------------------------------------------------------------------- */
 
 export interface RouteLeg {
   readonly legId: string;
-  readonly routeId: string;
+  /** Present on the loader/driver views; the dispatcher route view omits it. */
+  readonly routeId?: string;
   readonly orderId: string;
   /** Stop position within the trip, starting at 0. */
   readonly seq: number;
@@ -175,9 +185,10 @@ export interface RouteLeg {
   readonly fromPoint: string;
   readonly toOutletId: string;
   readonly distanceKm: number;
-  readonly plannedArrival: ClockTime;
+  /** Not yet computed by GET /routes (no ETA model is served there). */
+  readonly plannedArrival?: ClockTime;
   readonly actualArrival?: ClockTime;
-  readonly serviceTimeMin: number;
+  readonly serviceTimeMin?: number;
   readonly status: LegStatus;
 }
 
@@ -202,6 +213,13 @@ export interface Route {
   readonly totalVolumeM3: number;
   readonly distanceKm: number;
   readonly legs?: readonly RouteLeg[];
+}
+
+/** Response of POST /allocations/confirm: what the transaction wrote. */
+export interface ConfirmAllocationResponse {
+  readonly routeIds: readonly string[];
+  readonly allocatedOrders: readonly string[];
+  readonly deferredOrders: readonly string[];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -243,48 +261,46 @@ export interface PlanningJob {
   readonly errorMessage?: string;
 }
 
-/** One proposed row. Never a final allocation — the dispatcher confirms. */
-export interface PlanningResultRow {
-  readonly resultId: string;
+/** Response of POST /allocations/suggest (202). Poll the job until COMPLETED. */
+export interface SuggestPlanResponse {
   readonly jobId: string;
+  readonly status: PlanningJobStatus;
+}
+
+/**
+ * One proposed row of GET /planning-jobs/{jobId}/results. Never a final
+ * allocation — the dispatcher confirms. Zero-valued fields are omitted on the
+ * wire, so a missing `seq` on a SERVE row means stop 0.
+ */
+export interface PlanningProposal {
   readonly orderId: string;
   readonly decision: PlanningDecision;
   readonly vehicleId?: string;
   readonly tripNo?: TripNumber;
   readonly seq?: number;
-  readonly eta?: ClockTime;
-  readonly weightKg: number;
-  readonly volumeM3: number;
+  /** The whole trip's minutes (official formula), repeated on each stop. */
   readonly tripMinutes?: number;
   /** Why this row looks the way it does — shown in "Why this plan". */
   readonly explanation: string;
-  readonly constraintResults: readonly ConstraintResult[];
+  /** The binding rule on a DEFER row. */
+  readonly constraintCode?: ConstraintCode;
 }
 
 export interface PlanningResults {
   readonly job: PlanningJob;
-  readonly served: readonly PlanningResultRow[];
-  readonly deferred: readonly PlanningResultRow[];
-  readonly summary: {
-    readonly ordersTotal: number;
-    readonly ordersServed: number;
-    readonly ordersDeferred: number;
-    readonly vehiclesUsed: number;
-    readonly tripsPlanned: number;
-  };
+  readonly proposals: readonly PlanningProposal[];
 }
 
 /* -------------------------------------------------------------------------- */
 /* Deferrals                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/** One row of GET /deferrals, newest first. */
 export interface DeferralLogEntry {
   readonly deferralId: string;
   readonly orderId: string;
   readonly orderNumber: string;
   readonly outletId: string;
-  readonly outletName: string;
-  readonly brand: Brand;
   readonly reasonType: DeferralReasonType;
   readonly constraintCode?: ConstraintCode;
   readonly reasonText: string;
@@ -376,6 +392,78 @@ export interface DemandForecastPoint {
   readonly predTotalVolumeM3: number;
   /** Only Fresh carries chilled demand; 0 for Style and Tech. */
   readonly predChilledVolumeM3: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Audit and notifications                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Actions the audit trail records today (UPPER_SNAKE on the wire). */
+export const AUDIT_ACTIONS = [
+  'ORDER_CREATED',
+  'ORDER_CONFIRMED',
+  'PLANNING_PROPOSED',
+  'ROUTE_CONFIRMED',
+  'ALLOCATION_DECIDED',
+  'LOAD_RECORDED',
+  'SHORTFALL_RECORDED',
+  'DELIVERY_RECORDED',
+  'SYNC_PROCESSED',
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export const AUDIT_ENTITY_TYPES = [
+  'ORDER',
+  'PLANNING_JOB',
+  'ROUTE',
+  'ALLOCATION',
+  'LOAD_ITEM',
+  'DELIVERY_EVENT',
+  'SYNC_BATCH',
+] as const;
+export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
+
+/**
+ * One immutable row of GET /audit. `detail` is a small envelope of operational
+ * facts (ids, counts, codes) — never credentials or request bodies. Values are
+ * typed loosely because each action carries its own keys.
+ */
+export interface AuditRecord {
+  readonly id: string;
+  readonly actor?: string;
+  readonly role?: Role;
+  readonly action: string;
+  readonly entityType: string;
+  readonly entityId?: string;
+  readonly depotId?: string;
+  readonly outletId?: string;
+  readonly result?: 'SUCCESS' | 'FAILURE' | 'DENIED';
+  readonly detail?: Readonly<Record<string, unknown>>;
+  readonly occurredAt: IsoDateTime;
+}
+
+export const NOTIFICATION_TYPES = [
+  'SHORTFALL',
+  'DELIVERY_FAILED',
+  'DELIVERY_DELAYED',
+  'ROUTE_ATTENTION',
+] as const;
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
+/**
+ * One in-app notification from GET /notifications. `reference` is the
+ * originating event (`shortfall:<routeId>`, `delivery:<clientEventId>`).
+ */
+export interface AppNotification {
+  readonly id: string;
+  readonly type: string;
+  readonly title: string;
+  readonly message: string;
+  readonly reference?: string;
+  readonly outletId?: string;
+  readonly read: boolean;
+  readonly createdAt: IsoDateTime;
+  readonly readAt?: IsoDateTime;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -123,6 +123,9 @@ func run() error {
 	catalogRepo := catalog.NewPGRepository(db.Pool())
 	catalogService := catalog.NewService(catalogRepo)
 	catalogHandler := catalog.NewHandler(catalogService, authMiddleware)
+	// Network reference (depots, outlets, vehicles) for the dispatcher. Vehicle
+	// availability defaults to the API clock's date.
+	networkHandler := catalog.NewNetworkHandler(catalog.NewPGNetworkReader(db.Pool()), clk, authMiddleware)
 
 	// Orders: intake, retrieval and confirmation. The shared API clock drives the
 	// 16:00 cutoff, so the demo day is honoured like every other "now".
@@ -181,7 +184,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.
