@@ -35,11 +35,15 @@ One shape for every failure, so the client never has to special-case an HTML err
 | Status | Meaning                                                                                                             |
 | ------ | ------------------------------------------------------------------------------------------------------------------- |
 | `400`  | Malformed body, unknown field (`BAD_REQUEST`), or failed field validation (`VALIDATION_FAILED`, with `fieldErrors`) |
-| `401`  | Missing, expired or invalid token                                                                                   |
-| `403`  | Authenticated but out of scope — another depot's route, another outlet's order                                      |
+| `401`  | Missing or invalid session (`UNAUTHENTICATED`)                                                                      |
+| `403`  | Authenticated but not permitted (`FORBIDDEN`) — wrong role, or out of depot/outlet/route scope                      |
 | `404`  | Not found, or found but out of scope                                                                                |
 | `409`  | Optimistic-lock conflict — `routeVersion` is stale                                                                  |
 | `422`  | Request is well-formed but infeasible; `constraintResults` says which rule blocked it                               |
+
+`401` and `403` are produced by the reusable auth middleware in
+`apps/api/internal/auth` and carry the machine codes `UNAUTHENTICATED` and `FORBIDDEN`. The
+messages are deliberately generic — no token, session or scope value is ever echoed.
 
 A `VALIDATION_FAILED` body lists every invalid field at once so forms can mark each in place:
 `{ "message": "...", "code": "VALIDATION_FAILED", "fieldErrors": [{ "field": "weightKg", "message": "weightKg must be greater than zero" }] }`.

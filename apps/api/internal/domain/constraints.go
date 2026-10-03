@@ -86,6 +86,22 @@ const (
 	RoleStoreManager Role = "STORE_MANAGER"
 )
 
+// RoleValues lists the four canonical roles. Used to validate data loaded from
+// the database or, in future, a verification bridge.
+var RoleValues = []Role{RoleDispatcher, RoleLoader, RoleDriver, RoleStoreManager}
+
+// Valid reports whether r is one of the four canonical roles. A zero or unknown
+// role is never valid, so an identity with no role fails authentication rather
+// than being treated as some implicit default.
+func (r Role) Valid() bool {
+	for _, known := range RoleValues {
+		if r == known {
+			return true
+		}
+	}
+	return false
+}
+
 // OrderStatus tracks an order through its lifecycle:
 //
 //	PLACED → CONFIRMED → ALLOCATED → LOADED → IN_TRANSIT → DELIVERED → RECEIVED
