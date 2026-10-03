@@ -27,12 +27,16 @@ One shape for every failure, so the client never has to special-case an HTML err
 
 | Status | Meaning                                                                               |
 | ------ | ------------------------------------------------------------------------------------- |
-| `400`  | Malformed body, unknown field, or a failed field validation                           |
+| `400`  | Malformed body, unknown field (`BAD_REQUEST`), or failed field validation (`VALIDATION_FAILED`, with `fieldErrors`) |
 | `401`  | Missing, expired or invalid token                                                     |
 | `403`  | Authenticated but out of scope — another depot's route, another outlet's order        |
 | `404`  | Not found, or found but out of scope                                                  |
 | `409`  | Optimistic-lock conflict — `routeVersion` is stale                                    |
 | `422`  | Request is well-formed but infeasible; `constraintResults` says which rule blocked it |
+
+A `VALIDATION_FAILED` body lists every invalid field at once so forms can mark each in place:
+`{ "message": "...", "code": "VALIDATION_FAILED", "fieldErrors": [{ "field": "weightKg", "message": "weightKg must be greater than zero" }] }`.
+An unexpected server fault is `500` with code `INTERNAL_ERROR`; the cause is logged, never returned.
 
 `constraintResults` returns **every** rule verdict, passed and failed, not only the failures.
 The dispatcher's rule panel shows the full picture rather than just the first objection.
@@ -48,7 +52,7 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 | `GET`  | `/outlets`    | dispatcher, store manager | Access, window, brand, district                                                                              |
 | `GET`  | `/vehicles`   | dispatcher                | Availability, capacity, temperature, depot, fuel                                                             |
 | `GET`  | `/healthz`    | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API |
-| `GET`  | `/readyz`     | —                         | Readiness. Pings PostgreSQL and RabbitMQ; `503` names the failing dependency                                 |
+| `GET`  | `/readyz`     | —                         | Readiness. Pings PostgreSQL and checks RabbitMQ is reachable; `503` and `dependencies: {database, queue}` (`up`/`down`) name the failing one |
 
 ---
 

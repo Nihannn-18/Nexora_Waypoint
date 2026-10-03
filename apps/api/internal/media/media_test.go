@@ -78,8 +78,9 @@ func TestLocalStorageRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	defer rc.Close()
 	got, _ := io.ReadAll(rc)
+	// Close before Delete: Windows refuses to remove a file that is still open.
+	_ = rc.Close()
 	if !bytes.Equal(got, body) {
 		t.Fatalf("Get returned %q, want %q", got, body)
 	}

@@ -14,9 +14,16 @@
 
 import type { ConstraintResult } from '@waypoint/shared-types';
 
+export interface FieldError {
+  readonly field: string;
+  readonly message: string;
+}
+
 export interface ApiErrorBody {
   readonly message?: string;
   readonly code?: string;
+  /** Present on 400 VALIDATION_FAILED: one entry per invalid field. */
+  readonly fieldErrors?: readonly FieldError[];
   /** Present on 422 from the allocation endpoints. */
   readonly constraintResults?: readonly ConstraintResult[];
 }
@@ -24,6 +31,7 @@ export interface ApiErrorBody {
 export class WaypointApiError extends Error {
   readonly status: number;
   readonly code?: string;
+  readonly fieldErrors?: readonly FieldError[];
   readonly constraintResults?: readonly ConstraintResult[];
   /**
    * True when the request never reached the server — DNS failure, dropped
@@ -36,6 +44,7 @@ export class WaypointApiError extends Error {
     options: {
       status: number;
       code?: string;
+      fieldErrors?: readonly FieldError[];
       constraintResults?: readonly ConstraintResult[];
       isOffline?: boolean;
     },
@@ -44,6 +53,7 @@ export class WaypointApiError extends Error {
     this.name = 'WaypointApiError';
     this.status = options.status;
     this.code = options.code;
+    this.fieldErrors = options.fieldErrors;
     this.constraintResults = options.constraintResults;
     this.isOffline = options.isOffline ?? false;
   }
@@ -148,6 +158,7 @@ export class HttpClient {
         {
           status: response.status,
           code: body.code,
+          fieldErrors: body.fieldErrors,
           constraintResults: body.constraintResults,
         },
       );

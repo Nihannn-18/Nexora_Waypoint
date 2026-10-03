@@ -17,7 +17,10 @@ stale number that looks authoritative is worse than no number.
   from Go, not SQL — there is **no** `00002_reference.sql`.
 - **Source of truth for the data:** `docs/general-data/` remains the human-supplied original;
   the copies under `seed/data/` are what the binary embeds. Do not edit the copies by hand.
-- **Not seeded:** S1 demo orders, demo users and `vehicle_daily_availability` (the Task 2B
+- **Demo accounts:** the seed upserts the four `app_user` rows (role and depot/outlet scope
+  only; Better Auth owns credentials). `user_id` is a stable placeholder (`seed-dispatcher`, …)
+  that a re-seed never rewrites on an existing email, so the Better Auth link can replace it.
+- **Not seeded:** S1 demo orders and `vehicle_daily_availability` (the Task 2B
   source files are not yet present); `traffic_speed` and `road_condition` are Datathon-only
   and carry no rows.
 - **Display names.** The supplied CSVs contain no outlet names or vehicle registrations. The

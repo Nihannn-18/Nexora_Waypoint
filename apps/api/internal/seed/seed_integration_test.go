@@ -66,6 +66,10 @@ func TestSeedIntegration(t *testing.T) {
 		t.Errorf("service_allowance = %d, want 9", second.ServiceAllowance)
 	}
 
+	if second.Users != 4 {
+		t.Errorf("users = %d, want 4", second.Users)
+	}
+
 	// Row counts in the database must match the reported counts, proving the
 	// upserts did not duplicate on the second run.
 	var outlets int
@@ -74,5 +78,13 @@ func TestSeedIntegration(t *testing.T) {
 	}
 	if outlets != second.Outlets {
 		t.Fatalf("outlet table has %d rows after two runs, want %d", outlets, second.Outlets)
+	}
+
+	var users int
+	if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM app_user WHERE email LIKE '%@waypoint.lk'`).Scan(&users); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if users != second.Users {
+		t.Fatalf("app_user has %d seeded rows after two runs, want %d", users, second.Users)
 	}
 }
