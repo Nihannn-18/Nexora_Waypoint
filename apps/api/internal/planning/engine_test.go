@@ -123,6 +123,108 @@ func TestEngineDifferentDatesNotPlanned(t *testing.T) {
 	}
 }
 
+// budgetTotalsByVehicle returns, per vehicle, the Fresh and Style+Tech minutes
+// a result would commit. It is the invariant check used by the regression tests:
+// no vehicle may exceed its pool.
+func budgetTotalsByVehicle(res Result) map[string]VehicleDayBudget {
+	out := map[string]VehicleDayBudget{}
+	for _, tr := range res.Trips {
+		b := out[tr.VehicleID]
+		if tr.Brand == domain.BrandFresh {
+			b.FreshMinutesUsed += tr.TotalTripMin
+		} else {
+			b.StyleTechMinutesUsed += tr.TotalTripMin
+		}
+		out[tr.VehicleID] = b
+	}
+	return out
+}
+
+// TestEngineExtensionAccumulatesFreshBudget is the regression for the observed
+// VEH006/VEH009 over-budget behaviour. Before the fix, extending an open trip
+// never updated the vehicle's day budget, so trip 2 under-counted trip 1 and a
+// Fresh vehicle could exceed 270 minutes. The engine must never emit such a plan.
+func TestEngineExtensionAccumulatesFreshBudget(t *testing.T) {
+	in := baseInput()
+	// One Fresh/Colombo vehicle so all Fresh orders target it and it runs two
+	// trips. Many small orders force a long, repeatedly-extended trip 1 followed
+	// by trip 2.
+	in.Vehicles = []Vehicle{
+		{VehicleID: "VEH009", Type: domain.VehicleTruck, TempClass: domain.VehicleTempAmbient,
+			WeightCapKg: 100000, VolumeCapM3: 100000, KmPerL: 5, DepotID: "d-peli", Available: true},
+	}
+	in.Orders = nil
+	for i := 0; i < 40; i++ {
+		in.Orders = append(in.Orders, order("O"+itoa(i), "OUT001", domain.BrandFresh, "Colombo", "d-peli", 1, 0.001, domain.TempAmbient, domain.ParkingNormal))
+	}
+
+	res := New().Plan(in)
+	for vehicleID, b := range budgetTotalsByVehicle(res) {
+		if b.FreshMinutesUsed > FreshTimeBudgetMin {
+			t.Fatalf("vehicle %s committed %d Fresh minutes, over the %d budget", vehicleID, b.FreshMinutesUsed, FreshTimeBudgetMin)
+		}
+	}
+
+	// The same order better hold for each individual trip and for the sum of the
+	// vehicle's trips, which is the real rule.
+	for _, tr := range res.Trips {
+		if tr.Brand == domain.BrandFresh && tr.TotalTripMin > FreshTimeBudgetMin {
+			t.Fatalf("trip %s/%d is %d Fresh minutes, over the %d budget", tr.VehicleID, tr.TripNo, tr.TotalTripMin, FreshTimeBudgetMin)
+		}
+	}
+}
+
+// TestEngineExtensionAccumulatesStyleTechBudget applies the same regression to
+// the shared Style + Tech 480-minute pool: two extended trips must never add up
+// past the shared budget.
+func TestEngineExtensionAccumulatesStyleTechBudget(t *testing.T) {
+	in := baseInput()
+	in.ServiceAllowances["STYLE|STREET"] = 16
+	in.Vehicles = []Vehicle{
+		{VehicleID: "VEH010", Type: domain.VehicleTruck, TempClass: domain.VehicleTempAmbient,
+			WeightCapKg: 100000, VolumeCapM3: 100000, KmPerL: 5, DepotID: "d-peli", Available: true},
+	}
+	in.Orders = nil
+	for i := 0; i < 60; i++ {
+		o := order("T"+itoa(i), "OUT001", domain.BrandStyle, "Colombo", "d-peli", 1, 0.001, domain.TempAmbient, domain.ParkingNormal)
+		o.WindowOpen, o.WindowClose = "09:00", "17:00"
+		in.Orders = append(in.Orders, o)
+	}
+
+	res := New().Plan(in)
+	for vehicleID, b := range budgetTotalsByVehicle(res) {
+		if b.StyleTechMinutesUsed > StyleTechTimeBudgetMin {
+			t.Fatalf("vehicle %s committed %d Style+Tech minutes, over the shared %d budget", vehicleID, b.StyleTechMinutesUsed, StyleTechTimeBudgetMin)
+		}
+	}
+}
+
+// TestEngineEveryTripRespectsItsPool is a broad invariant across a mixed world:
+// no emitted trip may exceed its brand's daily pool, and no vehicle's summed
+// trips may exceed it either.
+func TestEngineEveryTripRespectsItsPool(t *testing.T) {
+	in := baseInput()
+	in.ServiceAllowances["STYLE|STREET"] = 16
+	in.Orders = nil
+	for i := 0; i < 25; i++ {
+		in.Orders = append(in.Orders, order("F"+itoa(i), "OUT001", domain.BrandFresh, "Colombo", "d-peli", 1, 0.001, domain.TempAmbient, domain.ParkingNormal))
+	}
+	for i := 0; i < 25; i++ {
+		o := order("S"+itoa(i), "OUT001", domain.BrandStyle, "Colombo", "d-peli", 1, 0.001, domain.TempAmbient, domain.ParkingNormal)
+		o.WindowOpen, o.WindowClose = "09:00", "17:00"
+		in.Orders = append(in.Orders, o)
+	}
+	res := New().Plan(in)
+	for vehicleID, b := range budgetTotalsByVehicle(res) {
+		if b.FreshMinutesUsed > FreshTimeBudgetMin {
+			t.Fatalf("vehicle %s Fresh %d > %d", vehicleID, b.FreshMinutesUsed, FreshTimeBudgetMin)
+		}
+		if b.StyleTechMinutesUsed > StyleTechTimeBudgetMin {
+			t.Fatalf("vehicle %s Style+Tech %d > %d", vehicleID, b.StyleTechMinutesUsed, StyleTechTimeBudgetMin)
+		}
+	}
+}
+
 func TestEngineDeferralHasReason(t *testing.T) {
 	in := baseInput()
 	// Chilled order but only ambient vehicles available: must defer with a reason.

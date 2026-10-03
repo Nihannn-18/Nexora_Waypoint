@@ -152,7 +152,7 @@ func run() error {
 	// proposals and its own readers for order/vehicle/reference facts.
 	routesRepo := routes.NewPGRepository(db.Pool())
 	routesReaders := routes.NewPGReaders(db.Pool())
-	confirmation := routes.NewConfirmation(routesRepo, planningService, routesReaders, routesReaders, routesReaders, clk)
+	confirmation := routes.NewConfirmation(routesRepo, planningService, routesReaders, routesReaders, routesReaders, planningLoader, clk)
 	routesHandler := routes.NewHandler(confirmation, routesRepo, authMiddleware)
 
 	// Loading: the loader's picking list and shortfall recording for a confirmed

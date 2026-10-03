@@ -238,7 +238,12 @@ func toLegResponse(l RouteLeg) legResponse {
 // writeError maps routes errors onto the shared HTTP error contract.
 func writeError(w http.ResponseWriter, err error) {
 	var invalid ValidationError
+	var violation ConstraintViolationError
 	switch {
+	case errors.As(err, &violation):
+		// A plan that violates a hard constraint is infeasible, not a malformed
+		// request: 422 with every rule verdict, matching POST /allocations/validate.
+		httpx.WriteConstraintViolation(w, violation.Results)
 	case errors.Is(err, ErrNotFound):
 		httpx.WriteErrorCode(w, http.StatusNotFound, httpx.CodeNotFound, "Not found")
 	case errors.Is(err, ErrConflict):

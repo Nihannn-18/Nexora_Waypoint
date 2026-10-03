@@ -95,6 +95,42 @@ func (f *fakeRepo) Confirm(_ context.Context, plan ConfirmationPlan) (Confirmati
 	return f.result, nil
 }
 
+// fakePlanInput returns the authoritative planning world for revalidation. The
+// default is a feasible Fresh/Colombo world matching the fixture orders.
+type fakePlanInput struct {
+	in  planning.Input
+	err error
+}
+
+func (f fakePlanInput) LoadInput(context.Context, time.Time, string) (planning.Input, error) {
+	return f.in, f.err
+}
+
+// revalWorld builds a planning.Input consistent with the fixture: OUT001 and
+// OUT002 are Fresh/Colombo at d-peli with a wide window, one reefer vehicle.
+func revalWorld() planning.Input {
+	return planning.Input{
+		PlanningDate: time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC),
+		DepotID:      "d-peli",
+		Calendar:     planning.CalendarDay{Date: time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC), IsOperating: true},
+		Outlets: map[string]planning.Outlet{
+			"OUT001": {OutletID: "OUT001", Brand: domain.BrandFresh, District: "Colombo", DepotID: "d-peli",
+				DockType: domain.DockStreet, ParkingConstraint: domain.ParkingNormal, WindowOpen: "05:00", WindowClose: "07:30"},
+			"OUT002": {OutletID: "OUT002", Brand: domain.BrandFresh, District: "Colombo", DepotID: "d-peli",
+				DockType: domain.DockRearDock, ParkingConstraint: domain.ParkingNormal, WindowOpen: "05:00", WindowClose: "07:30"},
+		},
+		Vehicles: []planning.Vehicle{
+			{VehicleID: "VEH014", Type: domain.VehicleTruck, TempClass: domain.VehicleTempReefer,
+				WeightCapKg: 5000, VolumeCapM3: 20, KmPerL: 5, DepotID: "d-peli", Available: true},
+		},
+		Travel: map[string]planning.Travel{
+			"d-peli|Colombo": {District: "Colombo", DepotID: "d-peli",
+				DepotToDistrictKm: 12, DepotToDistrictMin: 24, InterStopKm: 4, InterStopMin: 8},
+		},
+		ServiceAllowances: map[string]int{"FRESH|STREET": 15, "FRESH|REAR_DOCK": 15},
+	}
+}
+
 func fixture() (*Confirmation, *fakeRepo) {
 	job := planning.Job{JobID: "j1", Status: planning.JobCompleted, DepotID: "d-peli",
 		PlanningDate: time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)}
@@ -115,7 +151,7 @@ func fixture() (*Confirmation, *fakeRepo) {
 		allowance: 15,
 	}
 	repo := &fakeRepo{routes: map[string]Route{}, result: ConfirmationResult{RouteIDs: []string{"r1"}, AllocatedOrders: []string{"O1", "O2"}, DeferredOrders: []string{"O3"}}}
-	svc := NewConfirmation(repo, fakePlanning{job: job, proposals: proposals}, orders, vehicles, refs, fixedClock{})
+	svc := NewConfirmation(repo, fakePlanning{job: job, proposals: proposals}, orders, vehicles, refs, fakePlanInput{in: revalWorld()}, fixedClock{})
 	return svc, repo
 }
 
@@ -252,5 +288,153 @@ func TestConfirmRejectsOrderAllocatedAndDeferred(t *testing.T) {
 	_, err := svc.Confirm(context.Background(), in)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}
+
+// --- hard-constraint revalidation ------------------------------------------
+
+// TestConfirmRejectsOverBudgetTrip is the regression for a plan that was valid
+// when suggested but exceeds the Fresh 270-minute budget on current state:
+// confirmation must reject it with 422 constraintResults and write nothing.
+func TestConfirmRejectsOverBudgetTrip(t *testing.T) {
+	svc, repo := fixture()
+	world := revalWorld()
+	// Make the vehicle tiny-capacity? No: inflate the trip by giving the two
+	// orders a budget that is already nearly exhausted via the reference. The
+	// cleanest lever is a very high handling allowance, so 2 stops alone exceed
+	// 270: 24 outbound + 8 inter-stop + 2*handling. handling=200 -> 432 > 270.
+	world.ServiceAllowances = map[string]int{"FRESH|STREET": 200, "FRESH|REAR_DOCK": 200}
+	svc.planInput = fakePlanInput{in: world}
+
+	_, err := svc.Confirm(context.Background(), confirmInput())
+	var violation ConstraintViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("err = %v, want ConstraintViolationError", err)
+	}
+	if len(violation.Results) == 0 {
+		t.Fatal("violation must carry the rule results")
+	}
+	found := false
+	for _, r := range violation.Results {
+		if r.Code == domain.ConstraintFreshTimeBudget && !r.Passed {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a failed FRESH_TIME_BUDGET, got %+v", violation.Results)
+	}
+	if repo.confirmed != nil {
+		t.Fatal("an infeasible plan must not be persisted")
+	}
+}
+
+// TestConfirmRejectsOverweightTrip proves a weight breach on current state is
+// caught even though the order totals passed when the proposal was made.
+func TestConfirmRejectsOverweightTrip(t *testing.T) {
+	svc, repo := fixture()
+	world := revalWorld()
+	world.Vehicles[0].WeightCapKg = 100 // O1 is 100kg, O2 50kg -> 150 > 100
+	svc.planInput = fakePlanInput{in: world}
+
+	_, err := svc.Confirm(context.Background(), confirmInput())
+	var violation ConstraintViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("err = %v, want ConstraintViolationError", err)
+	}
+	found := false
+	for _, r := range violation.Results {
+		if r.Code == domain.ConstraintWeightExceeded && !r.Passed {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a failed WEIGHT_CAPACITY_EXCEEDED, got %+v", violation.Results)
+	}
+	if repo.confirmed != nil {
+		t.Fatal("an infeasible plan must not be persisted")
+	}
+}
+
+// TestConfirmRejectsUnavailableVehicle proves a vehicle that became unavailable
+// since planning is rejected.
+func TestConfirmRejectsUnavailableVehicle(t *testing.T) {
+	svc, repo := fixture()
+	world := revalWorld()
+	world.Vehicles[0].Available = false
+	svc.planInput = fakePlanInput{in: world}
+
+	_, err := svc.Confirm(context.Background(), confirmInput())
+	var violation ConstraintViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("err = %v, want ConstraintViolationError", err)
+	}
+	found := false
+	for _, r := range violation.Results {
+		if r.Code == domain.ConstraintVehicleUnavailable && !r.Passed {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a failed VEHICLE_UNAVAILABLE, got %+v", violation.Results)
+	}
+	if repo.confirmed != nil {
+		t.Fatal("an infeasible plan must not be persisted")
+	}
+}
+
+// TestConfirmValidPlanStillConfirms guards against the revalidation being too
+// strict: a genuinely feasible plan must still persist successfully.
+func TestConfirmValidPlanStillConfirms(t *testing.T) {
+	svc, repo := fixture()
+	if _, err := svc.Confirm(context.Background(), confirmInput()); err != nil {
+		t.Fatalf("a feasible plan must confirm: %v", err)
+	}
+	if repo.confirmed == nil || len(repo.confirmed.Routes) != 1 {
+		t.Fatal("the feasible plan must be persisted")
+	}
+}
+
+// TestConfirmAccumulatesBudgetAcrossRoutes proves two routes on one vehicle in a
+// single confirmation cannot combine past the Fresh budget even though each fits
+// alone.
+func TestConfirmAccumulatesBudgetAcrossRoutes(t *testing.T) {
+	svc, repo := fixture()
+	// Each trip alone: 24 + 0 inter-stop + 140 handling = 164 < 270. Two trips:
+	// 328 > 270, so the second must fail on the accumulated Fresh budget.
+	world := revalWorld()
+	world.ServiceAllowances = map[string]int{"FRESH|STREET": 140, "FRESH|REAR_DOCK": 140}
+	svc.planInput = fakePlanInput{in: world}
+
+	// Two identical routes on the same vehicle, trip 1 and trip 2.
+	in := ConfirmInput{
+		JobID: "j1", Actor: "u-disp",
+		Routes: []RouteChoice{
+			{VehicleID: "VEH014", TripNo: 1, OrderIDs: []string{"O1"}},
+			{VehicleID: "VEH014", TripNo: 2, OrderIDs: []string{"O2"}},
+		},
+	}
+	svc.planning = fakePlanning{job: planning.Job{JobID: "j1", Status: planning.JobCompleted,
+		DepotID: "d-peli", PlanningDate: time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)},
+		proposals: []planning.Proposal{
+			{OrderID: "O1", Decision: "SERVE", VehicleID: "VEH014", TripNo: 1, Seq: 0},
+			{OrderID: "O2", Decision: "SERVE", VehicleID: "VEH014", TripNo: 2, Seq: 0},
+		}}
+
+	_, err := svc.Confirm(context.Background(), in)
+	var violation ConstraintViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("err = %v, want ConstraintViolationError", err)
+	}
+	found := false
+	for _, r := range violation.Results {
+		if r.Code == domain.ConstraintFreshTimeBudget && !r.Passed {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a failed FRESH_TIME_BUDGET on the second trip, got %+v", violation.Results)
+	}
+	if repo.confirmed != nil {
+		t.Fatal("an over-budget plan must not be persisted")
 	}
 }

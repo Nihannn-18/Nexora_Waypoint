@@ -28,6 +28,11 @@ type Confirmation struct {
 	// travel/allowance/outlet supply the official trip metrics, reused from the
 	// planning inputs rather than recomputed with a new formula.
 	refs ReferenceReader
+	// planInput loads the authoritative planning input (orders, vehicles,
+	// reference, calendar, fuel) for the job's date and depot, so confirmation
+	// can re-run planning.CheckTrip — the single feasibility authority — against
+	// current database state before it persists anything.
+	planInput PlanInputReader
 	// clock is the injected clock; kept for future use (e.g. deferral target
 	// dates). Confirmation itself is deterministic and date-driven.
 	clock Clock
@@ -91,8 +96,8 @@ type TravelRef struct {
 }
 
 // NewConfirmation builds the confirmation service.
-func NewConfirmation(repo Repository, pr PlanningReader, or OrderReader, vr VehicleReader, refs ReferenceReader, clock Clock) *Confirmation {
-	return &Confirmation{repo: repo, planning: pr, orders: or, vehicles: vr, refs: refs, clock: clock}
+func NewConfirmation(repo Repository, pr PlanningReader, or OrderReader, vr VehicleReader, refs ReferenceReader, planInput PlanInputReader, clock Clock) *Confirmation {
+	return &Confirmation{repo: repo, planning: pr, orders: or, vehicles: vr, refs: refs, planInput: planInput, clock: clock}
 }
 
 // ConfirmInput is the dispatcher's confirmation of a planning job.
@@ -150,7 +155,10 @@ func (c *Confirmation) Confirm(ctx context.Context, in ConfirmInput) (Confirmati
 		}
 	}
 
-	plan, err := c.buildPlan(ctx, job, in, serveByOrder, deferByOrder)
+	// Facts are loaded once and shared with the hard-constraint revalidation,
+	// so both the route build and the validator see the same current state.
+	facts := map[string]OrderFacts{}
+	plan, err := c.buildPlan(ctx, job, in, serveByOrder, deferByOrder, facts)
 	if err != nil {
 		return ConfirmationResult{}, err
 	}
@@ -162,11 +170,24 @@ func (c *Confirmation) Confirm(ctx context.Context, in ConfirmInput) (Confirmati
 		return ConfirmationResult{}, err
 	}
 
+	// Hard-constraint revalidation, reusing the authoritative validator. This is
+	// the last gate before the transactional write: a plan that violates a hard
+	// rule on current state is rejected and never persisted.
+	input, err := c.planInput.LoadInput(ctx, job.PlanningDate, job.DepotID)
+	if err != nil {
+		return ConfirmationResult{}, fmt.Errorf("load planning input for revalidation: %w", err)
+	}
+	if err := c.revalidateHardConstraints(ctx, plan.RouteDate, in.Routes, facts, input); err != nil {
+		return ConfirmationResult{}, err
+	}
+
 	return c.repo.Confirm(ctx, plan)
 }
 
 // buildPlan validates every chosen route and deferral and assembles the writes.
-func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in ConfirmInput, serveByOrder, deferByOrder map[string]planning.Proposal) (ConfirmationPlan, error) {
+// It records each order's freshly-loaded facts in `facts` for the later
+// hard-constraint revalidation pass.
+func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in ConfirmInput, serveByOrder, deferByOrder map[string]planning.Proposal, facts map[string]OrderFacts) (ConfirmationPlan, error) {
 	plan := ConfirmationPlan{
 		DepotID:       job.DepotID,
 		RouteDate:     job.PlanningDate.Format("2006-01-02"),
@@ -219,20 +240,21 @@ func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in Confi
 				return ConfirmationPlan{}, fmt.Errorf("%w: order %s was proposed for trip %d, not %d", ErrInvalid, orderID, p.TripNo, choice.TripNo)
 			}
 
-			facts, err := c.orders.LoadOrderFacts(ctx, orderID)
+			orderFacts, err := c.orders.LoadOrderFacts(ctx, orderID)
 			if err != nil {
 				return ConfirmationPlan{}, err
 			}
-			if err := c.assertOrderConfirmable(orderID, facts); err != nil {
+			if err := c.assertOrderConfirmable(orderID, orderFacts); err != nil {
 				return ConfirmationPlan{}, err
 			}
+			facts[orderID] = orderFacts
 			if route.Brand == "" {
-				route.Brand, route.District = facts.Brand, facts.District
-			} else if facts.Brand != route.Brand || facts.District != route.District {
+				route.Brand, route.District = orderFacts.Brand, orderFacts.District
+			} else if orderFacts.Brand != route.Brand || orderFacts.District != route.District {
 				return ConfirmationPlan{}, fmt.Errorf("%w: order %s breaks the one brand + district rule for this trip", ErrInvalid, orderID)
 			}
-			route.TotalWeightKg += facts.TotalWeightKg
-			route.TotalVolumeM3 += facts.TotalVolumeM3
+			route.TotalWeightKg += orderFacts.TotalWeightKg
+			route.TotalVolumeM3 += orderFacts.TotalVolumeM3
 		}
 
 		// Build legs in the dispatcher's chosen stop order, from the proposal's
