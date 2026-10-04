@@ -102,30 +102,107 @@ All AWS-specific values arrive through the environment; nothing is hard-coded.
 | `AWS_REGION`         | Region of the bucket when `s3`             | —              |
 
 **Credentials are never configured here.** The Go API uses the standard AWS SDK
-chain, so on EC2 it reads an **instance role**; locally, SSO or environment
-credentials. No access key is committed to the repository, `.env`, docs or
-Dockerfiles. Grant the role least-privilege S3 access (get/put/delete on the one
-bucket).
+default credential chain. On AWS compute it reads the attached **IAM role**; for
+local development it reads an AWS CLI profile / `~/.aws/credentials` (environment
+variables are a last resort). No access key is committed to the repository,
+`.env.example`, docs or Dockerfiles.
 
-### IAM (least privilege)
+### Media storage (S3)
 
-The instance role needs, for the media bucket only:
+The hosted deployment stores media in a **private** S3 bucket.
+
+| Setting         | Value                                                  |
+| --------------- | ------------------------------------------------------ |
+| Bucket          | `waypoint-project-media-985096928297-us-east-1-an`     |
+| Region          | `us-east-1`                                            |
+| `MEDIA_STORAGE` | `s3`                                                   |
+| `S3_BUCKET`     | `waypoint-project-media-985096928297-us-east-1-an`     |
+| `AWS_REGION`    | `us-east-1`                                            |
+| IAM role policy | `WaypointMediaS3Access`                                |
+
+The bucket is never public. The API authorises the caller (role + depot/outlet
+scope) and mints **short-lived presigned URLs** for upload and download; unsigned
+access is denied. Confirmed live: upload intent `201`, presigned `PUT` `200`,
+authorised `GET` returns the exact bytes, unsigned/public access `403`.
+
+### IAM — credential chain and role architecture
+
+Production does **not** use a long-lived access key. Credentials come from the
+AWS SDK default provider chain, so the compute resource holds an IAM role:
 
 ```
-s3:PutObject
-s3:GetObject
-s3:DeleteObject
+EC2 instance (the project's production compute)
+        │  instance profile
+        ▼
+IAM Role  (e.g. WaypointEC2MediaRole)
+        │  attached policy: WaypointMediaS3Access
+        ▼
+Private S3 bucket  waypoint-project-media-985096928297-us-east-1-an
 ```
 
-and nothing else. The bucket policy denies public access and enables default
-encryption.
+`WaypointMediaS3Access` is least-privilege and scoped to this one bucket:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BucketLevelList",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::waypoint-project-media-985096928297-us-east-1-an"
+    },
+    {
+      "Sid": "ObjectLevelAccess",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::waypoint-project-media-985096928297-us-east-1-an/*"
+    }
+  ]
+}
+```
+
+Do **not** substitute `AmazonS3FullAccess`. The instance/task role is the only
+identity with S3 access; no access key is placed in the production environment.
+
+### Local development credentials
+
+Prefer the standard chain over environment variables:
+
+```bash
+aws configure --profile waypoint        # writes ~/.aws/credentials, never tracked
+export AWS_PROFILE=waypoint             # or AWS_REGION=us-east-1 in your shell
+```
+
+Then set `MEDIA_STORAGE=s3`, `S3_BUCKET` and `AWS_REGION` in the git-ignored
+`.env`, leaving `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` empty. Do not commit
+`.env`.
+
+### Credential rotation
+
+Because a development access key was shared outside the repository, treat it as
+compromised and rotate it. There is no committed secret to change. In the AWS
+Console:
+
+1. **IAM → Users →** the local development user **→ Security credentials**.
+2. Under **Access keys**, select the exposed key and **Deactivate**, then
+   **Delete**. (Deactivating first lets you confirm nothing still depends on it.)
+3. **Create access key** → *Application running outside AWS* → copy the new key
+   once.
+4. Configure it locally via an AWS CLI profile (preferred) or a git-ignored
+   `.env`; never paste it into the repo.
+5. Verify: `aws s3 ls s3://waypoint-project-media-985096928297-us-east-1-an --profile waypoint`.
+
+For production, prefer attaching the IAM role (above) so no local key is needed
+at all; if the production user's key was also exposed, rotate it the same way and
+move production to the role.
 
 ### Deployment procedure (outline)
 
 1. Provision an EC2 instance and an Elastic IP.
-2. Create a private S3 bucket (`securing-s3-buckets` skill covers the hardening).
-3. Attach an instance role with the least-privilege policy above.
-4. Point `DATABASE_URL` at Neon, set `MEDIA_STORAGE=s3`, `S3_BUCKET`, `AWS_REGION`.
+2. Create/confirm the private S3 bucket (the `securing-s3-buckets` skill covers the hardening).
+3. Create an IAM role with `WaypointMediaS3Access` and attach it as the instance profile.
+4. Point `DATABASE_URL` at Neon, set `MEDIA_STORAGE=s3`, `S3_BUCKET`, `AWS_REGION` (leave access-key vars empty).
 5. Install Nginx; proxy `/` to the web app and `/api/` to the Go API.
 6. Build and run the API and web images on the instance.
 

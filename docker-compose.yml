@@ -106,6 +106,16 @@ services:
       # volume, `docker compose down -v` removes it (a deliberate full reset).
       MEDIA_STORAGE: ${MEDIA_STORAGE:-local}
       MEDIA_ROOT: ${MEDIA_ROOT:-/data/media}
+      # When MEDIA_STORAGE=s3, media goes to a private bucket via the AWS SDK
+      # chain. S3_BUCKET and AWS_REGION are required; credentials are read from
+      # the environment (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) when no
+      # instance role is present. None of these are committed — they come from
+      # the operator's .env.
+      S3_BUCKET: ${S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
     volumes:
       - media-data:/data/media
     ports:
