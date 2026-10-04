@@ -260,6 +260,11 @@ export interface AssignManagerRequest {
   readonly userId: string;
 }
 
+/** Assign / change a loader's operational depot (app_user.depot_id). */
+export interface AssignLoaderRequest {
+  readonly depotId: string;
+}
+
 /* --- Account management (Dispatcher) -------------------------------------- */
 
 /**

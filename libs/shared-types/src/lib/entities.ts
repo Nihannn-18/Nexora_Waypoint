@@ -168,6 +168,20 @@ export interface StoreManagerOption {
   readonly email: string;
   /** The outlet currently managed, or empty when unassigned. */
   readonly outletId: string;
+  /** The depot derived from the outlet, or empty when unassigned. */
+  readonly depotId: string;
+}
+
+/**
+ * An active LOADER account as the loader-assignment screen shows it. DepotID is
+ * empty when the loader has no depot. The loader's authoritative depot is
+ * `app_user.depot_id`; this is not a second relationship table.
+ */
+export interface Loader {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly depotId: string;
 }
 
 /* -------------------------------------------------------------------------- */

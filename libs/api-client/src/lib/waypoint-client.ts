@@ -9,6 +9,7 @@
 import type {
   AppNotification,
   AssignDriverRequest,
+  AssignLoaderRequest,
   AssignManagerRequest,
   AuditQuery,
   AuditRecord,
@@ -42,6 +43,7 @@ import type {
   ListUsersQuery,
   LiveRouteState,
   LoadItemRecord,
+  Loader,
   LoginRequest,
   LoginResponse,
   ManagedUser,
@@ -663,6 +665,24 @@ export class WaypointClient {
     return body.storeManagers;
   }
 
+  /** Active loaders with their current depot. Dispatcher only. */
+  async listLoaders(): Promise<readonly Loader[]> {
+    const body = await this.http.get<{ loaders: readonly Loader[] }>(
+      '/loaders',
+    );
+    return body.loaders;
+  }
+
+  /** The day's driver-vehicle assignments. Dispatcher only. */
+  async listVehicleAssignments(
+    date?: IsoDate,
+  ): Promise<readonly VehicleAssignment[]> {
+    const body = await this.http.get<{
+      assignments: readonly VehicleAssignment[];
+    }>('/driver-vehicle-assignments', { query: { date } });
+    return body.assignments;
+  }
+
   /** The driver assigned to a vehicle on a date, or null. Dispatcher only. */
   async getVehicleAssignment(
     vehicleId: string,
@@ -718,6 +738,27 @@ export class WaypointClient {
     return this.http.delete<OutletManager>(`/outlets/${outletId}/manager`);
   }
 
+  /** A loader with their current depot, or null. Dispatcher only. */
+  async getLoaderDepot(loaderId: string): Promise<Loader | null> {
+    const body = await this.http.get<{ loader: Loader | null }>(
+      `/loaders/${loaderId}/depot`,
+    );
+    return body.loader;
+  }
+
+  /** Assign or change a loader's depot. Dispatcher only. */
+  assignLoader(
+    loaderId: string,
+    body: AssignLoaderRequest,
+  ): Promise<Loader> {
+    return this.http.put<Loader>(`/loaders/${loaderId}/depot`, body);
+  }
+
+  /** Remove a loader's depot. Dispatcher only. */
+  unassignLoader(loaderId: string): Promise<Loader> {
+    return this.http.delete<Loader>(`/loaders/${loaderId}/depot`);
+  }
+
   /** The caller's own driver assignment on a date, or null. Driver only. */
   async getOwnDriverAssignment(
     date?: IsoDate,
@@ -727,6 +768,14 @@ export class WaypointClient {
       { query: { date } },
     );
     return body.assignment;
+  }
+
+  /** The caller's own loader depot assignment, or null. Loader only. */
+  async getOwnLoaderAssignment(): Promise<Loader | null> {
+    const body = await this.http.get<{ loader: Loader | null }>(
+      '/loader/assignment',
+    );
+    return body.loader;
   }
 
   /* --- Dispatcher account management ----------------------------------- */

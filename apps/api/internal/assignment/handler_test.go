@@ -98,6 +98,36 @@ func TestAssignmentRBAC(t *testing.T) {
 		}
 	})
 
+	t.Run("dispatcher manages a loader depot", func(t *testing.T) {
+		store := newFakeStore()
+		h := assignMux(dispatcher, store, now)
+		if rec := doGet(h, "/api/v1/loaders"); rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("u-load")) {
+			t.Fatalf("list loaders = %d (%s)", rec.Code, rec.Body)
+		}
+		rec := sendJSON(t, h, http.MethodPut, "/api/v1/loaders/u-load2/depot", map[string]any{"depotId": "d-kandy"})
+		if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("d-kandy")) {
+			t.Fatalf("assign loader depot = %d (%s)", rec.Code, rec.Body)
+		}
+		if rec := doGet(h, "/api/v1/loaders/u-load2/depot"); rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("d-kandy")) {
+			t.Fatalf("read loader depot = %d (%s)", rec.Code, rec.Body)
+		}
+		if rec := sendJSON(t, h, http.MethodDelete, "/api/v1/loaders/u-load2/depot", nil); rec.Code != http.StatusOK {
+			t.Fatalf("remove loader depot = %d (%s)", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("dispatcher lists the day's driver assignments", func(t *testing.T) {
+		store := newFakeStore()
+		h := assignMux(dispatcher, store, now)
+		if rec := sendJSON(t, h, http.MethodPut, "/api/v1/vehicles/VEH014/assignment", map[string]any{"driverId": "u-driv", "date": "2026-09-26"}); rec.Code != http.StatusOK {
+			t.Fatal(rec.Body)
+		}
+		rec := doGet(h, "/api/v1/driver-vehicle-assignments?date=2026-09-26")
+		if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("VEH014")) {
+			t.Fatalf("list assignments = %d (%s)", rec.Code, rec.Body)
+		}
+	})
+
 	for _, role := range []struct {
 		name string
 		id   auth.Identity
@@ -117,8 +147,23 @@ func TestAssignmentRBAC(t *testing.T) {
 			if rec := doGet(h, "/api/v1/drivers"); rec.Code != http.StatusForbidden {
 				t.Fatalf("list drivers = %d, want 403", rec.Code)
 			}
+			if rec := sendJSON(t, h, http.MethodPut, "/api/v1/loaders/u-load2/depot", map[string]any{"depotId": "d-kandy"}); rec.Code != http.StatusForbidden {
+				t.Fatalf("assign loader depot = %d, want 403", rec.Code)
+			}
 		})
 	}
+
+	t.Run("a loader reads only their own depot", func(t *testing.T) {
+		store := newFakeStore()
+		h := assignMux(auth.Identity{UserID: "u-load", Role: domain.RoleLoader, DepotID: "d-pel"}, store, now)
+		rec := doGet(h, "/api/v1/loader/assignment")
+		if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("d-pel")) {
+			t.Fatalf("own loader assignment = %d (%s)", rec.Code, rec.Body)
+		}
+		if rec := sendJSON(t, h, http.MethodPut, "/api/v1/loaders/u-load/depot", map[string]any{"depotId": "d-kandy"}); rec.Code != http.StatusForbidden {
+			t.Fatalf("loader cannot mutate own depot = %d, want 403", rec.Code)
+		}
+	})
 
 	t.Run("a driver reads only their own assignment", func(t *testing.T) {
 		store := newFakeStore()

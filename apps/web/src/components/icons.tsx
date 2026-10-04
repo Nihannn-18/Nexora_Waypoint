@@ -112,3 +112,11 @@ export const UsersIcon = (p: P) => (
     <path d="M18 20a6 6 0 00-3-5.2" />
   </Icon>
 );
+
+export const AssignmentIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M9 12h6" />
+    <path d="M10 8H8a4 4 0 000 8h2" />
+    <path d="M14 16h2a4 4 0 000-8h-2" />
+  </Icon>
+);

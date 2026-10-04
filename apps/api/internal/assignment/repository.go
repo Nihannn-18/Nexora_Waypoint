@@ -59,13 +59,17 @@ func (s *PGStore) ListDrivers(ctx context.Context, depotID string) ([]Driver, er
 	return out, rows.Err()
 }
 
-// ListStoreManagers returns active store managers, with their current outlet.
+// ListStoreManagers returns active store managers, with their current outlet
+// and that outlet's depot (the depot is derived, never chosen independently).
 func (s *PGStore) ListStoreManagers(ctx context.Context) ([]ManagerCandidate, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT user_id, COALESCE(NULLIF(display_name, ''), email), email, COALESCE(outlet_id, '')
-		FROM app_user
-		WHERE role = 'STORE_MANAGER' AND is_active
-		ORDER BY COALESCE(NULLIF(display_name, ''), email), user_id`)
+		SELECT u.user_id, COALESCE(NULLIF(u.display_name, ''), u.email), u.email,
+		       COALESCE(u.outlet_id, ''),
+		       COALESCE(o.depot_id::text, u.depot_id::text, '')
+		FROM app_user u
+		LEFT JOIN outlet o ON o.outlet_id = u.outlet_id
+		WHERE u.role = 'STORE_MANAGER' AND u.is_active
+		ORDER BY COALESCE(NULLIF(u.display_name, ''), u.email), u.user_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list store managers: %w", err)
 	}
@@ -73,10 +77,34 @@ func (s *PGStore) ListStoreManagers(ctx context.Context) ([]ManagerCandidate, er
 	out := make([]ManagerCandidate, 0)
 	for rows.Next() {
 		var m ManagerCandidate
-		if err := rows.Scan(&m.UserID, &m.Name, &m.Email, &m.OutletID); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Name, &m.Email, &m.OutletID, &m.DepotID); err != nil {
 			return nil, fmt.Errorf("scan store manager: %w", err)
 		}
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ListLoaders returns active loaders, with their authoritative depot (empty when
+// the loader has none). The loader's depot is app_user.depot_id — there is no
+// second relationship table.
+func (s *PGStore) ListLoaders(ctx context.Context) ([]Loader, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT user_id, COALESCE(NULLIF(display_name, ''), email), email, COALESCE(depot_id::text, '')
+		FROM app_user
+		WHERE role = 'LOADER' AND is_active
+		ORDER BY COALESCE(NULLIF(display_name, ''), email), user_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list loaders: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Loader, 0)
+	for rows.Next() {
+		var l Loader
+		if err := rows.Scan(&l.UserID, &l.Name, &l.Email, &l.DepotID); err != nil {
+			return nil, fmt.Errorf("scan loader: %w", err)
+		}
+		out = append(out, l)
 	}
 	return out, rows.Err()
 }
@@ -251,14 +279,18 @@ func (s *PGStore) UnassignVehicle(ctx context.Context, vehicleID, date, actor st
 	return a, nil
 }
 
-// ManagerForOutlet returns the store manager responsible for an outlet.
+// ManagerForOutlet returns the store manager responsible for an outlet. Its
+// depot is derived from the outlet on read, so it is always consistent even for
+// a row written before the derivation existed.
 func (s *PGStore) ManagerForOutlet(ctx context.Context, outletID string) (OutletManager, bool, error) {
 	var m OutletManager
 	err := s.pool.QueryRow(ctx, `
-		SELECT outlet_id, user_id, COALESCE(NULLIF(display_name, ''), email), email, COALESCE(depot_id::text, '')
-		FROM app_user
-		WHERE role = 'STORE_MANAGER' AND outlet_id = $1
-		ORDER BY user_id
+		SELECT u.outlet_id, u.user_id, COALESCE(NULLIF(u.display_name, ''), u.email), u.email,
+		       COALESCE(o.depot_id::text, u.depot_id::text, '')
+		FROM app_user u
+		LEFT JOIN outlet o ON o.outlet_id = u.outlet_id
+		WHERE u.role = 'STORE_MANAGER' AND u.outlet_id = $1
+		ORDER BY u.user_id
 		LIMIT 1`, outletID).
 		Scan(&m.OutletID, &m.UserID, &m.Name, &m.Email, &m.DepotID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -290,7 +322,7 @@ func (s *PGStore) SetManager(ctx context.Context, outletID, userID, actor string
 	switch {
 	case err == nil:
 		if _, err := tx.Exec(ctx, `
-			UPDATE app_user SET outlet_id = NULL
+			UPDATE app_user SET outlet_id = NULL, depot_id = NULL
 			WHERE user_id = $1 AND role = 'STORE_MANAGER'`, replacedID); err != nil {
 			return OutletManager{}, fmt.Errorf("release previous manager: %w", err)
 		}
@@ -306,7 +338,8 @@ func (s *PGStore) SetManager(ctx context.Context, outletID, userID, actor string
 	}
 
 	tag, err := tx.Exec(ctx, `
-		UPDATE app_user SET outlet_id = $1
+		UPDATE app_user SET outlet_id = $1,
+		       depot_id = (SELECT o.depot_id FROM outlet o WHERE o.outlet_id = $1)
 		WHERE user_id = $2 AND role = 'STORE_MANAGER' AND is_active`, outletID, userID)
 	if err != nil {
 		return OutletManager{}, fmt.Errorf("set outlet manager: %w", err)
@@ -359,7 +392,7 @@ func (s *PGStore) ClearManager(ctx context.Context, outletID, actor string) (Out
 	}
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE app_user SET outlet_id = NULL
+		UPDATE app_user SET outlet_id = NULL, depot_id = NULL
 		WHERE user_id = $1 AND role = 'STORE_MANAGER'`, m.UserID); err != nil {
 		return OutletManager{}, fmt.Errorf("clear outlet manager: %w", err)
 	}
@@ -372,6 +405,122 @@ func (s *PGStore) ClearManager(ctx context.Context, outletID, actor string) (Out
 		return OutletManager{}, fmt.Errorf("commit unassign manager: %w", err)
 	}
 	return m, nil
+}
+
+// ListVehicleAssignments returns every driver-vehicle assignment on a date,
+// ordered by vehicle. The Dispatcher assignments board reads this so it can show
+// the whole day's driver coverage in one request.
+func (s *PGStore) ListVehicleAssignments(ctx context.Context, date string) ([]VehicleAssignment, error) {
+	rows, err := s.pool.Query(ctx, assignmentSelect+`
+		WHERE a.assignment_date = $1::date
+		ORDER BY a.vehicle_id`, date)
+	if err != nil {
+		return nil, fmt.Errorf("list vehicle assignments: %w", err)
+	}
+	defer rows.Close()
+	out := make([]VehicleAssignment, 0)
+	for rows.Next() {
+		a, err := scanAssignment(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan vehicle assignment: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// DepotExists reports whether a depot exists and is active. depot_id is compared
+// as text so a malformed id is a clean "not found" rather than a database cast
+// error.
+func (s *PGStore) DepotExists(ctx context.Context, depotID string) (bool, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM depot WHERE depot_id::text = $1 AND is_active)`, depotID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check depot: %w", err)
+	}
+	return exists, nil
+}
+
+// SetLoaderDepot sets a loader's authoritative depot and audits the change. The
+// loader id and depot are validated by the service; this only writes.
+func (s *PGStore) SetLoaderDepot(ctx context.Context, loaderID, depotID, actor string) (Loader, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Loader{}, fmt.Errorf("begin assign loader: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		l      Loader
+		before string
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT user_id, COALESCE(NULLIF(display_name, ''), email), email, COALESCE(depot_id::text, '')
+		FROM app_user WHERE user_id = $1 AND role = 'LOADER' FOR UPDATE`, loaderID).
+		Scan(&l.UserID, &l.Name, &l.Email, &before)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Loader{}, fmt.Errorf("%w: loader %s", ErrNotFound, loaderID)
+	}
+	if err != nil {
+		return Loader{}, fmt.Errorf("load loader: %w", err)
+	}
+	l.DepotID = depotID
+
+	if _, err := tx.Exec(ctx, `UPDATE app_user SET depot_id = $2 WHERE user_id = $1 AND role = 'LOADER'`, loaderID, depotID); err != nil {
+		return Loader{}, fmt.Errorf("set loader depot: %w", err)
+	}
+
+	detail := map[string]any{"depotId": depotID}
+	if before != "" && before != depotID {
+		detail["previousDepotId"] = before
+	}
+	if err := s.recordAudit(ctx, tx, "LOADER_ASSIGNED", "USER", loaderID, actor, depotID, "", detail); err != nil {
+		return Loader{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Loader{}, fmt.Errorf("commit assign loader: %w", err)
+	}
+	return l, nil
+}
+
+// ClearLoaderDepot removes a loader's depot and audits it, returning the former
+// assignment. A loader with no depot cannot pick up loading work.
+func (s *PGStore) ClearLoaderDepot(ctx context.Context, loaderID, actor string) (Loader, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Loader{}, fmt.Errorf("begin unassign loader: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		l     Loader
+		depot string
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT user_id, COALESCE(NULLIF(display_name, ''), email), email, COALESCE(depot_id::text, '')
+		FROM app_user WHERE user_id = $1 AND role = 'LOADER' FOR UPDATE`, loaderID).
+		Scan(&l.UserID, &l.Name, &l.Email, &depot)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Loader{}, fmt.Errorf("%w: loader %s", ErrNotFound, loaderID)
+	}
+	if err != nil {
+		return Loader{}, fmt.Errorf("load loader: %w", err)
+	}
+	if depot == "" {
+		return Loader{}, fmt.Errorf("%w: loader %s has no depot", ErrNotFound, loaderID)
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE app_user SET depot_id = NULL WHERE user_id = $1 AND role = 'LOADER'`, loaderID); err != nil {
+		return Loader{}, fmt.Errorf("clear loader depot: %w", err)
+	}
+	if err := s.recordAudit(ctx, tx, "LOADER_UNASSIGNED", "USER", loaderID, actor, depot, "", map[string]any{
+		"previousDepotId": depot,
+	}); err != nil {
+		return Loader{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Loader{}, fmt.Errorf("commit unassign loader: %w", err)
+	}
+	return Loader{UserID: l.UserID, Name: l.Name, Email: l.Email}, nil
 }
 
 // scanAssignment reads one driver-vehicle assignment row.

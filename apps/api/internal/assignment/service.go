@@ -22,10 +22,14 @@ type Store interface {
 	ListDrivers(ctx context.Context, depotID string) ([]Driver, error)
 	// ListStoreManagers returns active store managers for the manager picker.
 	ListStoreManagers(ctx context.Context) ([]ManagerCandidate, error)
+	// ListLoaders returns active loaders with their current depot.
+	ListLoaders(ctx context.Context) ([]Loader, error)
 	// UserByID loads one account, or ErrNotFound.
 	UserByID(ctx context.Context, userID string) (User, error)
 	// VehicleDepot returns a vehicle's home depot id, or ErrNotFound.
 	VehicleDepot(ctx context.Context, vehicleID string) (string, error)
+	// DepotExists reports whether a depot exists and is active.
+	DepotExists(ctx context.Context, depotID string) (bool, error)
 	// OutletExists reports whether an outlet exists.
 	OutletExists(ctx context.Context, outletID string) (bool, error)
 
@@ -33,6 +37,8 @@ type Store interface {
 	AssignmentForVehicle(ctx context.Context, vehicleID, date string) (VehicleAssignment, bool, error)
 	// AssignmentForDriver returns a driver's assignment on a date, if any.
 	AssignmentForDriver(ctx context.Context, driverID, date string) (VehicleAssignment, bool, error)
+	// ListVehicleAssignments returns every driver-vehicle assignment on a date.
+	ListVehicleAssignments(ctx context.Context, date string) ([]VehicleAssignment, error)
 	// AssignVehicle upserts the assignment for its vehicle+date in a transaction.
 	AssignVehicle(ctx context.Context, a VehicleAssignment, actor string) (VehicleAssignment, error)
 	// UnassignVehicle removes the assignment for a vehicle+date and returns what
@@ -48,6 +54,12 @@ type Store interface {
 	// ClearManager removes the manager currently on outletID and returns them,
 	// or ErrNotFound.
 	ClearManager(ctx context.Context, outletID, actor string) (OutletManager, error)
+
+	// SetLoaderDepot sets a loader's authoritative depot in a transaction.
+	SetLoaderDepot(ctx context.Context, loaderID, depotID, actor string) (Loader, error)
+	// ClearLoaderDepot removes a loader's depot and returns what was removed, or
+	// ErrNotFound.
+	ClearLoaderDepot(ctx context.Context, loaderID, actor string) (Loader, error)
 }
 
 // Service is the assignment business surface. It validates every request
@@ -83,6 +95,23 @@ func (s *Service) ListDrivers(ctx context.Context, depotID string) ([]Driver, er
 // ListStoreManagers returns active store managers for the manager picker.
 func (s *Service) ListStoreManagers(ctx context.Context) ([]ManagerCandidate, error) {
 	return s.store.ListStoreManagers(ctx)
+}
+
+// ListLoaders returns active loaders with their current depot, for the loader
+// assignment screen.
+func (s *Service) ListLoaders(ctx context.Context) ([]Loader, error) {
+	return s.store.ListLoaders(ctx)
+}
+
+// ListVehicleAssignments returns the driver-vehicle assignments on a date,
+// defaulting to the API clock's business day. It is the read the Dispatcher
+// assignments board uses to show the whole day at once.
+func (s *Service) ListVehicleAssignments(ctx context.Context, date string) ([]VehicleAssignment, error) {
+	d, err := s.resolveDate(date)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.ListVehicleAssignments(ctx, d)
 }
 
 // DriverAssignment returns the assignment for a specific driver, if any. It is
@@ -228,6 +257,49 @@ func (s *Service) UnassignManager(ctx context.Context, outletID, actor string) (
 		return OutletManager{}, ValidationError{Field: "outletId", Message: "is required"}
 	}
 	return s.store.ClearManager(ctx, outletID, actor)
+}
+
+// AssignLoader sets a loader's operational depot. The loader's depot is
+// app_user.depot_id — the authoritative representation — so this updates that
+// single field in a transaction rather than creating a second relationship.
+//
+// The target is validated to be an active LOADER and the depot to exist, both
+// against server state; a client cannot point a loader at a depot that is not
+// real, nor move another role this way.
+func (s *Service) AssignLoader(ctx context.Context, in AssignLoaderInput, actor string) (Loader, error) {
+	loaderID := strings.TrimSpace(in.LoaderID)
+	depotID := strings.TrimSpace(in.DepotID)
+	if loaderID == "" {
+		return Loader{}, ValidationError{Field: "loaderId", Message: "is required"}
+	}
+	if depotID == "" {
+		return Loader{}, ValidationError{Field: "depotId", Message: "is required"}
+	}
+	user, err := s.store.UserByID(ctx, loaderID)
+	if err != nil {
+		return Loader{}, err
+	}
+	if !user.Active {
+		return Loader{}, ValidationError{Field: "loaderId", Message: fmt.Sprintf("%s is not active", loaderID)}
+	}
+	if user.Role != domain.RoleLoader {
+		return Loader{}, ValidationError{Field: "loaderId", Message: fmt.Sprintf("%s is not a loader", loaderID)}
+	}
+	if ok, err := s.store.DepotExists(ctx, depotID); err != nil {
+		return Loader{}, err
+	} else if !ok {
+		return Loader{}, fmt.Errorf("%w: depot %s", ErrNotFound, depotID)
+	}
+	return s.store.SetLoaderDepot(ctx, loaderID, depotID, actor)
+}
+
+// UnassignLoader removes a loader's depot and returns the former assignment.
+func (s *Service) UnassignLoader(ctx context.Context, loaderID, actor string) (Loader, error) {
+	loaderID = strings.TrimSpace(loaderID)
+	if loaderID == "" {
+		return Loader{}, ValidationError{Field: "loaderId", Message: "is required"}
+	}
+	return s.store.ClearLoaderDepot(ctx, loaderID, actor)
 }
 
 // IsNotFound reports whether err is the not-found sentinel.

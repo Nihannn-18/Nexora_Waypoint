@@ -73,14 +73,20 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 | `POST` | `/outlets`     | dispatcher                | Create an outlet; the id (OUTnnn) is generated server-side                                                                                    |
 | `PATCH` | `/outlets/{id}` | dispatcher              | Update an outlet's mutable fields; the id is immutable                                                                                       |
 | `GET`  | `/drivers`     | dispatcher                | Active drivers for the assignment picker. `?depotId=` narrows                                                                                |
-| `GET`  | `/store-managers` | dispatcher             | Active store managers for the assignment picker                                                                                              |
+| `GET`  | `/store-managers` | dispatcher             | Active store managers for the assignment picker, with current outlet and derived depot                                                       |
+| `GET`  | `/loaders`     | dispatcher                | Active loaders for the loader-assignment screen, with current depot                                                                          |
+| `GET`  | `/driver-vehicle-assignments` | dispatcher | Every driver-vehicle assignment on `?date=` (default: API clock today)                                                                       |
 | `GET`  | `/vehicles/{id}/assignment` | dispatcher    | The driver assigned to the vehicle on `?date=` (default: API clock today), or `null`                                                         |
 | `PUT`  | `/vehicles/{id}/assignment` | dispatcher    | Assign or change the vehicle's driver for a date                                                                                             |
 | `DELETE` | `/vehicles/{id}/assignment` | dispatcher  | Remove the vehicle's driver for `?date=`                                                                                                     |
 | `GET`  | `/outlets/{id}/manager` | dispatcher          | The store manager responsible for the outlet, or `null`                                                                                      |
 | `PUT`  | `/outlets/{id}/manager` | dispatcher           | Assign or change the outlet's store manager                                                                                                  |
 | `DELETE` | `/outlets/{id}/manager` | dispatcher         | Remove the outlet's store manager                                                                                                            |
+| `GET`  | `/loaders/{id}/depot` | dispatcher          | A loader's current depot assignment, or `null`                                                                                               |
+| `PUT`  | `/loaders/{id}/depot` | dispatcher           | Assign or change a loader's depot                                                                                                            |
+| `DELETE` | `/loaders/{id}/depot` | dispatcher         | Remove a loader's depot                                                                                                                      |
 | `GET`  | `/driver/assignment` | driver                | The caller's own driver assignment on `?date=`, or `null`                                                                                    |
+| `GET`  | `/loader/assignment` | loader                | The caller's own loader depot assignment, or `null`                                                                                          |
 | `GET`  | `/users`       | dispatcher                | Operational accounts (drivers, loaders, store managers); `?role=`/`?active=` narrow                                                          |
 | `POST` | `/users`       | dispatcher                | Create an operational account; the role and assignment are validated server-side                                                             |
 | `GET`  | `/users/{id}`  | dispatcher                | One operational account                                                                                                                       |
@@ -202,31 +208,47 @@ one transaction (`VEHICLE_CREATED`, `VEHICLE_UPDATED`, `OUTLET_CREATED`, `OUTLET
 ### Dispatcher operational assignments
 
 **Implemented** (`internal/assignment`). These are the operational links: which driver is on a
-vehicle for an operating date, and which store manager owns an outlet. Mutations are
-dispatcher-only, validated server-side, and audited in the same transaction
-(`DRIVER_ASSIGNED`, `DRIVER_UNASSIGNED`, `MANAGER_ASSIGNED`, `MANAGER_UNASSIGNED`).
+vehicle for an operating date, which store manager owns an outlet, and which depot each loader
+works in. Mutations are dispatcher-only, validated server-side, and audited in the same
+transaction (`DRIVER_ASSIGNED`, `DRIVER_UNASSIGNED`, `MANAGER_ASSIGNED`, `MANAGER_UNASSIGNED`,
+`LOADER_ASSIGNED`, `LOADER_UNASSIGNED`).
 
 - `GET /drivers` — active drivers (display identity only, never a credential), optionally
   narrowed by `?depotId=`.
+- `GET /driver-vehicle-assignments?date=` — every driver-vehicle assignment on the date (default:
+  the API clock's business day), for the Dispatcher assignments board. Each row is the same shape
+  as the single-vehicle read.
 - `GET|PUT|DELETE /vehicles/{id}/assignment` — the vehicle's driver for a date. `PUT` body is
   `{ driverId, date }`. The driver must be an active `DRIVER` whose home depot matches the
   vehicle's. A driver may drive only one vehicle per date and a vehicle may have only one driver
   per date (both unique in the database); a collision is `409` rather than a silent overwrite.
   `DELETE` takes `?date=`. The response is `{ assignment: { vehicleId, driverId, driverName,
   driverEmail, date, depotId } | null }` (the `PUT` returns the object directly).
-- `GET /store-managers` — active store managers, with their current `outletId`.
+- `GET /store-managers` — active store managers, with their current `outletId` and the `depotId`
+  derived from that outlet.
 - `GET|PUT|DELETE /outlets/{id}/manager` — the outlet's store manager. `PUT` body is
   `{ userId }`. This updates the authoritative `app_user.outlet_id`; assigning a manager to an
   outlet releases whoever held it before, in one transaction, so an outlet has exactly one
-  manager. The response is `{ manager: { outletId, userId, name, email, depotId } | null }`.
+  manager. A store manager's depot is **derived from the assigned outlet** (never carried
+  independently). The response is `{ manager: { outletId, userId, name, email, depotId } | null }`.
+- `GET /loaders` — active loaders with their current `depotId` (empty when unassigned).
+- `GET|PUT|DELETE /loaders/{id}/depot` — a loader's operational depot. `PUT` body is
+  `{ depotId }`; the loader must be an active `LOADER` and the depot must exist. The loader's
+  authoritative depot is `app_user.depot_id` — there is no second relationship table. `DELETE`
+  clears the depot. The response is `{ loader: { userId, name, email, depotId } | null }` (the
+  `PUT`/`DELETE` return the object directly).
 - `GET /driver/assignment?date=` — the caller's own assignment. The driver id is the
   authenticated identity, never a request parameter, so a driver cannot read another driver's
   assignment.
+- `GET /loader/assignment` — the caller's own loader depot. The loader id is the authenticated
+  identity, so a loader cannot read another loader's depot.
 
 The driver cockpit (`GET /driver/routes`) narrows its result to the assigned vehicle when the
 authenticated driver has an assignment for the resolved date, so a driver sees their own run
 instead of every route in the depot. With no assignment, the depot's routes are returned and
-the driver chooses explicitly — the prior behaviour, never an arbitrary route.
+the driver chooses explicitly — the prior behaviour, never an arbitrary route. The loader
+workspace (`GET /routes`, `GET /routes/{id}/legs`, shortfalls) uses the loader's own depot from
+the authenticated identity, so a loader cannot reach another depot's loading work.
 
 ### Dispatcher account management and password reset
 

@@ -13,8 +13,10 @@ import (
 // asked and mutate the maps so read-after-write behaves like the real store.
 type fakeStore struct {
 	drivers        []Driver
+	loaders        []Loader
 	users          map[string]User
 	vehicleDepots  map[string]string
+	depots         map[string]bool
 	outlets        map[string]bool
 	vehicleAssign  map[string]VehicleAssignment // vehicleID|date
 	driverAssign   map[string]VehicleAssignment // driverID|date
@@ -27,7 +29,9 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		drivers:       []Driver{{UserID: "u-driv", Name: "Kasun P.", Email: "kasun@example.com", DepotID: "d-pel"}},
+		loaders:       []Loader{{UserID: "u-load", Name: "Nadeesha", Email: "nadeesha@example.com", DepotID: "d-pel"}, {UserID: "u-load2", Name: "Ruwan", Email: "ruwan@example.com"}},
 		vehicleDepots: map[string]string{"VEH014": "d-pel", "VEH001": "d-pel", "VEH900": "d-kandy"},
+		depots:        map[string]bool{"d-pel": true, "d-kandy": true},
 		outlets:       map[string]bool{"OUT014": true, "OUT090": true},
 		vehicleAssign: map[string]VehicleAssignment{},
 		driverAssign:  map[string]VehicleAssignment{},
@@ -36,9 +40,10 @@ func newFakeStore() *fakeStore {
 			"u-driv":   {UserID: "u-driv", Name: "Kasun P.", Email: "kasun@example.com", Role: domain.RoleDriver, Active: true, DepotID: "d-pel"},
 			"u-driv2":  {UserID: "u-driv2", Name: "Amal S.", Email: "amal@example.com", Role: domain.RoleDriver, Active: true, DepotID: "d-pel"},
 			"u-load":   {UserID: "u-load", Name: "Nadeesha", Role: domain.RoleLoader, Active: true, DepotID: "d-pel"},
+			"u-load2":  {UserID: "u-load2", Name: "Ruwan", Role: domain.RoleLoader, Active: true},
+			"u-off":    {UserID: "u-off", Name: "Off", Role: domain.RoleStoreManager, Active: false},
 			"u-store":  {UserID: "u-store", Name: "Ishara S.", Email: "ishara@example.com", Role: domain.RoleStoreManager, Active: true, OutletID: "OUT014"},
 			"u-store2": {UserID: "u-store2", Name: "Fathima", Email: "fathima@example.com", Role: domain.RoleStoreManager, Active: true},
-			"u-off":    {UserID: "u-off", Name: "Off", Role: domain.RoleStoreManager, Active: false},
 		},
 	}
 }
@@ -47,14 +52,22 @@ func (f *fakeStore) ListDrivers(context.Context, string) ([]Driver, error) {
 	return f.drivers, nil
 }
 
+func (f *fakeStore) ListLoaders(context.Context) ([]Loader, error) {
+	return f.loaders, nil
+}
+
 func (f *fakeStore) ListStoreManagers(context.Context) ([]ManagerCandidate, error) {
 	out := []ManagerCandidate{}
 	for _, u := range f.users {
 		if u.Role == domain.RoleStoreManager && u.Active {
-			out = append(out, ManagerCandidate{UserID: u.UserID, Name: u.Name, Email: u.Email, OutletID: u.OutletID})
+			out = append(out, ManagerCandidate{UserID: u.UserID, Name: u.Name, Email: u.Email, OutletID: u.OutletID, DepotID: u.DepotID})
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeStore) DepotExists(_ context.Context, depotID string) (bool, error) {
+	return f.depots[depotID], nil
 }
 
 func (f *fakeStore) UserByID(_ context.Context, userID string) (User, error) {
@@ -88,6 +101,16 @@ func (f *fakeStore) AssignmentForVehicle(_ context.Context, vehicleID, date stri
 func (f *fakeStore) AssignmentForDriver(_ context.Context, driverID, date string) (VehicleAssignment, bool, error) {
 	a, ok := f.driverAssign[driverID+"|"+date]
 	return a, ok, nil
+}
+
+func (f *fakeStore) ListVehicleAssignments(_ context.Context, date string) ([]VehicleAssignment, error) {
+	out := []VehicleAssignment{}
+	for _, a := range f.vehicleAssign {
+		if a.AssignmentDate == date {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) AssignVehicle(_ context.Context, a VehicleAssignment, _ string) (VehicleAssignment, error) {
@@ -136,6 +159,39 @@ func (f *fakeStore) ClearManager(_ context.Context, outletID, _ string) (OutletM
 	}
 	delete(f.managers, outletID)
 	return m, nil
+}
+
+func (f *fakeStore) SetLoaderDepot(_ context.Context, loaderID, depotID, _ string) (Loader, error) {
+	u, ok := f.users[loaderID]
+	if !ok {
+		return Loader{}, fmt.Errorf("%w: loader", ErrNotFound)
+	}
+	u.DepotID = depotID
+	f.users[loaderID] = u
+	for i := range f.loaders {
+		if f.loaders[i].UserID == loaderID {
+			f.loaders[i].DepotID = depotID
+		}
+	}
+	return Loader{UserID: loaderID, Name: u.Name, Email: u.Email, DepotID: depotID}, nil
+}
+
+func (f *fakeStore) ClearLoaderDepot(_ context.Context, loaderID, _ string) (Loader, error) {
+	u, ok := f.users[loaderID]
+	if !ok {
+		return Loader{}, fmt.Errorf("%w: loader", ErrNotFound)
+	}
+	if u.DepotID == "" {
+		return Loader{}, fmt.Errorf("%w: loader has no depot", ErrNotFound)
+	}
+	u.DepotID = ""
+	f.users[loaderID] = u
+	for i := range f.loaders {
+		if f.loaders[i].UserID == loaderID {
+			f.loaders[i].DepotID = ""
+		}
+	}
+	return Loader{UserID: loaderID, Name: u.Name, Email: u.Email}, nil
 }
 
 func newService() (*Service, *fakeStore) {
@@ -283,6 +339,87 @@ func TestOutletManagerAndClear(t *testing.T) {
 	}
 	if _, ok, _ := svc.OutletManager(ctx, "OUT014"); ok {
 		t.Fatal("manager still present after clear")
+	}
+}
+
+func TestAssignLoaderValidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("valid loader depot assignment succeeds", func(t *testing.T) {
+		svc, _ := newService()
+		l, err := svc.AssignLoader(ctx, AssignLoaderInput{LoaderID: "u-load2", DepotID: "d-kandy"}, "u-disp")
+		if err != nil || l.UserID != "u-load2" || l.DepotID != "d-kandy" {
+			t.Fatalf("loader = %+v, %v", l, err)
+		}
+	})
+
+	t.Run("assigning to a different depot reassigns", func(t *testing.T) {
+		svc, _ := newService()
+		if _, err := svc.AssignLoader(ctx, AssignLoaderInput{LoaderID: "u-load", DepotID: "d-kandy"}, "u-disp"); err != nil {
+			t.Fatal(err)
+		}
+		l, err := svc.AssignLoader(ctx, AssignLoaderInput{LoaderID: "u-load", DepotID: "d-pel"}, "u-disp")
+		if err != nil || l.DepotID != "d-pel" {
+			t.Fatalf("reassign = %+v, %v", l, err)
+		}
+	})
+
+	t.Run("non-loader is rejected", func(t *testing.T) {
+		svc, _ := newService()
+		_, err := svc.AssignLoader(ctx, AssignLoaderInput{LoaderID: "u-driv", DepotID: "d-pel"}, "u-disp")
+		assertValidation(t, err, "loaderId")
+	})
+
+	t.Run("inactive loader is rejected", func(t *testing.T) {
+		svc, store := newService()
+		store.users["u-offload"] = User{UserID: "u-offload", Role: domain.RoleLoader, Active: false}
+		_, err := svc.AssignLoader(ctx, AssignLoaderInput{LoaderID: "u-offload", DepotID: "d-pel"}, "u-disp")
+		assertValidation(t, err, "loaderId")
+	})
+
+	t.Run("unknown depot is not found", func(t *testing.T) {
+		svc, _ := newService()
+		_, err := svc.AssignLoader(ctx, AssignLoaderInput{LoaderID: "u-load2", DepotID: "d-nope"}, "u-disp")
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("missing depot is a validation error", func(t *testing.T) {
+		svc, _ := newService()
+		_, err := svc.AssignLoader(ctx, AssignLoaderInput{LoaderID: "u-load2"}, "u-disp")
+		assertValidation(t, err, "depotId")
+	})
+}
+
+func TestUnassignLoader(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService()
+	removed, err := svc.UnassignLoader(ctx, "u-load", "u-disp")
+	if err != nil || removed.UserID != "u-load" {
+		t.Fatalf("remove = %+v, %v", removed, err)
+	}
+	if _, err := svc.UnassignLoader(ctx, "u-load", "u-disp"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second remove = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListVehicleAssignments(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService()
+	if _, err := svc.AssignDriver(ctx, AssignDriverInput{VehicleID: "VEH014", DriverID: "u-driv", Date: "2026-09-26"}, "u-disp"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AssignDriver(ctx, AssignDriverInput{VehicleID: "VEH001", DriverID: "u-driv2", Date: "2026-09-26"}, "u-disp"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := svc.ListVehicleAssignments(ctx, "2026-09-26")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	empty, err := svc.ListVehicleAssignments(ctx, "2026-09-27")
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty list = %+v, %v", empty, err)
 	}
 }
 
