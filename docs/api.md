@@ -461,6 +461,7 @@ the app — the two phases are judged separately.
 
 | Method | Endpoint                  | Purpose                         | Server must                                                                                                                                            |
 | ------ | ------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/loading/routes?date=`   | The depot's routes to load      | Return the caller depot's `CONFIRMED` routes on `date`, with stop/line counts and progress. Depot comes from the session, never the query               |
 | `GET`  | `/routes/{id}/loading`    | The picking list                | Return stops with their order lines and current load state. The **client renders in reverse stop order** — last delivery loads first, nearest the door |
 | `POST` | `/routes/{id}/shortfalls` | Record missing or damaged items | Read ordered quantities **from the database**, not the request; require `loaded + damaged + missing = ordered` per line; notify the dispatcher         |
 
@@ -470,6 +471,61 @@ the dispatcher route/stop view; the loader needs the order lines and load state 
 stops. A route must be `CONFIRMED`. The response includes `routeReady`, computed as "every line
 reconciles". `notify the dispatcher` is a Delivery/Notifications agent concern and is **not** yet
 implemented — the recorded shortfall is the trigger a later agent will publish from.
+
+### `GET /api/v1/loading/routes?date=YYYY-MM-DD`
+
+The loader's way in. Nothing else exposes a route to a loader — `GET /routes` is
+dispatcher-only — so without this the picking list could only be reached by already knowing a
+route id. `date` is required and validated; the depot is taken from the signed-in loader, and a
+caller with no depot gets an empty list rather than every depot's work.
+
+```json
+{
+  "routes": [
+    {
+      "routeId": "…", "vehicleId": "VEH014", "depotId": "…",
+      "routeDate": "2026-09-26", "tripNo": 1, "brand": "FRESH",
+      "district": "Colombo", "status": "CONFIRMED",
+      "stops": 6, "lines": 18, "linesComplete": 12,
+      "shortfallQty": 2, "routeReady": false
+    }
+  ]
+}
+```
+
+`linesComplete` counts lines where `loaded + damaged + missing = ordered`, so the list shows
+progress without the client re-deriving it. `routeReady` is the same rule the picking list
+reports: every line reconciles, and a route with no lines is never ready.
+
+### `GET /routes/{routeId}/loading` — response fields
+
+Each line carries its stop as well as its item, because the loader works stop by stop and the
+screen labels every row with its drop:
+
+```json
+{
+  "routeId": "…", "vehicleId": "VEH014", "tripNo": 1, "status": "CONFIRMED",
+  "routeReady": false, "stops": 6,
+  "vehicleType": "TRUCK", "vehicleTemp": "REEFER",
+  "weightCapKg": 6500, "volumeCapM3": 22,
+  "loadedWeightKg": 4820, "loadedVolumeM3": 18.2,
+  "lines": [
+    {
+      "orderItemId": "…", "sku": "WF-MLK-01", "name": "Fresh Milk 1L",
+      "orderedQty": 16, "loadedQty": 14, "damagedQty": 1, "missingQty": 1,
+      "shortfallQty": 2, "photoRef": "shortfall/<orderItemId>/…",
+      "seq": 3, "outletId": "OUT014", "outletName": "…", "orderNumber": "S1-001",
+      "dockType": "REAR_DOCK", "tempRequirement": "CHILLED",
+      "weightKg": 32, "volumeM3": 0.8
+    }
+  ]
+}
+```
+
+Lines come back in planned stop order (`seq` ascending); the **client reverses them**, because
+the last drop is loaded first and must sit deepest in the vehicle. `loadedWeightKg` and
+`loadedVolumeM3` count only the loaded portion of each line, so a shortfall lightens the truck;
+with the vehicle's capacity they give the payload and volume meters their denominator.
 
 ### `POST /routes/{routeId}/shortfalls`
 

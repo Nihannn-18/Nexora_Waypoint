@@ -79,6 +79,76 @@ export interface DriverRouteSummary {
   readonly status: string;
 }
 
+/** One row of GET /loading/routes — a route the loader's depot must load. */
+export interface LoaderRouteSummary {
+  readonly routeId: string;
+  readonly vehicleId: string;
+  readonly depotId: string;
+  readonly routeDate: IsoDate;
+  readonly tripNo: TripNumber;
+  readonly brand: Brand;
+  readonly district: string;
+  readonly status: string;
+  /** Drops on the route, and order lines to count across them. */
+  readonly stops: number;
+  readonly lines: number;
+  /** Lines whose loaded + damaged + missing already equals the ordered qty. */
+  readonly linesComplete: number;
+  readonly shortfallQty: number;
+  readonly routeReady: boolean;
+}
+
+/**
+ * One order line of the picking list. `seq` is the planned stop order; the
+ * loader screen renders it reversed, because the last drop is loaded first and
+ * so sits nearest the door.
+ */
+export interface LoadingLine {
+  readonly orderItemId: string;
+  readonly orderId: string;
+  readonly itemId: string;
+  readonly sku: string;
+  readonly name: string;
+  readonly orderedQty: number;
+  readonly loadedQty: number;
+  readonly damagedQty: number;
+  readonly missingQty: number;
+  readonly shortfallQty: number;
+  readonly photoRef?: string;
+  readonly recordedBy?: string;
+  readonly recordedAt?: IsoDateTime;
+  readonly seq: number;
+  readonly outletId: string;
+  readonly outletName: string;
+  readonly orderNumber: string;
+  readonly dockType: DockType;
+  readonly tempRequirement: TempRequirement;
+  readonly weightKg: number;
+  readonly volumeM3: number;
+}
+
+/** GET /routes/{id}/loading — the picking list and the truck being loaded. */
+export interface RouteLoading {
+  readonly routeId: string;
+  readonly vehicleId: string;
+  readonly depotId: string;
+  readonly routeDate: IsoDate;
+  readonly tripNo: TripNumber;
+  readonly brand: Brand;
+  readonly district: string;
+  readonly status: string;
+  readonly routeReady: boolean;
+  readonly lines: readonly LoadingLine[];
+  readonly vehicleType: string;
+  readonly vehicleTemp: string;
+  readonly weightCapKg: number;
+  readonly volumeCapM3: number;
+  /** Only the loaded portion of each line — a shortfall lightens the truck. */
+  readonly loadedWeightKg: number;
+  readonly loadedVolumeM3: number;
+  readonly stops: number;
+}
+
 /** One stop on GET /driver/routes. Absent `plannedArrival` = none stored. */
 export interface DriverRouteStop {
   readonly legId: string;
@@ -323,11 +393,46 @@ export class WaypointClient {
 
   /* --- Loader ---------------------------------------------------------- */
 
+  /**
+   * The depot's confirmed routes on `date`. Scope comes from the signed-in
+   * loader server-side, so this never takes a depot: a loader sees their own
+   * dock and nothing else.
+   */
+  getLoaderRoutes(date: IsoDate): Promise<readonly LoaderRouteSummary[]> {
+    return this.http
+      .get<{ routes: readonly LoaderRouteSummary[] }>('/loading/routes', {
+        query: { date },
+      })
+      .then((r) => r.routes);
+  }
+
+  /** The picking list for one route, with its current load state. */
+  getRouteLoading(routeId: string): Promise<RouteLoading> {
+    return this.http.get<RouteLoading>(`/routes/${routeId}/loading`);
+  }
+
+  /**
+   * Mints a server-side `shortfall/<orderItemId>/…` key. The key is scoped to
+   * the order line, which is why the line is named here and never by the
+   * caller: the server refuses a photo ref that belongs to another line.
+   */
+  createShortfallUpload(
+    orderItemId: string,
+    contentType: string,
+  ): Promise<MediaUpload> {
+    return this.http.post<MediaUpload>('/media/uploads', {
+      purpose: 'SHORTFALL',
+      orderItemId,
+      contentType,
+    });
+  }
+
+  /** Records load counts. Returns the whole route's state after recording. */
   recordShortfall(
     routeId: string,
     body: RecordShortfallRequest,
-  ): Promise<{ routeReady: boolean; updatedItems: readonly LoadItemRecord[] }> {
-    return this.http.post(`/routes/${routeId}/shortfalls`, body);
+  ): Promise<RouteLoading> {
+    return this.http.post<RouteLoading>(`/routes/${routeId}/shortfalls`, body);
   }
 
   /* --- Driver ---------------------------------------------------------- */

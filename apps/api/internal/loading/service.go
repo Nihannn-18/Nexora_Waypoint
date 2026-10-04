@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Service is the loading business surface. It validates submissions and enforces
@@ -30,6 +31,19 @@ func (s *Service) PickingList(ctx context.Context, routeID, callerDepotID string
 		return RouteLoading{}, fmt.Errorf("%w: route %s is at another depot", ErrNotFound, routeID)
 	}
 	return rl, nil
+}
+
+// Routes lists the confirmed routes the caller's depot must load on a date.
+// A caller with no depot gets nothing rather than everything: the loader
+// endpoints fail closed, exactly as PickingList does.
+func (s *Service) Routes(ctx context.Context, callerDepotID, date string) ([]RouteSummary, error) {
+	if _, err := time.Parse(time.DateOnly, date); err != nil {
+		return nil, ValidationError{Field: "date", Message: "must be YYYY-MM-DD"}
+	}
+	if callerDepotID == "" {
+		return []RouteSummary{}, nil
+	}
+	return s.repo.RoutesForDepot(ctx, callerDepotID, date)
 }
 
 // RecordShortfalls validates and records a full set of line updates for a route.
