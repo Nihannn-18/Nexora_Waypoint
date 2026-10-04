@@ -15,8 +15,8 @@ const mocked = api as jest.Mocked<typeof api>;
 
 function renderAssignment() {
   mocked.listStoreManagers.mockResolvedValue([
-    { userId: 'u-store', name: 'Ishara S.', email: 'ishara@waypoint.lk', outletId: 'OUT014' },
-    { userId: 'u-store2', name: 'Fathima R.', email: 'fathima@waypoint.lk', outletId: '' },
+    { userId: 'u-store', name: 'Ishara S.', email: 'ishara@waypoint.lk', outletId: 'OUT014', depotId: 'd-peli' },
+    { userId: 'u-store2', name: 'Fathima R.', email: 'fathima@waypoint.lk', outletId: '', depotId: '' },
   ]);
   render(<ManagerAssignment outletId="OUT014" />);
 }

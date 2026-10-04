@@ -187,3 +187,76 @@ describe('WaypointClient demo controls', () => {
     expect(init.method).toBe('POST');
   });
 });
+
+describe('WaypointClient account management', () => {
+  it('lists users with server-side filters', async () => {
+    const { client, fetchImpl } = clientReturning({ users: [] });
+    await expect(
+      client.listUsers({ role: 'DRIVER', active: true }),
+    ).resolves.toEqual([]);
+    const url = new URL(fetchImpl.mock.calls[0][0]);
+    expect(url.pathname).toBe('/api/v1/users');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      role: 'DRIVER',
+      active: 'true',
+    });
+  });
+
+  it('posts a create-user body and returns the account', async () => {
+    const created = { userId: 'usr_1', role: 'DRIVER' };
+    const { client, fetchImpl } = clientReturning(created, 201);
+    await expect(
+      client.createUser({
+        email: 'd@waypoint.lk',
+        displayName: 'Dee',
+        role: 'DRIVER',
+        depotId: 'd1',
+        initialPassword: 'secret-pass',
+      }),
+    ).resolves.toEqual(created);
+    expect(fetchImpl.mock.calls[0][1].method).toBe('POST');
+    expect(fetchImpl.mock.calls[0][0]).toBe('http://api.test/api/v1/users');
+  });
+
+  it('deactivates an account through a dedicated action', async () => {
+    const { client, fetchImpl } = clientReturning({ userId: 'usr_1', active: false });
+    await client.deactivateUser('usr_1');
+    expect(fetchImpl.mock.calls[0][1].method).toBe('POST');
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://api.test/api/v1/users/usr_1/deactivate',
+    );
+  });
+
+  it('requests a reset anonymously and returns the generic message', async () => {
+    const body = {
+      message:
+        'If the account exists, password reset instructions have been provided.',
+    };
+    const { client, fetchImpl } = clientReturning(body);
+    await expect(
+      client.forgotPassword({ email: 'x@waypoint.lk' }),
+    ).resolves.toEqual(body);
+    expect(
+      (fetchImpl.mock.calls[0][1].headers as Record<string, string>)[
+        'Authorization'
+      ],
+    ).toBeUndefined();
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://api.test/api/v1/auth/forgot-password',
+    );
+  });
+
+  it('resets a password anonymously', async () => {
+    const body = { message: 'reset' };
+    const { client, fetchImpl } = clientReturning(body);
+    await client.resetPassword({
+      token: 't',
+      newPassword: 'new-secret',
+      confirmPassword: 'new-secret',
+    });
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://api.test/api/v1/auth/reset-password',
+    );
+    expect(fetchImpl.mock.calls[0][1].method).toBe('POST');
+  });
+});

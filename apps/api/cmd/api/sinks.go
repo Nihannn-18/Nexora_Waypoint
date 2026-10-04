@@ -15,6 +15,7 @@ import (
 	"waypoint.lk/api/internal/notify"
 	"waypoint.lk/api/internal/orders"
 	"waypoint.lk/api/internal/routes"
+	"waypoint.lk/api/internal/useradmin"
 )
 
 // catalogAudit adapts audit.RecordTx to catalog.AuditSink, so a vehicle/outlet
@@ -33,6 +34,18 @@ type assignmentAudit struct{}
 func (assignmentAudit) RecordTx(ctx context.Context, tx pgx.Tx, action, entityType, entityID, actor, depotID, outletID, result string, detail map[string]any) error {
 	return audit.RecordTx(ctx, tx, action, entityType, entityID, actor, depotID, outletID, result, detail)
 }
+
+// userAdminAudit adapts audit.RecordTx to useradmin.AuditSink, so a
+// create/update/deactivate of an operational account and its audit row commit
+// in one transaction. The detail never carries a password or token.
+type userAdminAudit struct{}
+
+func (userAdminAudit) RecordTx(ctx context.Context, tx pgx.Tx, action, entityType, entityID, actor, depotID, outletID, result string, detail map[string]any) error {
+	return audit.RecordTx(ctx, tx, action, entityType, entityID, actor, depotID, outletID, result, detail)
+}
+
+// Compile-time proof the adapter satisfies useradmin's narrow sink.
+var _ useradmin.AuditSink = userAdminAudit{}
 
 // ordersAudit adapts audit.RecordTx to orders.AuditSink, so a queue close and
 // its audit row commit in one transaction.

@@ -73,14 +73,28 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 | `POST` | `/outlets`     | dispatcher                | Create an outlet; the id (OUTnnn) is generated server-side                                                                                    |
 | `PATCH` | `/outlets/{id}` | dispatcher              | Update an outlet's mutable fields; the id is immutable                                                                                       |
 | `GET`  | `/drivers`     | dispatcher                | Active drivers for the assignment picker. `?depotId=` narrows                                                                                |
-| `GET`  | `/store-managers` | dispatcher             | Active store managers for the assignment picker                                                                                              |
+| `GET`  | `/store-managers` | dispatcher             | Active store managers for the assignment picker, with current outlet and derived depot                                                       |
+| `GET`  | `/loaders`     | dispatcher                | Active loaders for the loader-assignment screen, with current depot                                                                          |
+| `GET`  | `/driver-vehicle-assignments` | dispatcher | Every driver-vehicle assignment on `?date=` (default: API clock today)                                                                       |
 | `GET`  | `/vehicles/{id}/assignment` | dispatcher    | The driver assigned to the vehicle on `?date=` (default: API clock today), or `null`                                                         |
 | `PUT`  | `/vehicles/{id}/assignment` | dispatcher    | Assign or change the vehicle's driver for a date                                                                                             |
 | `DELETE` | `/vehicles/{id}/assignment` | dispatcher  | Remove the vehicle's driver for `?date=`                                                                                                     |
 | `GET`  | `/outlets/{id}/manager` | dispatcher          | The store manager responsible for the outlet, or `null`                                                                                      |
 | `PUT`  | `/outlets/{id}/manager` | dispatcher           | Assign or change the outlet's store manager                                                                                                  |
 | `DELETE` | `/outlets/{id}/manager` | dispatcher         | Remove the outlet's store manager                                                                                                            |
+| `GET`  | `/loaders/{id}/depot` | dispatcher          | A loader's current depot assignment, or `null`                                                                                               |
+| `PUT`  | `/loaders/{id}/depot` | dispatcher           | Assign or change a loader's depot                                                                                                            |
+| `DELETE` | `/loaders/{id}/depot` | dispatcher         | Remove a loader's depot                                                                                                                      |
 | `GET`  | `/driver/assignment` | driver                | The caller's own driver assignment on `?date=`, or `null`                                                                                    |
+| `GET`  | `/loader/assignment` | loader                | The caller's own loader depot assignment, or `null`                                                                                          |
+| `GET`  | `/users`       | dispatcher                | Operational accounts (drivers, loaders, store managers); `?role=`/`?active=` narrow                                                          |
+| `POST` | `/users`       | dispatcher                | Create an operational account; the role and assignment are validated server-side                                                             |
+| `GET`  | `/users/{id}`  | dispatcher                | One operational account                                                                                                                       |
+| `PATCH`| `/users/{id}`  | dispatcher                | Edit permitted profile/assignment fields; role and password are not editable here                                                            |
+| `POST` | `/users/{id}/deactivate` | dispatcher      | Deactivate an account and revoke its sessions                                                                                                |
+| `POST` | `/users/{id}/activate`   | dispatcher      | Reactivate a deactivated account                                                                                                             |
+| `POST` | `/auth/forgot-password` | all (public)     | Request a password reset; always a generic reply                                                                                             |
+| `POST` | `/auth/reset-password`  | all (public)     | Consume a reset token and set a new password                                                                                                 |
 | `GET`  | `/items`       | all authenticated         | Catalogue SKUs: dimensions and temperature requirement. Read-only                                                                            |
 | `GET`  | `/items/{id}`  | all authenticated         | One SKU by `itemId`, or by `?sku=`                                                                                                           |
 | `GET`  | `/healthz`     | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API                                 |
@@ -194,31 +208,133 @@ one transaction (`VEHICLE_CREATED`, `VEHICLE_UPDATED`, `OUTLET_CREATED`, `OUTLET
 ### Dispatcher operational assignments
 
 **Implemented** (`internal/assignment`). These are the operational links: which driver is on a
-vehicle for an operating date, and which store manager owns an outlet. Mutations are
-dispatcher-only, validated server-side, and audited in the same transaction
-(`DRIVER_ASSIGNED`, `DRIVER_UNASSIGNED`, `MANAGER_ASSIGNED`, `MANAGER_UNASSIGNED`).
+vehicle for an operating date, which store manager owns an outlet, and which depot each loader
+works in. Mutations are dispatcher-only, validated server-side, and audited in the same
+transaction (`DRIVER_ASSIGNED`, `DRIVER_UNASSIGNED`, `MANAGER_ASSIGNED`, `MANAGER_UNASSIGNED`,
+`LOADER_ASSIGNED`, `LOADER_UNASSIGNED`).
 
 - `GET /drivers` — active drivers (display identity only, never a credential), optionally
   narrowed by `?depotId=`.
+- `GET /driver-vehicle-assignments?date=` — every driver-vehicle assignment on the date (default:
+  the API clock's business day), for the Dispatcher assignments board. Each row is the same shape
+  as the single-vehicle read.
 - `GET|PUT|DELETE /vehicles/{id}/assignment` — the vehicle's driver for a date. `PUT` body is
   `{ driverId, date }`. The driver must be an active `DRIVER` whose home depot matches the
   vehicle's. A driver may drive only one vehicle per date and a vehicle may have only one driver
   per date (both unique in the database); a collision is `409` rather than a silent overwrite.
   `DELETE` takes `?date=`. The response is `{ assignment: { vehicleId, driverId, driverName,
   driverEmail, date, depotId } | null }` (the `PUT` returns the object directly).
-- `GET /store-managers` — active store managers, with their current `outletId`.
+- `GET /store-managers` — active store managers, with their current `outletId` and the `depotId`
+  derived from that outlet.
 - `GET|PUT|DELETE /outlets/{id}/manager` — the outlet's store manager. `PUT` body is
   `{ userId }`. This updates the authoritative `app_user.outlet_id`; assigning a manager to an
   outlet releases whoever held it before, in one transaction, so an outlet has exactly one
-  manager. The response is `{ manager: { outletId, userId, name, email, depotId } | null }`.
+  manager. A store manager's depot is **derived from the assigned outlet** (never carried
+  independently). The response is `{ manager: { outletId, userId, name, email, depotId } | null }`.
+- `GET /loaders` — active loaders with their current `depotId` (empty when unassigned).
+- `GET|PUT|DELETE /loaders/{id}/depot` — a loader's operational depot. `PUT` body is
+  `{ depotId }`; the loader must be an active `LOADER` and the depot must exist. The loader's
+  authoritative depot is `app_user.depot_id` — there is no second relationship table. `DELETE`
+  clears the depot. The response is `{ loader: { userId, name, email, depotId } | null }` (the
+  `PUT`/`DELETE` return the object directly).
 - `GET /driver/assignment?date=` — the caller's own assignment. The driver id is the
   authenticated identity, never a request parameter, so a driver cannot read another driver's
   assignment.
+- `GET /loader/assignment` — the caller's own loader depot. The loader id is the authenticated
+  identity, so a loader cannot read another loader's depot.
 
 The driver cockpit (`GET /driver/routes`) narrows its result to the assigned vehicle when the
 authenticated driver has an assignment for the resolved date, so a driver sees their own run
 instead of every route in the depot. With no assignment, the depot's routes are returned and
-the driver chooses explicitly — the prior behaviour, never an arbitrary route.
+the driver chooses explicitly — the prior behaviour, never an arbitrary route. The loader
+workspace (`GET /routes`, `GET /routes/{id}/legs`, shortfalls) uses the loader's own depot from
+the authenticated identity, so a loader cannot reach another depot's loading work.
+
+### Dispatcher account management and password reset
+
+**Implemented** (`internal/useradmin`). A Dispatcher creates operational accounts for the three
+non-dispatcher roles (DRIVER, LOADER, STORE_MANAGER), edits their permitted profile/assignment
+fields, and activates/deactivates them. Authentication stays Go-owned: this reuses `app_user`,
+the existing Argon2id helper, and the `session` table — it never introduces a second identity
+system. Every response is credential-free: no password, hash, session token or reset token is
+ever returned.
+
+| Method | Endpoint                            | Role                  | Purpose                                                                 |
+| ------ | ----------------------------------- | --------------------- | ----------------------------------------------------------------------- |
+| `GET`  | `/api/v1/users`                     | dispatcher            | List operational accounts. `?role=` and `?active=` narrow server-side    |
+| `POST` | `/api/v1/users`                     | dispatcher            | Create an operational account                                            |
+| `GET`  | `/api/v1/users/{id}`                | dispatcher            | One account                                                              |
+| `PATCH`| `/api/v1/users/{id}`                | dispatcher            | Edit permitted fields (display name, depot, outlet)                      |
+| `POST` | `/api/v1/users/{id}/deactivate`     | dispatcher            | Deactivate and revoke the account's sessions                             |
+| `POST` | `/api/v1/users/{id}/activate`       | dispatcher            | Reactivate a deactivated account                                         |
+| `POST` | `/api/v1/auth/forgot-password`      | public                | Request a reset link; always a generic reply                             |
+| `POST` | `/api/v1/auth/reset-password`       | public                | Consume a reset token and set a new password                             |
+
+`POST /users` body: `{ email, displayName, role, depotId?, outletId?, initialPassword }`. The
+**server controls the role and the assignment**, never the client:
+
+- `role` must be one of DRIVER, LOADER, STORE_MANAGER. A `DISPATCHER` role (or any other value)
+  is a `400`; a dispatcher cannot create another dispatcher, and the seeded dispatcher remains
+  the controlled way to establish dispatcher accounts.
+- A DRIVER or LOADER **requires `depotId`** (validated to exist) and **must not carry an
+  `outletId`**; supplying one is a `400`.
+- A STORE_MANAGER **requires `outletId`** (validated to exist); its depot is **derived from the
+  outlet record**, so a client-supplied `depotId` is ignored rather than becoming a second
+  source of truth.
+- `initialPassword` is hashed with Argon2id before storage and is subject to the server-side
+  policy (at least 8 characters). The plaintext is never stored, returned, logged or audited.
+- A duplicate email is a `409`; the email is normalised (trimmed, lower-cased) and must be a
+  plausible address.
+
+`PATCH /users/{id}` body: `{ displayName?, depotId?, outletId? }`. Omitted fields are unchanged.
+The role is immutable for this feature, and a password cannot be changed here — only through the
+reset flow. A store manager's depot always follows its outlet; attempting to set a depot
+independently for that role is a `400`. Setting an outlet on a driver/loader is a `400`.
+
+The response object never contains a credential:
+
+```json
+{
+  "userId": "usr_3f1a…",
+  "email": "kasun.p@waypoint.lk",
+  "displayName": "Kasun P.",
+  "role": "DRIVER",
+  "depotId": "2bcc…",
+  "outletId": null,
+  "active": true,
+  "createdAt": "2026-09-25T10:00:00+05:30"
+}
+```
+
+**Deactivation is never a delete.** An account referenced by routes, assignments, audit entries
+and delivery history is deactivated (`is_active = false`), and every existing session for it is
+deleted in the same transaction, so a signed-in device cannot keep using it. The record and its
+history remain, and the account can be reactivated.
+
+**Password reset (self-service).** `POST /auth/forgot-password` takes `{ email }` and **always**
+returns `200 { "message": "If the account exists, password reset instructions have been
+provided." }` — the same reply whether or not the email exists, so the endpoint cannot be used
+to enumerate accounts. `POST /auth/reset-password` takes `{ token, newPassword, confirmPassword }`.
+The server requires an unused, unexpired token for an active user, enforces the password policy,
+hashes the new password with Argon2id, marks the token used, and revokes the user's existing
+sessions — all in one transaction. An unknown, expired, already-used or inactive-account token
+returns the same generic `400` with a single `token` field error.
+
+**Reset-token design.** A request mints a random 256-bit token; only its SHA-256 hash is stored
+in `password_reset_token` (`UNIQUE`, `expires_at`, `used_at`). The token is single-use, expires
+after 30 minutes, and a new request supersedes any outstanding one for that user. The raw token
+is **never** returned by the production endpoint and never written to a response body. Expiry is
+evaluated against the API's injected business clock — the same clock that minted the token — so
+the flow works unchanged under `DEMO_MODE`, where business time is the seeded past day.
+
+**This project has no email provider.** To keep the reset flow demonstrable without weakening
+production security, the raw token is logged **only** under the explicit, opt-in `DEMO_MODE`
+flag; when `DEMO_MODE` is off the token is discarded and only the generic reply is returned.
+`DEMO_MODE` must be disabled for real operation. The reset token is **never** returned in an API
+response body, and the normal password-reset flow (hashed, single-use, expiring token; generic
+forgot reply; session revocation on reset) is unchanged. A judge completes the flow by copying
+the token from the API log into the `/reset-password` screen. This is a demo affordance, not a
+production delivery mechanism.
 
 ---
 

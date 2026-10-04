@@ -29,6 +29,7 @@ and an AI tool disclosure.
 │                                                                    │
 │  httpx         router, strict JSON decoding, one error shape       │
 │  auth          verify bearer session, RBAC, depot/outlet scope     │
+│  useradmin     Dispatcher account mgmt + self-service reset        │
 │  orders        lifecycle, 16:00 cutoff, aggregate totals           │
 │  planning      ▸ ConstraintValidator — the only feasibility rule   │
 │                ▸ TripTimeCalculator — the official formula         │
@@ -68,6 +69,14 @@ and enforce role, purpose and depot/outlet scope before any byte moves.
 
 The four demo accounts are seeded with a hashed password (`DEMO_SEED_PASSWORD`, default
 `waypoint2026`).
+
+`internal/useradmin` sits on top of the same credential model. A Dispatcher creates operational
+accounts (DRIVER, LOADER, STORE_MANAGER) with an Argon2id-hashed initial password, edits their
+profile/assignment fields, and deactivates them (revoking their sessions) — never deleting them.
+The public forgot/reset endpoints mint a short-lived, single-use token whose SHA-256 hash alone
+is stored in `password_reset_token`; a reset sets the new hash, consumes the token and revokes
+the user's sessions in one transaction. There is no second identity system and no password is
+ever returned.
 
 ---
 

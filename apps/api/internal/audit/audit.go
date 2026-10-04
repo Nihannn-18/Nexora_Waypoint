@@ -50,6 +50,8 @@ const (
 	ActionDriverUnassigned  Action = "DRIVER_UNASSIGNED"
 	ActionManagerAssigned   Action = "MANAGER_ASSIGNED"
 	ActionManagerUnassigned Action = "MANAGER_UNASSIGNED"
+	ActionLoaderAssigned    Action = "LOADER_ASSIGNED"
+	ActionLoaderUnassigned  Action = "LOADER_UNASSIGNED"
 	// Demo mode (judge walkthrough only)
 	ActionDemoClockSet Action = "DEMO_CLOCK_SET"
 	ActionDemoReset    Action = "DEMO_RESET"

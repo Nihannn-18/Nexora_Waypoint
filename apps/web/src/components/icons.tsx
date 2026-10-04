@@ -103,3 +103,20 @@ export const DepotIcon = (p: P) => (
     <path d="M9 21v-6h6v6" />
   </Icon>
 );
+
+export const UsersIcon = (p: P) => (
+  <Icon {...p}>
+    <circle cx="9" cy="8" r="3" />
+    <path d="M3 20a6 6 0 0112 0" />
+    <path d="M16 6a3 3 0 010 5.5" />
+    <path d="M18 20a6 6 0 00-3-5.2" />
+  </Icon>
+);
+
+export const AssignmentIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M9 12h6" />
+    <path d="M10 8H8a4 4 0 000 8h2" />
+    <path d="M14 16h2a4 4 0 000-8h-2" />
+  </Icon>
+);

@@ -9,6 +9,7 @@
 import type {
   AppNotification,
   AssignDriverRequest,
+  AssignLoaderRequest,
   AssignManagerRequest,
   AuditQuery,
   AuditRecord,
@@ -20,6 +21,7 @@ import type {
   ConfirmAllocationResponse,
   CreateOrderRequest,
   CreateReceiptRequest,
+  CreateUserRequest,
   CustomerOrder,
   DeferralLogEntry,
   DeferralRequest,
@@ -32,14 +34,19 @@ import type {
   Depot,
   DockType,
   Driver,
+  ForgotPasswordRequest,
+  ForgotPasswordResponse,
   IsoDate,
   IsoDateTime,
   Item,
   ListOrdersQuery,
+  ListUsersQuery,
   LiveRouteState,
   LoadItemRecord,
+  Loader,
   LoginRequest,
   LoginResponse,
+  ManagedUser,
   MetaResponse,
   OrderPage,
   OrderQueueQuery,
@@ -53,6 +60,8 @@ import type {
   RecordShortfallRequest,
   ReorderLegsRequest,
   Receipt,
+  ResetPasswordRequest,
+  ResetPasswordResponse,
   Route,
   RouteLeg,
   StoreManagerOption,
@@ -62,6 +71,7 @@ import type {
   SyncResult,
   TempRequirement,
   TripNumber,
+  UpdateUserRequest,
   ValidateAllocationRequest,
   ValidationResponse,
   Vehicle,
@@ -245,6 +255,34 @@ export class WaypointClient {
 
   me(): Promise<LoginResponse['user']> {
     return this.http.get<LoginResponse['user']>('/me');
+  }
+
+  /**
+   * Request a password-reset link. Always resolves with a generic message
+   * whether or not the email exists, so no enumeration is possible. Public.
+   */
+  forgotPassword(
+    body: ForgotPasswordRequest,
+  ): Promise<ForgotPasswordResponse> {
+    return this.http.post<ForgotPasswordResponse>(
+      '/auth/forgot-password',
+      body,
+      { anonymous: true },
+    );
+  }
+
+  /**
+   * Consume a reset token and set a new password. An invalid, expired or
+   * already-used token is a 400 with a `token` field error. Public.
+   */
+  resetPassword(
+    body: ResetPasswordRequest,
+  ): Promise<ResetPasswordResponse> {
+    return this.http.post<ResetPasswordResponse>(
+      '/auth/reset-password',
+      body,
+      { anonymous: true },
+    );
   }
 
   /** The API clock and demo mode. Public: needed before sign-in for countdowns. */
@@ -627,6 +665,24 @@ export class WaypointClient {
     return body.storeManagers;
   }
 
+  /** Active loaders with their current depot. Dispatcher only. */
+  async listLoaders(): Promise<readonly Loader[]> {
+    const body = await this.http.get<{ loaders: readonly Loader[] }>(
+      '/loaders',
+    );
+    return body.loaders;
+  }
+
+  /** The day's driver-vehicle assignments. Dispatcher only. */
+  async listVehicleAssignments(
+    date?: IsoDate,
+  ): Promise<readonly VehicleAssignment[]> {
+    const body = await this.http.get<{
+      assignments: readonly VehicleAssignment[];
+    }>('/driver-vehicle-assignments', { query: { date } });
+    return body.assignments;
+  }
+
   /** The driver assigned to a vehicle on a date, or null. Dispatcher only. */
   async getVehicleAssignment(
     vehicleId: string,
@@ -682,6 +738,27 @@ export class WaypointClient {
     return this.http.delete<OutletManager>(`/outlets/${outletId}/manager`);
   }
 
+  /** A loader with their current depot, or null. Dispatcher only. */
+  async getLoaderDepot(loaderId: string): Promise<Loader | null> {
+    const body = await this.http.get<{ loader: Loader | null }>(
+      `/loaders/${loaderId}/depot`,
+    );
+    return body.loader;
+  }
+
+  /** Assign or change a loader's depot. Dispatcher only. */
+  assignLoader(
+    loaderId: string,
+    body: AssignLoaderRequest,
+  ): Promise<Loader> {
+    return this.http.put<Loader>(`/loaders/${loaderId}/depot`, body);
+  }
+
+  /** Remove a loader's depot. Dispatcher only. */
+  unassignLoader(loaderId: string): Promise<Loader> {
+    return this.http.delete<Loader>(`/loaders/${loaderId}/depot`);
+  }
+
   /** The caller's own driver assignment on a date, or null. Driver only. */
   async getOwnDriverAssignment(
     date?: IsoDate,
@@ -691,6 +768,56 @@ export class WaypointClient {
       { query: { date } },
     );
     return body.assignment;
+  }
+
+  /** The caller's own loader depot assignment, or null. Loader only. */
+  async getOwnLoaderAssignment(): Promise<Loader | null> {
+    const body = await this.http.get<{ loader: Loader | null }>(
+      '/loader/assignment',
+    );
+    return body.loader;
+  }
+
+  /* --- Dispatcher account management ----------------------------------- */
+
+  /**
+   * Operational accounts (DRIVER, LOADER, STORE_MANAGER), optionally filtered
+   * by role and active state. Dispatcher only. Never returns credentials.
+   */
+  async listUsers(query: ListUsersQuery = {}): Promise<readonly ManagedUser[]> {
+    const body = await this.http.get<{ users: readonly ManagedUser[] }>(
+      '/users',
+      { query: { role: query.role, active: query.active } },
+    );
+    return body.users;
+  }
+
+  /** One account by id. Dispatcher only. */
+  getUser(userId: string): Promise<ManagedUser> {
+    return this.http.get<ManagedUser>(`/users/${userId}`);
+  }
+
+  /**
+   * Create an operational account. The role is validated server-side; a
+   * DISPATCHER role is refused. Dispatcher only.
+   */
+  createUser(body: CreateUserRequest): Promise<ManagedUser> {
+    return this.http.post<ManagedUser>('/users', body);
+  }
+
+  /** Edit an account's permitted profile/assignment fields. Dispatcher only. */
+  updateUser(userId: string, body: UpdateUserRequest): Promise<ManagedUser> {
+    return this.http.patch<ManagedUser>(`/users/${userId}`, body);
+  }
+
+  /** Deactivate an account and revoke its sessions. Dispatcher only. */
+  deactivateUser(userId: string): Promise<ManagedUser> {
+    return this.http.post<ManagedUser>(`/users/${userId}/deactivate`);
+  }
+
+  /** Reactivate a deactivated account. Dispatcher only. */
+  activateUser(userId: string): Promise<ManagedUser> {
+    return this.http.post<ManagedUser>(`/users/${userId}/activate`);
   }
 
   /** The SKU catalogue, used to name order lines. */

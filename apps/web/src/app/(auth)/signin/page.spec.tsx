@@ -148,6 +148,12 @@ describe('Sign in (G-01)', () => {
     expect(mockPush).not.toHaveBeenCalled();
     expect(mockClear).toHaveBeenCalled();
   });
+
+  it('offers a self-service forgot-password link', () => {
+    render(<SignInPage />);
+    const link = screen.getByRole('link', { name: /Forgot password\?/i });
+    expect(link.getAttribute('href')).toBe('/forgot-password');
+  });
 });
 
 describe('role routing table', () => {

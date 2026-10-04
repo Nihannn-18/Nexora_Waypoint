@@ -14,6 +14,7 @@ import (
 	"context"
 	"embed"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -163,6 +164,18 @@ func seedUsers(ctx context.Context, tx pgx.Tx, depotIDs map[string]string) (int,
 		var outletID *string
 		if u.outletID != "" {
 			outletID = &u.outletID
+			// A store manager's depot is derived from the outlet, never carried
+			// independently: this is the same rule the assignment surface enforces,
+			// so seeded data and runtime never disagree.
+			var derived string
+			err := tx.QueryRow(ctx, `SELECT depot_id::text FROM outlet WHERE outlet_id = $1`, u.outletID).Scan(&derived)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return 0, fmt.Errorf("seed user %s: unknown outlet %q", u.email, u.outletID)
+			}
+			if err != nil {
+				return 0, fmt.Errorf("seed user %s: derive depot: %w", u.email, err)
+			}
+			depotID = &derived
 		}
 
 		_, err := tx.Exec(ctx, `

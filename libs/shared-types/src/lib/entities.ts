@@ -168,6 +168,54 @@ export interface StoreManagerOption {
   readonly email: string;
   /** The outlet currently managed, or empty when unassigned. */
   readonly outletId: string;
+  /** The depot derived from the outlet, or empty when unassigned. */
+  readonly depotId: string;
+}
+
+/**
+ * An active LOADER account as the loader-assignment screen shows it. DepotID is
+ * empty when the loader has no depot. The loader's authoritative depot is
+ * `app_user.depot_id`; this is not a second relationship table.
+ */
+export interface Loader {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly depotId: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Account management (Dispatcher)                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The roles a Dispatcher may create through account management. DISPATCHER is
+ * deliberately absent: a dispatcher cannot replicate itself, and the seeded
+ * dispatcher remains the controlled way to establish dispatcher accounts.
+ */
+export const CREATABLE_ROLES = [
+  'DRIVER',
+  'LOADER',
+  'STORE_MANAGER',
+] as const;
+export type CreatableRole = (typeof CREATABLE_ROLES)[number];
+
+/**
+ * One operational account as the Dispatcher user screen shows it. Never carries
+ * a password, password hash, session token or reset token — those are not
+ * retrievable through any API.
+ */
+export interface ManagedUser {
+  readonly userId: string;
+  readonly email: string;
+  readonly displayName: string;
+  readonly role: Role;
+  /** Set for DRIVER and LOADER (and derived from the outlet for STORE_MANAGER). */
+  readonly depotId: string | null;
+  /** Set for STORE_MANAGER only. */
+  readonly outletId: string | null;
+  readonly active: boolean;
+  readonly createdAt: IsoDateTime;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -503,6 +551,18 @@ export const AUDIT_ACTIONS = [
   'SHORTFALL_RECORDED',
   'DELIVERY_RECORDED',
   'SYNC_PROCESSED',
+  'VEHICLE_CREATED',
+  'VEHICLE_UPDATED',
+  'OUTLET_CREATED',
+  'OUTLET_UPDATED',
+  'DRIVER_ASSIGNED',
+  'DRIVER_UNASSIGNED',
+  'MANAGER_ASSIGNED',
+  'MANAGER_UNASSIGNED',
+  'USER_CREATED',
+  'USER_UPDATED',
+  'USER_ACTIVATED',
+  'USER_DEACTIVATED',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -514,6 +574,11 @@ export const AUDIT_ENTITY_TYPES = [
   'LOAD_ITEM',
   'DELIVERY_EVENT',
   'SYNC_BATCH',
+  'VEHICLE',
+  'OUTLET',
+  'DRIVER_VEHICLE_ASSIGNMENT',
+  'OUTLET_MANAGER',
+  'USER',
 ] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 

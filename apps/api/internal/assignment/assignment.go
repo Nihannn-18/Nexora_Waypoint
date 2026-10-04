@@ -32,6 +32,17 @@ type Driver struct {
 	DepotID string
 }
 
+// Loader is the read view of a LOADER account used by the assignment screens.
+// DepotID is empty when the loader has no depot assigned yet. The loader's
+// authoritative depot is app_user.depot_id, reused here rather than duplicated
+// in a second table.
+type Loader struct {
+	UserID  string
+	Name    string
+	Email   string
+	DepotID string
+}
+
 // User is a minimal account view for validating an assignment target. It never
 // carries a password hash or session material.
 type User struct {
@@ -62,12 +73,21 @@ type OutletManager struct {
 }
 
 // ManagerCandidate is an active STORE_MANAGER as the assignment picker shows
-// it. OutletID is empty when the manager is currently unassigned.
+// it. OutletID and DepotID are empty when the manager is currently unassigned;
+// DepotID is derived from the outlet, never chosen independently.
 type ManagerCandidate struct {
 	UserID   string
 	Name     string
 	Email    string
 	OutletID string
+	DepotID  string
+}
+
+// AssignLoaderInput is a request to put a loader on a depot. The loader's depot
+// is app_user.depot_id, the single authoritative representation.
+type AssignLoaderInput struct {
+	LoaderID string
+	DepotID  string
 }
 
 // AssignDriverInput is a validated-by-the-service request to put a driver on a

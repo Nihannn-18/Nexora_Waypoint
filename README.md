@@ -198,6 +198,15 @@ the clock, so the walkthrough can be repeated without restarting Docker.
    the previous one. Vehicle/outlet create and edit are on the same screens. These assignments
    are what let the Driver's cockpit resolve their own run below.
 
+   **User management.** Open **Users**. Create a driver or loader (choose the depot), or a
+   store manager (choose the outlet — the depot follows). The list shows role, assignment and
+   status, never a password. Open a created account to edit its name/assignment or deactivate
+   it. The new account can sign in with the initial password set here. To recover a forgotten
+   password, use **Forgot password** on the sign-in screen; with `DEMO_MODE` on the reset token is
+   written to the API log (there is no email provider), and the token is pasted into the reset
+   screen. The API replies generically whether or not the email exists, and the old password
+   stops working after a reset.
+
 5. Open **Plan & Allocate** and request a suggested plan. The request returns immediately
    with a job id; the board fills in when the worker finishes.
 6. **Read the rule panel** on the right. Each vehicle lane shows live weight, volume, time
@@ -366,6 +375,16 @@ faking the missing behaviour.
   **store-manager-to-outlet assignment** writing the authoritative `app_user.outlet_id`. The
   Driver cockpit resolves the assigned vehicle's run; the driver's own assignment is readable
   at `GET /driver/assignment` without exposing any credential.
+- **Dispatcher account management.** Create, view, edit and deactivate operational accounts
+  (DRIVER, LOADER, STORE_MANAGER) at `/dispatcher/users`. The server controls the role and the
+  assignment: a dispatcher **cannot** create another dispatcher; a driver/loader requires a
+  depot and must not carry an outlet; a store manager requires an outlet and has its depot
+  derived from it. Passwords are set with the existing Argon2id helper and are never retrievable
+  — the account screen shows a fixed mask and points at the reset flow. Accounts are
+  deactivated, never deleted, and deactivation revokes the account's sessions. A **self-service
+  password reset** (`/forgot-password`, `/reset-password`) is public, stores only the SHA-256
+  hash of a short-lived single-use token, always replies generically so accounts cannot be
+  enumerated, and revokes existing sessions on reset.
 - **Planning engine.** Every hard constraint with the official trip-time formula, the
   documented [prioritisation policy](docs/prioritisation-policy.md) (deferred-yesterday,
   starved outlets, chilled-first, narrow windows, largest order, Fresh before Style/Tech),

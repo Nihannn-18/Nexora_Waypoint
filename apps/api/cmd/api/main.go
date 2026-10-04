@@ -46,6 +46,7 @@ import (
 	"waypoint.lk/api/internal/routes"
 	"waypoint.lk/api/internal/seed"
 	"waypoint.lk/api/internal/store"
+	"waypoint.lk/api/internal/useradmin"
 )
 
 func main() {
@@ -193,7 +194,18 @@ func run() error {
 	loadingRepo.WithSinks(loadingAudit{}, loadingNotify{})
 	deliveryRepo.WithSinks(deliveryAudit{}, deliveryNotify{})
 
-	registrars := []httpx.RouteRegistrar{authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, networkHandler.RegisterMasterDataRoutes, assignmentHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes}
+	// Account management: Dispatcher-only creation/edit/deactivation of
+	// operational accounts (DRIVER, LOADER, STORE_MANAGER) and the public
+	// self-service password-reset flow. Reuses the existing app_user credential
+	// and Argon2id helper; it never introduces a second identity system. The raw
+	// reset token is logged only under the explicit demo flag (DEMO_MODE), where
+	// there is no email provider to deliver it; with DEMO_MODE off it is
+	// discarded and only the generic reply is returned.
+	userAdminStore := useradmin.NewPGStore(db.Pool(), userAdminAudit{})
+	userAdminService := useradmin.NewService(userAdminStore, clk)
+	userAdminHandler := useradmin.NewHandler(userAdminService, authMiddleware, cfg.DemoMode)
+
+	registrars := []httpx.RouteRegistrar{authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, networkHandler.RegisterMasterDataRoutes, assignmentHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes, userAdminHandler.RegisterRoutes}
 
 	// Demo controls: jump the clock to a walkthrough stage and reset the demo
 	// data. Mounted only under DEMO_MODE, so a real deployment can never move
