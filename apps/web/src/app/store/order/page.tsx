@@ -338,8 +338,10 @@ function OrderPlaced({
         <p className="text-sm text-ink">
           Your order number is{' '}
           <Mono className="font-semibold">{order.orderNumber}</Mono>. It is{' '}
-          {order.status.toLowerCase()} and will be planned for{' '}
-          <Mono>{formatDay(order.requestedDeliveryDate)}</Mono>.
+          {order.status.toLowerCase()} for{' '}
+          <Mono>{formatDay(order.requestedDeliveryDate)}</Mono>. Confirm it so
+          the dispatcher can include it in planning — planning is the
+          dispatcher’s job, not automatic.
         </p>
         {order.afterCutoff && (
           <p className="rounded-control bg-card px-3 py-2 text-xs text-warning-ink">
@@ -355,7 +357,7 @@ function OrderPlaced({
 
       <div className="flex flex-wrap gap-2">
         <ButtonLink href={`/store/orders/${order.orderId}`} variant="ink">
-          View this order
+          Review &amp; confirm
         </ButtonLink>
         <button
           type="button"

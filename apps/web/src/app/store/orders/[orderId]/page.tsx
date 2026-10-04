@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { use } from 'react';
+import { use, useState } from 'react';
 import { Mono, OrderStatusBadge } from '@waypoint/ui';
 import { formatDay, formatKg, formatM3, plural } from '../../../../lib/format';
+import { api } from '../../../../lib/api';
 import { useStoreScope } from '../../_components/store-shell';
 import {
   BrandChip,
@@ -13,6 +14,7 @@ import {
   Fact,
   LoadingState,
   TempChip,
+  buttonClass,
 } from '../../_components/ui';
 import { useMyOrder } from '../../_lib/use-store';
 import { readableStoreError } from '../../_lib/store';
@@ -79,6 +81,10 @@ export default function OrderDetailPage({
       </header>
 
       {order.status === 'DEFERRED' && <DeferredNotice />}
+      {order.status === 'PLACED' && (
+        <ConfirmOrderAction order={order} onConfirmed={state.reload} />
+      )}
+      {order.status === 'CONFIRMED' && <ConfirmedNotice />}
       {order.afterCutoff && (
         <p className="rounded-card border border-warning bg-warning-bg p-3 text-sm text-warning-ink">
           Placed after the 16:00 cutoff. It was accepted for the next operating
@@ -166,6 +172,96 @@ export default function OrderDetailPage({
 
       <DeliveryNote status={order.status} />
     </div>
+  );
+}
+
+/**
+ * S-03/S-04 · Explicit confirmation.
+ *
+ * A placed order is not yet part of the planning queue. The store manager must
+ * confirm it deliberately; only then does the order move PLACED → CONFIRMED and
+ * become visible to the dispatcher's queue and planning run. The button is
+ * disabled while the request is in flight so a double click cannot submit twice,
+ * and the success copy never claims the order is already planned — planning
+ * remains the dispatcher's job.
+ */
+function ConfirmOrderAction({
+  order,
+  onConfirmed,
+}: {
+  order: { orderId: string; requestedDeliveryDate: string };
+  onConfirmed: () => void;
+}) {
+  const [status, setStatus] = useState<'idle' | 'confirming' | 'confirmed'>(
+    'idle',
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirm() {
+    setStatus('confirming');
+    setError(null);
+    try {
+      await api.confirmOrder(order.orderId);
+      setStatus('confirmed');
+      onConfirmed();
+    } catch (err) {
+      setStatus('idle');
+      setError(readableStoreError(err, 'This order'));
+    }
+  }
+
+  if (status === 'confirmed') {
+    return (
+      <Card className="gap-1 border-success bg-success-bg">
+        <h2 className="text-sm font-semibold text-success">Order confirmed</h2>
+        <p className="text-sm text-ink">
+          The dispatcher can now include it in planning for{' '}
+          <Mono>{formatDay(order.requestedDeliveryDate)}</Mono>. Its status
+          becomes ALLOCATED once a plan is confirmed.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="gap-3 border-brand bg-info-bg">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-sm font-semibold text-ink">
+          Confirm this order
+        </h2>
+        <p className="text-sm text-ink-muted">
+          An order is not planned until you confirm it. Confirm to send it to
+          the dispatcher’s queue for planning on{' '}
+          <Mono>{formatDay(order.requestedDeliveryDate)}</Mono>.
+        </p>
+      </div>
+      {error && (
+        <p role="alert" className="text-sm text-error-strong">
+          {error}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={confirm}
+        disabled={status === 'confirming'}
+        className={buttonClass('ink', 'w-full sm:w-auto')}
+      >
+        {status === 'confirming' ? 'Confirming…' : 'Confirm order'}
+      </button>
+    </Card>
+  );
+}
+
+/** A confirmed order is queued for planning; it is not yet allocated. */
+function ConfirmedNotice() {
+  return (
+    <Card className="gap-1 border-success bg-success-bg">
+      <h2 className="text-sm font-semibold text-success">Order confirmed</h2>
+      <p className="text-sm text-ink">
+        It is in the dispatcher’s planning queue. It becomes allocated once the
+        dispatcher confirms a plan.
+      </p>
+    </Card>
   );
 }
 
