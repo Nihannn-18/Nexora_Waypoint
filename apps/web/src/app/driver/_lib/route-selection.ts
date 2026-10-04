@@ -3,11 +3,12 @@ import type { DriverRoute } from '@waypoint/api-client';
 /**
  * Resolves which route the cockpit shows.
  *
- * The schema links no driver to a vehicle, so the run cannot be derived
- * server-side. An explicit, remembered choice therefore wins. Failing that, a
- * single depot route is unambiguous and may be auto-selected. With more than
- * one candidate and no choice we return `undefined` so the UI asks the driver
- * — never the first unfinished route, which could belong to another vehicle.
+ * When the Dispatcher has assigned the driver to a vehicle for the run date,
+ * the server already narrows `GET /driver/routes` to that vehicle, so the list
+ * is either one trip (auto-selected) or the driver's two trips. An explicit,
+ * remembered choice still wins, and with more than one candidate and no choice
+ * we return `undefined` so the UI asks the driver — never the first unfinished
+ * route, which could belong to another vehicle.
  */
 export function resolveSelectedRoute(
   routes: readonly DriverRoute[],

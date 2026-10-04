@@ -47,6 +47,7 @@ transcribed from that submission. They are not AI-generated design decisions.
 | Seed data                       | Claude (Anthropic) | Go import/seed code for the reference CSVs, the four demo accounts and the S1 demo day, plus tests. **The supplied CSV datasets were provided by a human teammate and were not generated, fabricated or synthesised.** | Reviewed by the team; the seed integration test checks totals reconcile |
 | Tests                           | Claude (Anthropic) | Jest suites for the web and shared libraries, and the Go unit/integration tests | Run on every change via `npm run verify` and `go test ./...`; the team does not weaken a failing test to make CI pass |
 | Documentation                   | Claude (Anthropic) | `README.md`, `docs/architecture.md`, `docs/api.md`, `docs/data-model.md`, `docs/deployment.md` | Reviewed and corrected by the team where the code and prose disagreed |
+| Dispatcher master data and assignments | Claude (Anthropic) | Vehicle/outlet create-edit (`internal/catalog/network_write*.go`), the `driver_vehicle_assignment` migration and `internal/assignment`, the assignment screens, and driver-run narrowing in `internal/delivery` | Reviewed; Go unit/handler/integration tests and Jest component tests pin RBAC, validation, conflict and scoping behaviour |
 
 ### Final judge-readiness pass
 
@@ -56,6 +57,18 @@ confirmation, resolving the loader/driver run date from planned routes, consiste
 all roles, restricting order creation by role, enforcing the cutoff delivery date server-side,
 auditing dispatcher decisions, implementing the prioritisation policy, and exposing the
 deferral reason to the store. These changes were AI-assisted and reviewed by the team.
+
+### Dispatcher master data and operational assignments
+
+A further pass (on the `feature/waypoint/dispatcher-master-data` branch) added Dispatcher
+vehicle and outlet create/edit (server-validated, server-generated immutable ids, no hard
+delete, audited in the same transaction), a date-based `driver_vehicle_assignment` (migration
+`00009`), the store-manager-to-outlet assignment over the authoritative `app_user.outlet_id`,
+the assignment screens on the vehicle/outlet detail pages, a deterministic S1 driver
+assignment in the seed, and driver-run narrowing in `GET /driver/routes`. The business rules
+(one driver/vehicle per operating date, depot compatibility, assigning a manager releases the
+previous one) were chosen by the team; the model implemented them. Reviewed and verified with
+Go unit/handler tests, web Jest tests and the full `npm run verify` pipeline.
 
 ### Integration test status — NOT CONFIGURED in CI
 

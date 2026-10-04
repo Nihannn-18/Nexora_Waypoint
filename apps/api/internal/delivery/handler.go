@@ -281,7 +281,7 @@ func (h *Handler) ListRoutes(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
 		return
 	}
-	routes, err := h.service.DriverRoutes(r.Context(), identity.DepotID, r.URL.Query().Get("date"))
+	routes, err := h.service.DriverRoutes(r.Context(), identity.UserID, identity.DepotID, r.URL.Query().Get("date"))
 	if err != nil {
 		writeError(w, err)
 		return

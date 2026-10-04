@@ -66,6 +66,21 @@ The dispatcher's rule panel shows the full picture rather than just the first ob
 | `GET`  | `/depots`      | dispatcher                | The depots with their internal `depotId` (the id planning, routes and audit filter by)                                                       |
 | `GET`  | `/outlets`     | dispatcher, store manager | Access, window, brand, district. `?depotId=` narrows to one depot; a store manager is pinned to their own outlet                             |
 | `GET`  | `/vehicles`    | dispatcher                | Availability on `?date=` (default: today on the API clock), capacity, temperature, depot, fuel. `?depotId=` narrows                          |
+| `GET`  | `/vehicles/{id}` | dispatcher              | One vehicle by id                                                                                                                             |
+| `POST` | `/vehicles`    | dispatcher                | Create a vehicle; the id (VEHyynn) is generated server-side                                                                                  |
+| `PATCH` | `/vehicles/{id}` | dispatcher              | Update a vehicle's mutable fields; the id is immutable                                                                                       |
+| `GET`  | `/outlets/{id}` | dispatcher, store manager | One outlet by id; a store manager may read only their own (`404` otherwise)                                                                  |
+| `POST` | `/outlets`     | dispatcher                | Create an outlet; the id (OUTnnn) is generated server-side                                                                                    |
+| `PATCH` | `/outlets/{id}` | dispatcher              | Update an outlet's mutable fields; the id is immutable                                                                                       |
+| `GET`  | `/drivers`     | dispatcher                | Active drivers for the assignment picker. `?depotId=` narrows                                                                                |
+| `GET`  | `/store-managers` | dispatcher             | Active store managers for the assignment picker                                                                                              |
+| `GET`  | `/vehicles/{id}/assignment` | dispatcher    | The driver assigned to the vehicle on `?date=` (default: API clock today), or `null`                                                         |
+| `PUT`  | `/vehicles/{id}/assignment` | dispatcher    | Assign or change the vehicle's driver for a date                                                                                             |
+| `DELETE` | `/vehicles/{id}/assignment` | dispatcher  | Remove the vehicle's driver for `?date=`                                                                                                     |
+| `GET`  | `/outlets/{id}/manager` | dispatcher          | The store manager responsible for the outlet, or `null`                                                                                      |
+| `PUT`  | `/outlets/{id}/manager` | dispatcher           | Assign or change the outlet's store manager                                                                                                  |
+| `DELETE` | `/outlets/{id}/manager` | dispatcher         | Remove the outlet's store manager                                                                                                            |
+| `GET`  | `/driver/assignment` | driver                | The caller's own driver assignment on `?date=`, or `null`                                                                                    |
 | `GET`  | `/items`       | all authenticated         | Catalogue SKUs: dimensions and temperature requirement. Read-only                                                                            |
 | `GET`  | `/items/{id}`  | all authenticated         | One SKU by `itemId`, or by `?sku=`                                                                                                           |
 | `GET`  | `/healthz`     | —                         | Liveness. Does **not** touch the database: a database blip must not make the orchestrator kill a healthy API                                 |
@@ -155,6 +170,55 @@ optionally narrowed by `?depotId=`.
 vehicle with no availability row for that day is `AVAILABLE` (the planning loader's
 convention), and a stored `BREAKDOWN` is sent as the wire enum `BROKEN_DOWN`. A malformed
 `date` is `400`; a `depotId` that matches nothing returns an empty list.
+
+### Dispatcher master data: vehicles and outlets
+
+**Implemented** (`internal/catalog/network_write*.go`). Create and update are dispatcher-only;
+every field is validated server-side against the same enums and bounds as the schema's `CHECK`
+constraints. Identity is generated server-side on create and is immutable on update, because
+orders, routes, delivery records and users all reference it. There is **no delete**: a vehicle
+or outlet that should stop being used is taken out of service through availability/status, so a
+historical route or order keeps its referent. Each mutation and its `audit_log` row commit in
+one transaction (`VEHICLE_CREATED`, `VEHICLE_UPDATED`, `OUTLET_CREATED`, `OUTLET_UPDATED`).
+
+- `POST /vehicles` / `PATCH /vehicles/{id}` — body `{ type, tempClass, weightCapKg, volumeCapM3,
+  fuelType, kmPerL, weeklyFuelQuotaL, depotId }`. `weightCapKg`, `volumeCapM3` and `kmPerL` must
+  be `> 0`; the depot must be a known active depot.
+- `POST /outlets` / `PATCH /outlets/{id}` — body `{ name, brand, district, depotId, dockType,
+  parkingConstraint, windowOpenTime, windowCloseTime, mallWindowOpen?, mallWindowClose? }`.
+  Times are `HH:MM` 24-hour; `windowCloseTime` must be after `windowOpenTime`; a `MALL_DOCK`
+  outlet requires a mall window and any other outlet must not carry one.
+- A supplied identity field (e.g. `vehicleId` in a create body) is rejected with `400` by
+  strict decoding, never silently ignored. Unknown depot → `400`; duplicate id → `409`.
+
+### Dispatcher operational assignments
+
+**Implemented** (`internal/assignment`). These are the operational links: which driver is on a
+vehicle for an operating date, and which store manager owns an outlet. Mutations are
+dispatcher-only, validated server-side, and audited in the same transaction
+(`DRIVER_ASSIGNED`, `DRIVER_UNASSIGNED`, `MANAGER_ASSIGNED`, `MANAGER_UNASSIGNED`).
+
+- `GET /drivers` — active drivers (display identity only, never a credential), optionally
+  narrowed by `?depotId=`.
+- `GET|PUT|DELETE /vehicles/{id}/assignment` — the vehicle's driver for a date. `PUT` body is
+  `{ driverId, date }`. The driver must be an active `DRIVER` whose home depot matches the
+  vehicle's. A driver may drive only one vehicle per date and a vehicle may have only one driver
+  per date (both unique in the database); a collision is `409` rather than a silent overwrite.
+  `DELETE` takes `?date=`. The response is `{ assignment: { vehicleId, driverId, driverName,
+  driverEmail, date, depotId } | null }` (the `PUT` returns the object directly).
+- `GET /store-managers` — active store managers, with their current `outletId`.
+- `GET|PUT|DELETE /outlets/{id}/manager` — the outlet's store manager. `PUT` body is
+  `{ userId }`. This updates the authoritative `app_user.outlet_id`; assigning a manager to an
+  outlet releases whoever held it before, in one transaction, so an outlet has exactly one
+  manager. The response is `{ manager: { outletId, userId, name, email, depotId } | null }`.
+- `GET /driver/assignment?date=` — the caller's own assignment. The driver id is the
+  authenticated identity, never a request parameter, so a driver cannot read another driver's
+  assignment.
+
+The driver cockpit (`GET /driver/routes`) narrows its result to the assigned vehicle when the
+authenticated driver has an assignment for the resolved date, so a driver sees their own run
+instead of every route in the depot. With no assignment, the depot's routes are returned and
+the driver chooses explicitly — the prior behaviour, never an arbitrary route.
 
 ---
 

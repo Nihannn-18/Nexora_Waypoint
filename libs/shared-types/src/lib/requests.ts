@@ -6,8 +6,12 @@
 import type {
   Brand,
   DeliveryFailureReason,
+  DockType,
   OrderStatus,
+  ParkingConstraint,
   TripNumber,
+  VehicleTempClass,
+  VehicleType,
 } from './domain';
 import type {
   ClockTime,
@@ -200,4 +204,51 @@ export interface LiveRoutesQuery {
 export interface ClockRange {
   readonly from: ClockTime;
   readonly to: ClockTime;
+}
+
+/* --- Dispatcher master data ---------------------------------------------- */
+
+/**
+ * A vehicle create/update payload. The identity is generated server-side, so it
+ * is never part of the body: a client that sends one is refused (strict decode).
+ * DepotID is the internal depot id, not the display code.
+ */
+export interface VehicleWriteRequest {
+  readonly type: VehicleType;
+  readonly tempClass: VehicleTempClass;
+  readonly weightCapKg: number;
+  readonly volumeCapM3: number;
+  readonly fuelType: string;
+  readonly kmPerL: number;
+  readonly weeklyFuelQuotaL: number;
+  readonly depotId: string;
+}
+
+/**
+ * An outlet create/update payload. The identity is generated server-side.
+ * `mallWindowOpen`/`mallWindowClose` are required for a MALL_DOCK outlet and
+ * rejected otherwise.
+ */
+export interface OutletWriteRequest {
+  readonly name: string;
+  readonly brand: Brand;
+  readonly district: string;
+  readonly depotId: string;
+  readonly dockType: DockType;
+  readonly parkingConstraint: ParkingConstraint;
+  readonly windowOpenTime: ClockTime;
+  readonly windowCloseTime: ClockTime;
+  readonly mallWindowOpen?: ClockTime;
+  readonly mallWindowClose?: ClockTime;
+}
+
+/** Assign / change a vehicle's driver for an operating date. */
+export interface AssignDriverRequest {
+  readonly driverId: string;
+  readonly date: string;
+}
+
+/** Assign / change an outlet's store manager. */
+export interface AssignManagerRequest {
+  readonly userId: string;
 }

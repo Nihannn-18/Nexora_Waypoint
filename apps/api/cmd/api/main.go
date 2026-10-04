@@ -27,6 +27,7 @@ import (
 	// a five-and-a-half-hour error in the one calculation that matters most.
 	_ "time/tzdata"
 
+	"waypoint.lk/api/internal/assignment"
 	"waypoint.lk/api/internal/audit"
 	"waypoint.lk/api/internal/auth"
 	"waypoint.lk/api/internal/authapi"
@@ -129,9 +130,18 @@ func run() error {
 	catalogRepo := catalog.NewPGRepository(db.Pool())
 	catalogService := catalog.NewService(catalogRepo)
 	catalogHandler := catalog.NewHandler(catalogService, authMiddleware)
-	// Network reference (depots, outlets, vehicles) for the dispatcher. Vehicle
-	// availability defaults to the API clock's date.
-	networkHandler := catalog.NewNetworkHandler(catalog.NewPGNetworkReader(db.Pool()), clk, authMiddleware)
+	// Network reference (depots, outlets, vehicles) for the dispatcher, plus the
+	// Dispatcher-only master-data mutations. Vehicle availability defaults to the
+	// API clock's date; mutations are validated and audited in one transaction.
+	networkHandler := catalog.NewNetworkHandler(catalog.NewPGNetworkReader(db.Pool()), clk, authMiddleware).
+		WithWriter(catalog.NewPGNetworkWriter(db.Pool(), catalogAudit{}))
+
+	// Operational assignments: which driver is on which vehicle for a date, and
+	// which store manager owns an outlet. Dispatcher-only mutations, validated
+	// and audited in one transaction.
+	assignmentStore := assignment.NewPGStore(db.Pool(), assignmentAudit{})
+	assignmentService := assignment.NewService(assignmentStore, clk)
+	assignmentHandler := assignment.NewHandler(assignmentService, authMiddleware)
 
 	// Orders: intake, retrieval and confirmation. The shared API clock drives the
 	// 16:00 cutoff, so the demo day is honoured like every other "now".
@@ -164,9 +174,10 @@ func run() error {
 
 	// Delivery: the driver's outcome, POD and idempotent offline-event sync.
 	// delivery_event is the authoritative record, keyed for idempotency by
-	// client_event_id.
+	// client_event_id. The assignment store lets the cockpit resolve the driver's
+	// own vehicle's routes when a Dispatcher has assigned one.
 	deliveryRepo := delivery.NewPGRepository(db.Pool())
-	deliveryService := delivery.NewService(deliveryRepo, clk)
+	deliveryService := delivery.NewService(deliveryRepo, clk).WithAssignments(assignmentStore)
 	deliveryHandler := delivery.NewHandler(deliveryService, authMiddleware)
 
 	// Audit + notifications: append-only operational trail and in-app alerts.
@@ -190,7 +201,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, networkHandler.RegisterMasterDataRoutes, assignmentHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.

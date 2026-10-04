@@ -10,6 +10,7 @@ import {
   BoxIcon,
   CalendarIcon,
   ClockIcon,
+  DepotIcon,
   GridIcon,
   ListIcon,
   RouteIcon,
@@ -61,6 +62,18 @@ const NAV = [
     label: 'Fleet',
     screen: 'D-09',
     icon: TruckIcon,
+  },
+  {
+    href: '/dispatcher/vehicles',
+    label: 'Vehicles',
+    screen: null,
+    icon: TruckIcon,
+  },
+  {
+    href: '/dispatcher/outlets',
+    label: 'Outlets',
+    screen: null,
+    icon: DepotIcon,
   },
   {
     href: '/dispatcher/notifications',

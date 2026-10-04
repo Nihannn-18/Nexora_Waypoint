@@ -125,6 +125,52 @@ export interface Item {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Operational assignments (Dispatcher)                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * An active DRIVER account as the assignment picker shows it. Display identity
+ * only — never a credential.
+ */
+export interface Driver {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly depotId: string;
+}
+
+/**
+ * Which driver is on a vehicle for an operating date. The server resolves the
+ * driver's own run from this, so a driver never picks an arbitrary route.
+ */
+export interface VehicleAssignment {
+  readonly vehicleId: string;
+  readonly driverId: string;
+  readonly driverName: string;
+  readonly driverEmail: string;
+  readonly date: IsoDate;
+  readonly depotId: string;
+}
+
+/** The store manager responsible for an outlet (app_user.outlet_id). */
+export interface OutletManager {
+  readonly outletId: string;
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly depotId: string;
+}
+
+/** An active STORE_MANAGER account as the assignment picker shows it. */
+export interface StoreManagerOption {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  /** The outlet currently managed, or empty when unassigned. */
+  readonly outletId: string;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Orders                                                                     */
 /* -------------------------------------------------------------------------- */
 

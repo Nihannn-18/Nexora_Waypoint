@@ -8,6 +8,8 @@
 
 import type {
   AppNotification,
+  AssignDriverRequest,
+  AssignManagerRequest,
   AuditQuery,
   AuditRecord,
   Brand,
@@ -26,6 +28,7 @@ import type {
   DemandForecastQuery,
   Depot,
   DockType,
+  Driver,
   IsoDate,
   IsoDateTime,
   Item,
@@ -38,6 +41,8 @@ import type {
   OrderPage,
   OrderQueueQuery,
   Outlet,
+  OutletManager,
+  OutletWriteRequest,
   ParkingConstraint,
   PlanningJob,
   PlanningResults,
@@ -47,6 +52,7 @@ import type {
   Receipt,
   Route,
   RouteLeg,
+  StoreManagerOption,
   SuggestPlanRequest,
   SuggestPlanResponse,
   SyncEventsRequest,
@@ -56,6 +62,8 @@ import type {
   ValidateAllocationRequest,
   ValidationResponse,
   Vehicle,
+  VehicleAssignment,
+  VehicleWriteRequest,
 } from '@waypoint/shared-types';
 
 import { HttpClient, type HttpClientOptions } from './http';
@@ -538,6 +546,11 @@ export class WaypointClient {
     return body.outlets;
   }
 
+  /** One outlet by id. A store manager may read only their own (404 otherwise). */
+  getOutlet(outletId: string): Promise<Outlet> {
+    return this.http.get<Outlet>(`/outlets/${outletId}`);
+  }
+
   /** Vehicles with their availability on `date` (default: today on the API clock). */
   async getVehicles(query?: {
     depotId?: string;
@@ -548,6 +561,121 @@ export class WaypointClient {
       { query },
     );
     return body.vehicles;
+  }
+
+  /** One vehicle by id. */
+  getVehicle(vehicleId: string): Promise<Vehicle> {
+    return this.http.get<Vehicle>(`/vehicles/${vehicleId}`);
+  }
+
+  /* --- Dispatcher master data (create/update) -------------------------- */
+
+  /** Create a vehicle. The id is generated server-side. Dispatcher only. */
+  createVehicle(body: VehicleWriteRequest): Promise<Vehicle> {
+    return this.http.post<Vehicle>('/vehicles', body);
+  }
+
+  /** Update a vehicle's mutable fields. The id is immutable. Dispatcher only. */
+  updateVehicle(
+    vehicleId: string,
+    body: VehicleWriteRequest,
+  ): Promise<Vehicle> {
+    return this.http.patch<Vehicle>(`/vehicles/${vehicleId}`, body);
+  }
+
+  /** Create an outlet. The id is generated server-side. Dispatcher only. */
+  createOutlet(body: OutletWriteRequest): Promise<Outlet> {
+    return this.http.post<Outlet>('/outlets', body);
+  }
+
+  /** Update an outlet's mutable fields. The id is immutable. Dispatcher only. */
+  updateOutlet(outletId: string, body: OutletWriteRequest): Promise<Outlet> {
+    return this.http.patch<Outlet>(`/outlets/${outletId}`, body);
+  }
+
+  /* --- Dispatcher operational assignments ------------------------------ */
+
+  /** Active drivers for the assignment picker. Dispatcher only. */
+  async listDrivers(query?: { depotId?: string }): Promise<readonly Driver[]> {
+    const body = await this.http.get<{ drivers: readonly Driver[] }>(
+      '/drivers',
+      { query },
+    );
+    return body.drivers;
+  }
+
+  /** Active store managers for the assignment picker. Dispatcher only. */
+  async listStoreManagers(): Promise<readonly StoreManagerOption[]> {
+    const body = await this.http.get<{
+      storeManagers: readonly StoreManagerOption[];
+    }>('/store-managers');
+    return body.storeManagers;
+  }
+
+  /** The driver assigned to a vehicle on a date, or null. Dispatcher only. */
+  async getVehicleAssignment(
+    vehicleId: string,
+    date?: IsoDate,
+  ): Promise<VehicleAssignment | null> {
+    const body = await this.http.get<{ assignment: VehicleAssignment | null }>(
+      `/vehicles/${vehicleId}/assignment`,
+      { query: { date } },
+    );
+    return body.assignment;
+  }
+
+  /** Assign or change a vehicle's driver for a date. Dispatcher only. */
+  assignDriver(
+    vehicleId: string,
+    body: AssignDriverRequest,
+  ): Promise<VehicleAssignment> {
+    return this.http.put<VehicleAssignment>(
+      `/vehicles/${vehicleId}/assignment`,
+      body,
+    );
+  }
+
+  /** Remove a vehicle's driver for a date. Dispatcher only. */
+  unassignDriver(
+    vehicleId: string,
+    date: IsoDate,
+  ): Promise<VehicleAssignment> {
+    return this.http.delete<VehicleAssignment>(
+      `/vehicles/${vehicleId}/assignment`,
+      { query: { date } },
+    );
+  }
+
+  /** The store manager responsible for an outlet, or null. Dispatcher only. */
+  async getOutletManager(outletId: string): Promise<OutletManager | null> {
+    const body = await this.http.get<{ manager: OutletManager | null }>(
+      `/outlets/${outletId}/manager`,
+    );
+    return body.manager;
+  }
+
+  /** Assign or change an outlet's store manager. Dispatcher only. */
+  assignManager(
+    outletId: string,
+    body: AssignManagerRequest,
+  ): Promise<OutletManager> {
+    return this.http.put<OutletManager>(`/outlets/${outletId}/manager`, body);
+  }
+
+  /** Remove an outlet's store manager. Dispatcher only. */
+  unassignManager(outletId: string): Promise<OutletManager> {
+    return this.http.delete<OutletManager>(`/outlets/${outletId}/manager`);
+  }
+
+  /** The caller's own driver assignment on a date, or null. Driver only. */
+  async getOwnDriverAssignment(
+    date?: IsoDate,
+  ): Promise<VehicleAssignment | null> {
+    const body = await this.http.get<{ assignment: VehicleAssignment | null }>(
+      '/driver/assignment',
+      { query: { date } },
+    );
+    return body.assignment;
   }
 
   /** The SKU catalogue, used to name order lines. */

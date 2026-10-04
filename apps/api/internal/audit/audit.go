@@ -40,6 +40,16 @@ const (
 	ActionDeliveryRecorded Action = "DELIVERY_RECORDED"
 	// Sync
 	ActionSyncProcessed Action = "SYNC_PROCESSED"
+	// Master data (Dispatcher)
+	ActionVehicleCreated Action = "VEHICLE_CREATED"
+	ActionVehicleUpdated Action = "VEHICLE_UPDATED"
+	ActionOutletCreated  Action = "OUTLET_CREATED"
+	ActionOutletUpdated  Action = "OUTLET_UPDATED"
+	// Operational assignments (Dispatcher)
+	ActionDriverAssigned    Action = "DRIVER_ASSIGNED"
+	ActionDriverUnassigned  Action = "DRIVER_UNASSIGNED"
+	ActionManagerAssigned   Action = "MANAGER_ASSIGNED"
+	ActionManagerUnassigned Action = "MANAGER_UNASSIGNED"
 )
 
 // EntityType is the business entity an action concerns.
@@ -53,6 +63,12 @@ const (
 	EntityLoadItem    EntityType = "LOAD_ITEM"
 	EntityDelivery    EntityType = "DELIVERY_EVENT"
 	EntitySync        EntityType = "SYNC_BATCH"
+	EntityVehicle     EntityType = "VEHICLE"
+	EntityOutlet      EntityType = "OUTLET"
+	// EntityAssignment is a driver-to-vehicle assignment; the entity id is the
+	// vehicle id, with the operating date in the detail.
+	EntityAssignment EntityType = "DRIVER_VEHICLE_ASSIGNMENT"
+	EntityOutletMgr  EntityType = "OUTLET_MANAGER"
 )
 
 // Result is the outcome an audit record reports.
