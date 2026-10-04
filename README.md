@@ -1,13 +1,67 @@
-# Nexora_Waypoint
+<div align="center">
 
-**Waypoint Delivery Planning System** — one plan, four roles, every outlet served or explained.
+# Waypoint Delivery Planning System
 
-Team **Nexora** · Rootcode Tech-Triathlon 2026 · Hackathon (Day 10) submission.
+### One plan, four roles, every outlet served — or explained.
 
-A delivery planning system for Waypoint Group: 120 outlets, 60 vehicles, two depots
-(Peliyagoda and Kandy) and three brands — Fresh, Style and Tech — sharing one fleet.
-On a typical day the fleet cannot serve everyone, so the system's real job is not only
-to build a plan but to say **which orders were deferred and why**.
+Team **Nexora** · Rootcode Tech-Triathlon 2026 · Hackathon (Day 10)
+
+[![Live system](https://img.shields.io/badge/Live_system-Open_app-019EFF?style=for-the-badge)](https://waypoint-web-mu.vercel.app/signin)
+[![Judge walkthrough](https://img.shields.io/badge/Judge-Walkthrough-0F172A?style=for-the-badge)](#judge-walkthrough)
+[![Docker](https://img.shields.io/badge/Docker-compose_up-28794B?style=for-the-badge&logo=docker&logoColor=white)](#run-with-docker-compose)
+
+![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs&logoColor=white)
+![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![Go 1.24](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)
+![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
+![RabbitMQ 4](https://img.shields.io/badge/RabbitMQ-4-FF6600?logo=rabbitmq&logoColor=white)
+![Nx](https://img.shields.io/badge/Nx_monorepo-143055?logo=nx&logoColor=white)
+
+</div>
+
+---
+
+## ▶ Start here
+
+> ### 🌐 **[https://waypoint-web-mu.vercel.app/signin](https://waypoint-web-mu.vercel.app/signin)**
+>
+> The deployed system is live. Sign in with any account below — **password `waypoint2026`** —
+> and follow the [**judge walkthrough**](#judge-walkthrough). No setup required.
+
+| Role              | Email                     | Password       | Best viewed on               |
+| ----------------- | ------------------------- | -------------- | ---------------------------- |
+| **Dispatcher**    | `priyantha.w@waypoint.lk` | `waypoint2026` | Desktop, 1440                |
+| **Loader**        | `nadeesha.p@waypoint.lk`  | `waypoint2026` | Dock tablet 1024 / phone 402 |
+| **Driver**        | `kasun.p@waypoint.lk`     | `waypoint2026` | Phone, 402                   |
+| **Store manager** | `ishara.s@waypoint.lk`    | `waypoint2026` | Desktop or phone             |
+
+**Prefer to run it yourself?** `cp .env.example .env && docker compose up --build` brings up the
+entire stack — database, queue, API, web and seed data — in one command.
+See [Run with Docker Compose](#run-with-docker-compose).
+
+---
+
+## The problem
+
+Waypoint Group runs **120 outlets**, **60 vehicles** and **two depots** (Peliyagoda and Kandy)
+for three brands — **Fresh**, **Style** and **Tech** — that all share one fleet.
+
+Fresh must reach 80 supermarkets before they open at 08:00. Chilled orders need one of only
+**16 refrigerated vehicles**. Some outlets can only be reached by van; around half of Style's
+stores sit in malls with fixed access windows. Every vehicle has a weight limit, a volume
+limit, a weekly fuel quota and at most two trips a day.
+
+**On most days the fleet cannot serve everyone.** So the system's real job is not only to build
+a feasible plan, but to say **which orders were deferred, why, and who decided** — and to make
+sure the same outlet is never quietly skipped twice.
+
+| What it does | How |
+| --- | --- |
+| 🧮 **Plans the day** | One constraint engine enforces 17 hard rules; the dispatcher reviews and confirms |
+| ⚖️ **Explains every deferral** | A plan cannot be published until each deferred order has a reason |
+| 📦 **Loads in the right order** | The loader's list is in reverse stop order, with item-level shortfall flags |
+| 📵 **Survives no signal** | The driver works fully offline; events queue locally and reconcile idempotently |
+| 🏪 **Closes the loop** | The store sees an arrival window, deferral notices with reasons, and files a GRN |
 
 > **Status: feature-complete for the judge walkthrough.** All four role workspaces are
 > built and wired to the Go API, with one constraint engine, transactional confirmation,
@@ -21,8 +75,10 @@ to build a plan but to say **which orders were deferred and why**.
 
 ## Contents
 
+- [Start here](#-start-here) — live URL and credentials
+- [The problem](#the-problem)
 - [Run with Docker Compose](#run-with-docker-compose)
-- [AWS Deployment](#aws-deployment)
+- [Hosted deployment](#hosted-deployment)
 - [Quick start](#quick-start)
 - [Seeded accounts](#seeded-accounts)
 - [Judge walkthrough](#judge-walkthrough)
@@ -73,7 +129,13 @@ a session lasts (default `12h`); see `docs/api.md`.
 
 ---
 
-## AWS Deployment
+## Hosted deployment
+
+| | |
+| --- | --- |
+| **Live web app** | **<https://waypoint-web-mu.vercel.app/signin>** |
+| **Sign in** | any seeded account below · password `waypoint2026` |
+| **Status** | live and kept running through the review period |
 
 AWS is the **hosted deployment target**; Docker Compose above is the reproducible fallback.
 Neither replaces the other, and AWS is never required to run locally.
