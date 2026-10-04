@@ -570,9 +570,12 @@ planning job. It validates the choice against current state, then writes routes,
 allocations, order-status transitions and deferral-log rows in **one transaction**. The orders in
 the confirmation are row-locked (`SELECT ... FOR UPDATE`, deterministic order); an order already
 actively allocated on the route date is rejected with `409 CONFLICT`. A retry of the same
-confirmation conflicts rather than duplicating. Every order that planning proposed to `SERVE`
-must be either allocated or deferred, or the request is `400 VALIDATION_FAILED`; every deferral
-must carry a reason. `route`/`route_leg`/`allocation` uniqueness constraints and the order row
+confirmation conflicts rather than duplicating. Every order the job proposed — `SERVE` or
+`DEFER` — must be either allocated or deferred, or the request is `400 VALIDATION_FAILED`; every
+deferral must carry a reason. A deferral sent without `constraintCode` keeps the engine's binding
+constraint from its `DEFER` proposal, and one sent without `deferredToDate` moves to the first
+operating day after the route date (from `calendar_day`). `decidedAt` is the API clock's instant,
+so under `DEMO_MODE` it reads as the demo day. `route`/`route_leg`/`allocation` uniqueness constraints and the order row
 lock are the protections — no partial `(order_id, route_date)` index exists or is added.
 
 ### `POST /allocations/suggest` → `202`

@@ -119,8 +119,9 @@ func seedDemoOrders(ctx context.Context, tx pgx.Tx) (int, error) {
 			INSERT INTO customer_order (
 				order_number, outlet_id, brand, order_date, requested_delivery_date,
 				total_units, total_weight_kg, total_volume_m3, temp_requirement,
-				status, deferred_yesterday, days_since_last_served
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'CONFIRMED',$10,$11)
+				status, deferred_yesterday, days_since_last_served, created_at, updated_at
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'CONFIRMED',$10,$11,
+				($4::date)::timestamp AT TIME ZONE 'UTC', ($4::date)::timestamp AT TIME ZONE 'UTC')
 			ON CONFLICT (order_number) DO NOTHING
 			RETURNING order_id`,
 			r["order_ref"], r["outlet_id"], brand, demoOrderDate, demoDeliveryDate,

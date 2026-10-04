@@ -51,6 +51,10 @@ type ConfirmationPlan struct {
 	Actor string
 	// PlanningJobID ties the confirmation to the proposal it came from.
 	PlanningJobID string
+	// DecidedAt is the business-clock instant of the decision, stamped on each
+	// deferral so DEMO_MODE shows the demo day, not the database wall clock.
+	// Zero falls back to the database clock.
+	DecidedAt time.Time
 }
 
 // ConfirmationResult reports what was written.
@@ -172,7 +176,7 @@ func (r *PGRepository) Confirm(ctx context.Context, plan ConfirmationPlan) (Conf
 	}
 
 	for _, d := range plan.Deferrals {
-		if err := insertDeferral(ctx, tx, d, plan.Actor); err != nil {
+		if err := insertDeferral(ctx, tx, d, plan); err != nil {
 			return ConfirmationResult{}, err
 		}
 		if err := insertDeferralAllocation(ctx, tx, d.OrderID, plan.Actor); err != nil {
@@ -370,11 +374,21 @@ func insertDeferralAllocation(ctx context.Context, tx pgx.Tx, orderID, actor str
 	return nil
 }
 
-func insertDeferral(ctx context.Context, tx pgx.Tx, d DeferredOrderForConfirm, actor string) error {
+// insertDeferral records one deferral. With no target date given, the order
+// moves to the first operating day after the route date (from calendar_day,
+// never weekday arithmetic), so the store always sees where it went.
+func insertDeferral(ctx context.Context, tx pgx.Tx, d DeferredOrderForConfirm, plan ConfirmationPlan) error {
+	var decidedAt *time.Time
+	if !plan.DecidedAt.IsZero() {
+		decidedAt = &plan.DecidedAt
+	}
 	_, err := tx.Exec(ctx, `
-		INSERT INTO deferral_log (order_id, reason_type, reason, constraint_code, decided_by, deferred_to_date)
-		VALUES ($1,$2,$3,$4,$5,$6)`,
-		d.OrderID, d.ReasonType, d.Reason, nullableConstraint(d.ConstraintCode), nullable(actor), nullableDate(d.DeferredToDate))
+		INSERT INTO deferral_log (order_id, reason_type, reason, constraint_code, decided_by, deferred_to_date, decided_at)
+		VALUES ($1,$2,$3,$4,$5,
+			COALESCE($6::date, (SELECT min(date) FROM calendar_day WHERE date > $7::date AND is_operating)),
+			COALESCE($8, now()))`,
+		d.OrderID, d.ReasonType, d.Reason, nullableConstraint(d.ConstraintCode), nullable(plan.Actor),
+		nullableDate(d.DeferredToDate), plan.RouteDate, decidedAt)
 	if err != nil {
 		return fmt.Errorf("create deferral for %s: %w", d.OrderID, err)
 	}

@@ -187,7 +187,8 @@ func (r *PGRepository) SaveProposals(ctx context.Context, jobID string, proposal
 func (r *PGRepository) LoadProposals(ctx context.Context, jobID string) ([]Proposal, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT order_id, decision, COALESCE(vehicle_id, ''), COALESCE(trip_no, 0),
-		       COALESCE(seq, 0), COALESCE(trip_minutes, 0), COALESCE(explanation, '')
+		       COALESCE(seq, 0), COALESCE(trip_minutes, 0), COALESCE(explanation, ''),
+		       COALESCE(constraint_results, '[]'::jsonb)
 		FROM planning_result WHERE job_id = $1
 		ORDER BY decision, order_id`, jobID)
 	if err != nil {
@@ -200,10 +201,17 @@ func (r *PGRepository) LoadProposals(ctx context.Context, jobID string) ([]Propo
 		var p Proposal
 		var decision string
 		if err := rows.Scan(&p.OrderID, &decision, &p.VehicleID, &p.TripNo,
-			&p.Seq, &p.TripMinutes, &p.Explanation); err != nil {
+			&p.Seq, &p.TripMinutes, &p.Explanation, &p.ConstraintResults); err != nil {
 			return nil, fmt.Errorf("scan planning result: %w", err)
 		}
 		p.Decision = apiDecision(decision)
+		// The binding constraint is the first failed rule, as the engine wrote it.
+		for _, cr := range p.ConstraintResults {
+			if !cr.Passed {
+				p.Constraint = cr.Code
+				break
+			}
+		}
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {

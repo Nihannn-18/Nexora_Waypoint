@@ -102,8 +102,19 @@ func TestRoutesIntegration(t *testing.T) {
 	repo := NewPGRepository(db.Pool()).WithAudit(testAudit{})
 	readers := NewPGReaders(db.Pool())
 
+	// Sun 27 Sep is closed and Mon 28 Sep operates, so a deferral with no target
+	// date must land on the 28th (calendar_day, never weekday arithmetic).
+	if _, err := db.Pool().Exec(ctx, `
+		INSERT INTO calendar_day (date, dow, dow_name, is_weekend, iso_year, iso_week, is_payday, is_holiday, monsoon, is_operating)
+		VALUES ('2026-09-27', 6, 'Sun', TRUE, 2026, 39, FALSE, FALSE, FALSE, FALSE),
+		       ('2026-09-28', 0, 'Mon', FALSE, 2026, 40, FALSE, FALSE, FALSE, TRUE)
+		ON CONFLICT (date) DO NOTHING`); err != nil {
+		t.Fatalf("calendar: %v", err)
+	}
+	decidedAt := time.Date(2026, 9, 25, 16, 20, 0, 0, time.FixedZone("+0530", 5*3600+30*60))
+
 	plan := ConfirmationPlan{
-		DepotID: depotID, RouteDate: "2026-09-26", Actor: "", PlanningJobID: "job-" + o1,
+		DepotID: depotID, RouteDate: "2026-09-26", Actor: "", PlanningJobID: "job-" + o1, DecidedAt: decidedAt,
 		Routes: []Route{{
 			VehicleID: "VEHRT1", DepotID: depotID, RouteDate: "2026-09-26", TripNo: 1,
 			Brand: "FRESH", District: "Colombo", Status: RouteConfirmed,
@@ -158,6 +169,17 @@ func TestRoutesIntegration(t *testing.T) {
 	}
 	if len(defs) != 1 || defs[0].OrderID != o3 || defs[0].ConstraintCode != "FRESH_TIME_BUDGET" {
 		t.Fatalf("deferrals = %+v", defs)
+	}
+	var movedTo string
+	var decided time.Time
+	if err := db.Pool().QueryRow(ctx, `SELECT deferred_to_date::text, decided_at FROM deferral_log WHERE order_id = $1`, o3).Scan(&movedTo, &decided); err != nil {
+		t.Fatalf("read deferral: %v", err)
+	}
+	if movedTo != "2026-09-28" {
+		t.Fatalf("deferred_to_date = %s, want the next operating day 2026-09-28", movedTo)
+	}
+	if !decided.Equal(decidedAt) {
+		t.Fatalf("decided_at = %v, want the business clock %v", decided, decidedAt)
 	}
 
 	// Audit trail: one confirmation row and one row per deferral, written in the

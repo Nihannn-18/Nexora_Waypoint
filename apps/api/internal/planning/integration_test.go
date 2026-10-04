@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"waypoint.lk/api/internal/domain"
 	"waypoint.lk/api/internal/store"
 )
 
@@ -160,6 +161,28 @@ func TestPlanningIntegration(t *testing.T) {
 	props2, _ := repo.LoadProposals(ctx, job.JobID)
 	if len(props2) != len(props) {
 		t.Fatalf("re-save duplicated: %d -> %d", len(props), len(props2))
+	}
+
+	// A deferral's binding constraint must survive the round trip: the board
+	// groups deferrals by it and shows its E-0x ID (regression: it was stored
+	// but never read back, so every deferral read as "No single rule named").
+	deferJob, err := repo.CreateJob(ctx, Job{PlanningDate: mustDate(2026, 9, 26), DepotID: depotID})
+	if err != nil {
+		t.Fatalf("create defer job: %v", err)
+	}
+	if err := repo.SaveProposals(ctx, deferJob.JobID, []Proposal{{
+		OrderID: props[0].OrderID, Decision: "DEFER", Explanation: "over budget",
+		Constraint:        domain.ConstraintFreshTimeBudget,
+		ConstraintResults: []domain.ConstraintResult{{Code: domain.ConstraintFreshTimeBudget, Passed: false, Detail: "over budget"}},
+	}}); err != nil {
+		t.Fatalf("save defer proposal: %v", err)
+	}
+	deferred, err := repo.LoadProposals(ctx, deferJob.JobID)
+	if err != nil {
+		t.Fatalf("load defer proposal: %v", err)
+	}
+	if len(deferred) != 1 || deferred[0].Constraint != domain.ConstraintFreshTimeBudget {
+		t.Fatalf("deferred proposal = %+v, want constraint %s", deferred, domain.ConstraintFreshTimeBudget)
 	}
 }
 

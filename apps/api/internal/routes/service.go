@@ -33,8 +33,7 @@ type Confirmation struct {
 	// can re-run planning.CheckTrip — the single feasibility authority — against
 	// current database state before it persists anything.
 	planInput PlanInputReader
-	// clock is the injected clock; kept for future use (e.g. deferral target
-	// dates). Confirmation itself is deterministic and date-driven.
+	// clock is the injected clock; it stamps when deferrals were decided.
 	clock Clock
 }
 
@@ -196,6 +195,7 @@ func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in Confi
 		RouteDate:     job.PlanningDate.Format("2006-01-02"),
 		Actor:         in.Actor,
 		PlanningJobID: job.JobID,
+		DecidedAt:     c.clock.Now(),
 	}
 
 	seenOrder := map[string]bool{}
@@ -283,12 +283,19 @@ func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in Confi
 			return ConfirmationPlan{}, fmt.Errorf("%w: order %s is both allocated and deferred", ErrInvalid, d.OrderID)
 		}
 		seenOrder[d.OrderID] = true
-		if _, ok := deferByOrder[d.OrderID]; !ok {
+		proposal, ok := deferByOrder[d.OrderID]
+		if !ok {
 			return ConfirmationPlan{}, fmt.Errorf("%w: order %s is not a DEFER proposal of job %s", ErrInvalid, d.OrderID, job.JobID)
+		}
+		// The engine's binding constraint stands unless the dispatcher named one,
+		// so the deferral log and the store notice always carry the rule.
+		code := d.ConstraintCode
+		if code == "" {
+			code = proposal.Constraint
 		}
 		plan.Deferrals = append(plan.Deferrals, DeferredOrderForConfirm{
 			OrderID: d.OrderID, ReasonType: d.ReasonType, Reason: d.ReasonText,
-			ConstraintCode: d.ConstraintCode, DeferredToDate: d.DeferredToDate,
+			ConstraintCode: code, DeferredToDate: d.DeferredToDate,
 		})
 	}
 
@@ -418,10 +425,10 @@ func (c *Confirmation) assertOrderConfirmable(orderID string, facts OrderFacts) 
 	return nil
 }
 
-// assertComplete verifies every SERVE proposal the dispatcher is responsible
-// for is either allocated or deferred. Per the contract, a plan that would leave
-// a confirmed order neither is rejected.
-func (c *Confirmation) assertComplete(in ConfirmInput, serveByOrder, _ map[string]planning.Proposal) error {
+// assertComplete verifies every proposal of the job — SERVE and DEFER — is
+// either allocated or deferred. Per the contract, a plan that would leave a
+// confirmed order neither is rejected.
+func (c *Confirmation) assertComplete(in ConfirmInput, serveByOrder, deferByOrder map[string]planning.Proposal) error {
 	chosen := map[string]bool{}
 	for _, r := range in.Routes {
 		for _, id := range r.OrderIDs {
@@ -431,9 +438,11 @@ func (c *Confirmation) assertComplete(in ConfirmInput, serveByOrder, _ map[strin
 	for _, d := range in.Deferrals {
 		chosen[d.OrderID] = true
 	}
-	for id := range serveByOrder {
-		if !chosen[id] {
-			return fmt.Errorf("%w: order %s is neither allocated nor deferred", ErrInvalid, id)
+	for _, proposals := range []map[string]planning.Proposal{serveByOrder, deferByOrder} {
+		for id := range proposals {
+			if !chosen[id] {
+				return fmt.Errorf("%w: order %s is neither allocated nor deferred", ErrInvalid, id)
+			}
 		}
 	}
 	return nil

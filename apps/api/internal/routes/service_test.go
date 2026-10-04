@@ -137,7 +137,7 @@ func fixture() (*Confirmation, *fakeRepo) {
 	proposals := []planning.Proposal{
 		{OrderID: "O1", Decision: "SERVE", VehicleID: "VEH014", TripNo: 1, Seq: 0},
 		{OrderID: "O2", Decision: "SERVE", VehicleID: "VEH014", TripNo: 1, Seq: 1},
-		{OrderID: "O3", Decision: "DEFER"},
+		{OrderID: "O3", Decision: "DEFER", Constraint: domain.ConstraintFreshTimeBudget},
 	}
 	orders := fakeOrders{facts: map[string]OrderFacts{
 		"O1": {OrderID: "O1", OutletID: "OUT001", District: "Colombo", DepotID: "d-peli", Brand: domain.BrandFresh, Status: domain.OrderConfirmed, TotalWeightKg: 100, TotalVolumeM3: 1},
@@ -239,6 +239,39 @@ func TestConfirmRejectsIncompletePlan(t *testing.T) {
 	_, err := svc.Confirm(context.Background(), in)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid (an order neither allocated nor deferred)", err)
+	}
+}
+
+// A proposed deferral silently left out of the confirmation would leave the
+// order CONFIRMED with no reason (CLAUDE.md rule 3); it must be rejected.
+func TestConfirmRejectsOmittedDeferral(t *testing.T) {
+	svc, repo := fixture()
+	in := confirmInput()
+	in.Deferrals = nil // O3 was proposed DEFER and is now neither
+	_, err := svc.Confirm(context.Background(), in)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid (a proposed deferral was omitted)", err)
+	}
+	if repo.confirmed != nil {
+		t.Fatal("nothing may be written when the plan is incomplete")
+	}
+}
+
+// A deferral sent without a constraint code keeps the engine's binding rule,
+// and is stamped with the business clock rather than the database wall clock.
+func TestConfirmDeferralKeepsEngineConstraintAndBusinessTime(t *testing.T) {
+	svc, repo := fixture()
+	in := confirmInput()
+	in.Deferrals[0].ConstraintCode = ""
+	if _, err := svc.Confirm(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	d := repo.confirmed.Deferrals[0]
+	if d.ConstraintCode != domain.ConstraintFreshTimeBudget {
+		t.Fatalf("constraint = %q, want the engine's %s", d.ConstraintCode, domain.ConstraintFreshTimeBudget)
+	}
+	if !repo.confirmed.DecidedAt.Equal(fixedClock{}.Now()) {
+		t.Fatalf("decidedAt = %v, want the injected clock %v", repo.confirmed.DecidedAt, fixedClock{}.Now())
 	}
 }
 
