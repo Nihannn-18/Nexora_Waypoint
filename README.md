@@ -175,6 +175,12 @@ How many orders the fleet cannot serve is decided by the planning engine, not by
 
 Roughly 10 minutes, covering all four roles and the overcapacity degradation path.
 
+The API clock starts at Fri 25 Sep 15:40, twenty minutes before the cutoff. In the
+dispatcher's top bar, **Jump to** moves it to a walkthrough stage — after cutoff (Fri 16:05),
+loading (Sat 03:30) or on route (Sat 05:00) — for every role at once. **Reset demo** puts the
+85 seeded orders back to `CONFIRMED`, removes everything the walkthrough created and rewinds
+the clock, so the walkthrough can be repeated without restarting Docker.
+
 1. **Sign in as the Store manager** (`ishara.s@waypoint.lk`). Place an order for the next
    delivery day. Note the generated order number and that the order appears as `PLACED`.
 2. Still as the Store manager, place a **second order for the same day** — one chilled, one
@@ -374,7 +380,9 @@ faking the missing behaviour.
   arrival window, and the **deferral reason** on a deferred order.
 - **Audit trail** for delivery, loading, queue close, allocation confirmation and deferral,
   written in the same transaction as the mutation.
-- **Demo clock** (`DEMO_MODE`) so the seeded past delivery day is "today" for the walkthrough.
+- **Demo clock** (`DEMO_MODE`) so the seeded past delivery day is "today" for the walkthrough,
+  with dispatcher controls to jump to a named stage (`POST /demo/clock`) and to reset the demo
+  data in one transaction (`POST /demo/reset`). Neither endpoint exists with demo mode off.
 
 ### Partial
 

@@ -58,13 +58,27 @@ type Result struct {
 // Run seeds every reference dataset in foreign-key order: depots first, then
 // outlets and vehicles, then the tables that reference them.
 func Run(ctx context.Context, pool *pgxpool.Pool) (Result, error) {
-	var res Result
-
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return res, fmt.Errorf("begin seed transaction: %w", err)
+		return Result{}, fmt.Errorf("begin seed transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	res, err := RunTx(ctx, tx)
+	if err != nil {
+		return res, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return res, fmt.Errorf("commit seed: %w", err)
+	}
+	return res, nil
+}
+
+// RunTx seeds every dataset on the caller's transaction and leaves the commit
+// to the caller. It lets the demo reset clear operational state and re-seed
+// atomically, so a failed reset never leaves a half-empty database.
+func RunTx(ctx context.Context, tx pgx.Tx) (Result, error) {
+	var res Result
 
 	depotIDs, err := seedDepots(ctx, tx)
 	if err != nil {
@@ -99,10 +113,6 @@ func Run(ctx context.Context, pool *pgxpool.Pool) (Result, error) {
 	}
 	if res.DemoOrders, res.DemoAvailability, err = seedDemoDay(ctx, tx); err != nil {
 		return res, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return res, fmt.Errorf("commit seed: %w", err)
 	}
 	return res, nil
 }

@@ -24,6 +24,8 @@ import { useApiQuery } from '../../../lib/use-api-query';
  */
 interface DispatcherScope {
   readonly meta: MetaResponse | undefined;
+  /** Re-read /meta now, e.g. after a demo-clock jump. */
+  readonly reloadMeta: () => void;
   /** API clock minus browser clock, measured at the last /meta sync. */
   readonly clockOffsetMs: number | undefined;
   /** Today on the API clock, `YYYY-MM-DD`. */
@@ -117,6 +119,7 @@ export function DispatcherScopeProvider({ children }: { children: ReactNode }) {
 
   const value: DispatcherScope = {
     meta: meta.data,
+    reloadMeta: meta.reload,
     clockOffsetMs: offsetMs,
     today,
     depots: depots.data,

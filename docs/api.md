@@ -243,6 +243,41 @@ the wall clock in the business timezone.
 | `POST` | `/demo/clock` | dispatcher | `{ "stage": "BEFORE_CUTOFF" \| "AFTER_CUTOFF" \| "LOADING" \| "ON_ROUTE" }` — jump the clock to Fri 15:40, Fri 16:05, Sat 03:30 or Sat 05:00. `404` when demo mode is off |
 | `POST` | `/demo/reset` | dispatcher | Re-seed the demo day and reset the clock. `404` when demo mode is off                                                                                                     |
 
+**Implemented** (`internal/demo`). Both routes are mounted only when `DEMO_MODE=true`; with demo
+mode off they fall through to the API's JSON `404`.
+
+`POST /demo/clock` → `200`. Body is strict (`stage` required; unknown fields are `400`). A
+missing or unknown stage is `400 VALIDATION_FAILED` with a `stage` field error naming the four
+stages. The jump is written to the audit trail (`DEMO_CLOCK_SET`) before the clock moves; if
+that write fails the clock does not move (`500`). The clock keeps ticking from the new instant,
+and jumping backwards is allowed so the walkthrough can be replayed. The response carries the
+`/meta` fields, so the client can re-sync without a second call:
+
+```json
+{ "stage": "LOADING", "now": "2026-09-26T03:30:00+05:30", "demoMode": true, "timezone": "Asia/Colombo" }
+```
+
+`POST /demo/reset` → `200`, no body. In **one transaction** it empties every operational table
+(orders and their lines, planning jobs and results, routes, legs, allocations, deferrals, load
+counts, delivery events, receipts, notifications, queue closes, the fuel ledger, driver-vehicle
+assignments), re-runs the
+seed so the 85 S1 orders are back at `CONFIRMED` and the demo driver is back on VEH014, and records `DEMO_RESET` on the audit trail.
+It keeps reference data, accounts and sessions (the caller stays signed in) and the audit
+trail, which is append-only. Concurrent resets are serialised. Only after the commit does the
+clock return to `DEMO_CLOCK_START`; a failed reset changes nothing (`500`). Uploaded media files
+are not deleted.
+
+```json
+{
+  "now": "2026-09-25T15:40:00+05:30",
+  "demoMode": true,
+  "timezone": "Asia/Colombo",
+  "cleared": { "customer_order": 87, "route": 12, "notification": 3 },
+  "demoOrders": 85,
+  "demoVehicleDays": 60
+}
+```
+
 ---
 
 ## Store manager

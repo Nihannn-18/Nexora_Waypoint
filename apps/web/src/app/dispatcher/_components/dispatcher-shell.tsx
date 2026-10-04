@@ -27,6 +27,7 @@ import {
   useApiNow,
   useDispatcherScope,
 } from './dispatcher-context';
+import { DemoControls } from './demo-controls';
 
 /**
  * Dispatcher shell — designed at 1440 with a 252px sidebar and a 60px top bar.
@@ -242,6 +243,8 @@ function TopBar() {
           </span>
         )}
       </div>
+
+      <DemoControls />
 
       <label className="flex items-center gap-2 text-sm">
         <span className="text-ink-muted">Depot</span>

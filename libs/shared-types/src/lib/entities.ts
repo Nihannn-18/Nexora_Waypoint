@@ -576,3 +576,42 @@ export interface MetaResponse {
   /** IANA name of the business timezone, e.g. `Asia/Colombo`. */
   readonly timezone: string;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Demo mode (judge walkthrough only)                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Named points in the judge walkthrough, in order. Mirrors `demo.Stage` in the
+ * Go API (`internal/demo/stage.go`); the instants are Asia/Colombo wall-clock.
+ */
+export const DEMO_STAGES = [
+  'BEFORE_CUTOFF',
+  'AFTER_CUTOFF',
+  'LOADING',
+  'ON_ROUTE',
+] as const;
+export type DemoStage = (typeof DEMO_STAGES)[number];
+
+/** Human labels for each stage, with the instant it stands for. */
+export const DEMO_STAGE_LABEL: Readonly<Record<DemoStage, string>> = {
+  BEFORE_CUTOFF: 'Before cutoff · Fri 15:40',
+  AFTER_CUTOFF: 'After cutoff · Fri 16:05',
+  LOADING: 'Loading · Sat 03:30',
+  ON_ROUTE: 'On route · Sat 05:00',
+};
+
+/** Response of POST /demo/clock: the /meta fields plus the stage jumped to. */
+export interface DemoClockResponse extends MetaResponse {
+  readonly stage: DemoStage;
+}
+
+/**
+ * Response of POST /demo/reset. `now` is back at DEMO_CLOCK_START; `cleared`
+ * counts the rows removed per operational table.
+ */
+export interface DemoResetResponse extends MetaResponse {
+  readonly cleared: Readonly<Record<string, number>>;
+  readonly demoOrders: number;
+  readonly demoVehicleDays: number;
+}

@@ -15,6 +15,7 @@ import type {
 } from './domain';
 import type {
   ClockTime,
+  DemoStage,
   IsoDate,
   IsoDateTime,
   IsoWeek,
@@ -66,6 +67,11 @@ export interface CloseQueueRequest {
    * per brand so one brand can be frozen while another keeps taking orders.
    */
   readonly brands?: readonly Brand[];
+}
+
+/** POST /demo/clock — jump the API clock (dispatcher, demo mode only). */
+export interface DemoClockRequest {
+  readonly stage: DemoStage;
 }
 
 export interface OrderQueueQuery {

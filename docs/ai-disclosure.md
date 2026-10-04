@@ -43,7 +43,7 @@ transcribed from that submission. They are not AI-generated design decisions.
 | Loader screens                  | Claude (Anthropic) | L-01 trips, L-02 reverse-order picking list, L-03 flag sheet, flags and account tabs, and the depot-scoped `GET /loading/routes` | Reviewed; shortfall photo upload and cross-depot refusal verified by hand |
 | Driver screens and offline sync | Claude (Anthropic) | R-01/R-02/POD/DG-B, the IndexedDB outbox and idempotent reconcile, service worker, `GET /driver/routes` | Reviewed; Go and Jest tests green; offline capture and reconnection exercised |
 | Store manager screens           | Claude (Anthropic) | S-01 home, S-02/S-03 place order and **confirm order**, S-04/S-05 detail (including the deferral reason), S-07 list | Reviewed; store tests assert rendered states and server-scoped requests |
-| Audit, notifications and demo clock | Claude (Anthropic) | `internal/audit`, `internal/notify`, `internal/clock`, `GET /meta`; the queue-close, confirmation and deferral audit writes added in the final pass | Reviewed; integration tests assert the audit rows commit with their mutation |
+| Audit, notifications and demo clock | Claude (Anthropic) | `internal/audit`, `internal/notify`, `internal/clock`, `GET /meta`; the queue-close, confirmation and deferral audit writes added in the final pass; the demo-mode stage jump and transactional reset (`internal/demo`, `POST /demo/clock`, `POST /demo/reset`) and the dispatcher's demo controls | Reviewed; integration tests assert the audit rows commit with their mutation |
 | Seed data                       | Claude (Anthropic) | Go import/seed code for the reference CSVs, the four demo accounts and the S1 demo day, plus tests. **The supplied CSV datasets were provided by a human teammate and were not generated, fabricated or synthesised.** | Reviewed by the team; the seed integration test checks totals reconcile |
 | Tests                           | Claude (Anthropic) | Jest suites for the web and shared libraries, and the Go unit/integration tests | Run on every change via `npm run verify` and `go test ./...`; the team does not weaken a failing test to make CI pass |
 | Documentation                   | Claude (Anthropic) | `README.md`, `docs/architecture.md`, `docs/api.md`, `docs/data-model.md`, `docs/deployment.md` | Reviewed and corrected by the team where the code and prose disagreed |
@@ -81,6 +81,10 @@ reported honestly as **NOT CONFIGURED**, not as passing. Run them by hand:
 docker compose up -d postgres
 WAYPOINT_TEST_DATABASE_URL='postgres://waypoint:waypoint@localhost:5432/waypoint?sslmode=disable' npx nx test api
 ```
+
+`TestResetIntegration` (`internal/demo`) empties every operational table, so it additionally
+needs `WAYPOINT_TEST_DEMO_RESET=1` and should be pointed at a disposable database, run on its
+own rather than alongside the other packages' integration tests.
 
 ---
 
