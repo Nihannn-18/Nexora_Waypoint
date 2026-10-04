@@ -15,6 +15,7 @@ import {
   ListIcon,
   RouteIcon,
   TruckIcon,
+  UsersIcon,
 } from '../../../components/icons';
 import {
   formatCountdown,
@@ -75,6 +76,12 @@ const NAV = [
     label: 'Outlets',
     screen: null,
     icon: DepotIcon,
+  },
+  {
+    href: '/dispatcher/users',
+    label: 'Users',
+    screen: null,
+    icon: UsersIcon,
   },
   {
     href: '/dispatcher/notifications',

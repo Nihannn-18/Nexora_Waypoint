@@ -15,10 +15,12 @@ stale number that looks authoritative is worse than no number.
   (adds `load_item.photo_ref`) and `00003_order_service_history.sql` (adds the deferral
   history columns to `customer_order`) and `00004_load_item_unique.sql` (adds
   `UNIQUE (route_id, order_item_id)` on `load_item`) and `00005_notification_unique.sql` (adds
-  `UNIQUE (user_id, type, reference)` on `notification`) and `00006_go_auth.sql` (adds
+  `UNIQUE (user_id, type, reference)` on `notification`) and   `00006_go_auth.sql` (adds
   `app_user.password_hash`/`display_name` and the `session` table). `00007_delivery_event_reason_code.sql`
   adds `delivery_event.reason_code`; `00008_order_queue_close.sql` adds the `order_queue_close`
-  table; `00009_driver_vehicle_assignment.sql` adds the `driver_vehicle_assignment` table. A new
+  table; `00009_driver_vehicle_assignment.sql` adds the `driver_vehicle_assignment` table; and
+  `00010_password_reset_token.sql` adds `app_user.created_at` (the Dispatcher user screen's
+  created date) and the `password_reset_token` table for self-service password reset. A new
   change is a new numbered file, never an edit to an applied one.
 - **Reference seed:** the five operational CSVs are copied into
   `apps/api/internal/seed/data/` and embedded with `//go:embed` (`apps/api/internal/seed`).
@@ -97,7 +99,7 @@ planning, transient:
 | `outlet`   | `outlet_id` PK, `name`, `brand`, `district`, `depot_id` FK, `dock_type`, `parking_constraint`, `mall_window_open`, `mall_window_close`, `window_open_time`, `window_close_time` | OUT001–OUT120, from `outlets.csv`. `parking_constraint` is one column with three values: `normal`, `van_only` (no trucks) or `mall_dock` (the mall window applies). `mall_window` arrives as `HH:MM-HH:MM` and is split on load; blank outside malls. `name` is seed-generated — the CSV has none. `dock_type` drives the service allowance lookup.                                |
 | `vehicle`  | `vehicle_id` PK, `type`, `temp`, `weight_cap_kg`, `volume_cap_m3`, `fuel_type`, `km_per_l`, `weekly_fuel_quota_l`, `depot_id` FK                                                | VEH001–VEH060, from `vehicles.csv`: 12 reefer trucks, 40 dry-box trucks, 8 vans (4 refrigerated). Day-to-day availability lives in `vehicle_daily_availability`, not here.                                                                                                                                                                                                         |
 | `item`     | `item_id` PK, `sku` UNIQUE, `brand`, `unit_weight_kg`, `unit_volume_m3`, `temperature_requirement`                                                                              | Real SKUs, not aggregates.                                                                                                                                                                                                                                                                                                                                                         |
-| `app_user` | `user_id` PK, `email` UNIQUE, `display_name`, `password_hash`, `role`, `depot_id` nullable, `outlet_id` nullable, `is_active`                                                   | The application identity and the credential. Authentication is owned by the Go API: `password_hash` is an Argon2id PHC string (never plaintext), verified in constant time at `POST /api/v1/auth/login`. Nullable scope columns: a dispatcher has a depot and no outlet, a store manager the reverse. Enforced server-side on every query, never trusted from a token claim alone. |
+| `app_user` | `user_id` PK, `email` UNIQUE, `display_name`, `password_hash`, `role`, `depot_id` nullable, `outlet_id` nullable, `is_active`, `created_at`                                                   | The application identity and the credential. Authentication is owned by the Go API: `password_hash` is an Argon2id PHC string (never plaintext), verified in constant time at `POST /api/v1/auth/login`. Nullable scope columns: a dispatcher has a depot and no outlet, a store manager the reverse. Enforced server-side on every query, never trusted from a token claim alone. `created_at` (migration `00010`) supports the Dispatcher user screen. Dispatcher account management (`internal/useradmin`) creates operational accounts here, restricts the creatable roles to DRIVER/LOADER/STORE_MANAGER, derives a store manager's depot from its outlet, and deactivates rather than deletes. |
 
 ### Operational assignments (`00009_driver_vehicle_assignment.sql`)
 
@@ -117,6 +119,15 @@ hash; the raw token is returned to the client once and presented as `Authorizati
 | Table     | Key columns                                                                                                   | Notes                                                                                                                                                                         |
 | --------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `session` | `session_id` PK, `user_id` FK → `app_user` ON DELETE CASCADE, `token_hash` UNIQUE, `expires_at`, `created_at` | A request hashes the bearer token and requires a matching row with `expires_at > now()` for an active user. Logout deletes the row; expired rows are rejected, never revived. |
+
+### Password reset tokens (`00010_password_reset_token.sql`)
+
+Self-service password reset. A Dispatcher sets an initial password when creating an account, but
+a forgotten password is recovered through this flow rather than by anyone reading the credential.
+
+| Table                  | Key columns                                                                                                                   | Notes                                                                                                                                                                                                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `password_reset_token` | `token_id` PK, `user_id` FK → `app_user` ON DELETE CASCADE, `token_hash` UNIQUE, `expires_at`, `used_at`, `created_at`         | Only the SHA-256 hash of the raw token is stored. A reset requires an unused, unexpired row for an active user, sets the new Argon2id hash, marks the token used and revokes the user's sessions — all in one transaction. A new request supersedes any outstanding token for the user. The raw token is never stored, returned or audited. |
 
 ---
 

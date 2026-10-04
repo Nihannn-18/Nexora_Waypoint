@@ -20,6 +20,7 @@ import type {
   ConfirmAllocationResponse,
   CreateOrderRequest,
   CreateReceiptRequest,
+  CreateUserRequest,
   CustomerOrder,
   DeferralLogEntry,
   DeferralRequest,
@@ -32,14 +33,18 @@ import type {
   Depot,
   DockType,
   Driver,
+  ForgotPasswordRequest,
+  ForgotPasswordResponse,
   IsoDate,
   IsoDateTime,
   Item,
   ListOrdersQuery,
+  ListUsersQuery,
   LiveRouteState,
   LoadItemRecord,
   LoginRequest,
   LoginResponse,
+  ManagedUser,
   MetaResponse,
   OrderPage,
   OrderQueueQuery,
@@ -53,6 +58,8 @@ import type {
   RecordShortfallRequest,
   ReorderLegsRequest,
   Receipt,
+  ResetPasswordRequest,
+  ResetPasswordResponse,
   Route,
   RouteLeg,
   StoreManagerOption,
@@ -62,6 +69,7 @@ import type {
   SyncResult,
   TempRequirement,
   TripNumber,
+  UpdateUserRequest,
   ValidateAllocationRequest,
   ValidationResponse,
   Vehicle,
@@ -245,6 +253,34 @@ export class WaypointClient {
 
   me(): Promise<LoginResponse['user']> {
     return this.http.get<LoginResponse['user']>('/me');
+  }
+
+  /**
+   * Request a password-reset link. Always resolves with a generic message
+   * whether or not the email exists, so no enumeration is possible. Public.
+   */
+  forgotPassword(
+    body: ForgotPasswordRequest,
+  ): Promise<ForgotPasswordResponse> {
+    return this.http.post<ForgotPasswordResponse>(
+      '/auth/forgot-password',
+      body,
+      { anonymous: true },
+    );
+  }
+
+  /**
+   * Consume a reset token and set a new password. An invalid, expired or
+   * already-used token is a 400 with a `token` field error. Public.
+   */
+  resetPassword(
+    body: ResetPasswordRequest,
+  ): Promise<ResetPasswordResponse> {
+    return this.http.post<ResetPasswordResponse>(
+      '/auth/reset-password',
+      body,
+      { anonymous: true },
+    );
   }
 
   /** The API clock and demo mode. Public: needed before sign-in for countdowns. */
@@ -691,6 +727,48 @@ export class WaypointClient {
       { query: { date } },
     );
     return body.assignment;
+  }
+
+  /* --- Dispatcher account management ----------------------------------- */
+
+  /**
+   * Operational accounts (DRIVER, LOADER, STORE_MANAGER), optionally filtered
+   * by role and active state. Dispatcher only. Never returns credentials.
+   */
+  async listUsers(query: ListUsersQuery = {}): Promise<readonly ManagedUser[]> {
+    const body = await this.http.get<{ users: readonly ManagedUser[] }>(
+      '/users',
+      { query: { role: query.role, active: query.active } },
+    );
+    return body.users;
+  }
+
+  /** One account by id. Dispatcher only. */
+  getUser(userId: string): Promise<ManagedUser> {
+    return this.http.get<ManagedUser>(`/users/${userId}`);
+  }
+
+  /**
+   * Create an operational account. The role is validated server-side; a
+   * DISPATCHER role is refused. Dispatcher only.
+   */
+  createUser(body: CreateUserRequest): Promise<ManagedUser> {
+    return this.http.post<ManagedUser>('/users', body);
+  }
+
+  /** Edit an account's permitted profile/assignment fields. Dispatcher only. */
+  updateUser(userId: string, body: UpdateUserRequest): Promise<ManagedUser> {
+    return this.http.patch<ManagedUser>(`/users/${userId}`, body);
+  }
+
+  /** Deactivate an account and revoke its sessions. Dispatcher only. */
+  deactivateUser(userId: string): Promise<ManagedUser> {
+    return this.http.post<ManagedUser>(`/users/${userId}/deactivate`);
+  }
+
+  /** Reactivate a deactivated account. Dispatcher only. */
+  activateUser(userId: string): Promise<ManagedUser> {
+    return this.http.post<ManagedUser>(`/users/${userId}/activate`);
   }
 
   /** The SKU catalogue, used to name order lines. */

@@ -48,6 +48,7 @@ transcribed from that submission. They are not AI-generated design decisions.
 | Tests                           | Claude (Anthropic) | Jest suites for the web and shared libraries, and the Go unit/integration tests | Run on every change via `npm run verify` and `go test ./...`; the team does not weaken a failing test to make CI pass |
 | Documentation                   | Claude (Anthropic) | `README.md`, `docs/architecture.md`, `docs/api.md`, `docs/data-model.md`, `docs/deployment.md` | Reviewed and corrected by the team where the code and prose disagreed |
 | Dispatcher master data and assignments | Claude (Anthropic) | Vehicle/outlet create-edit (`internal/catalog/network_write*.go`), the `driver_vehicle_assignment` migration and `internal/assignment`, the assignment screens, and driver-run narrowing in `internal/delivery` | Reviewed; Go unit/handler/integration tests and Jest component tests pin RBAC, validation, conflict and scoping behaviour |
+| Dispatcher account management and password reset | Claude (Anthropic) | The `internal/useradmin` package (create/list/edit/deactivate operational accounts), the `password_reset_token` migration (`00010`) and the `app_user.created_at` column, the public forgot/reset endpoints, the `Users` screen and the forgot/reset screens | Reviewed; the server-side role/scope rules (no DISPATCHER creation, depot/outlet shape, store-manager depot derivation, Argon2id hashing, token hashing/single-use, generic forgot reply, session revocation) were chosen by the team and pinned by Go unit/handler/integration and Jest tests |
 
 ### Final judge-readiness pass
 
@@ -73,9 +74,10 @@ Go unit/handler tests, web Jest tests and the full `npm run verify` pipeline.
 ### Integration test status — NOT CONFIGURED in CI
 
 The PostgreSQL integration tests (`TestSeedIntegration`, `TestRoutesIntegration`,
-`TestCloseQueueAuditIntegration`) skip when `WAYPOINT_TEST_DATABASE_URL` is unset, so
-`npm run verify` and `nx test api` do **not** run them; CI has no PostgreSQL service. This is
-reported honestly as **NOT CONFIGURED**, not as passing. Run them by hand:
+`TestCloseQueueAuditIntegration`, `TestAssignmentIntegration`, `TestUserAdminIntegration`)
+skip when `WAYPOINT_TEST_DATABASE_URL` is unset, so `npm run verify` and `nx test api` do
+**not** run them; CI has no PostgreSQL service. This is reported honestly as **NOT
+CONFIGURED**, not as passing. Run them by hand:
 
 ```bash
 docker compose up -d postgres

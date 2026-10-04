@@ -9,6 +9,7 @@ import type {
   DockType,
   OrderStatus,
   ParkingConstraint,
+  Role,
   TripNumber,
   VehicleTempClass,
   VehicleType,
@@ -257,4 +258,59 @@ export interface AssignDriverRequest {
 /** Assign / change an outlet's store manager. */
 export interface AssignManagerRequest {
   readonly userId: string;
+}
+
+/* --- Account management (Dispatcher) -------------------------------------- */
+
+/**
+ * Create an operational account. The role must be one a Dispatcher may create
+ * (see CREATABLE_ROLES); the server rejects DISPATCHER and any unknown role.
+ * A DRIVER/LOADER supplies `depotId` and no `outletId`; a STORE_MANAGER supplies
+ * `outletId` (its depot is derived from the outlet, so `depotId` is ignored).
+ */
+export interface CreateUserRequest {
+  readonly email: string;
+  readonly displayName: string;
+  readonly role: string;
+  readonly depotId?: string;
+  readonly outletId?: string;
+  readonly initialPassword: string;
+}
+
+/**
+ * Edit an account's permitted profile/assignment fields. Omitted fields are left
+ * unchanged. Role and password are deliberately absent: role is immutable for
+ * this feature, and a password changes only through the reset flow.
+ */
+export interface UpdateUserRequest {
+  readonly displayName?: string;
+  readonly depotId?: string;
+  readonly outletId?: string;
+}
+
+/** Query of GET /users. Every filter is applied server-side. */
+export interface ListUsersQuery {
+  readonly role?: Role;
+  readonly active?: boolean;
+}
+
+/* --- Self-service password reset ------------------------------------------ */
+
+export interface ForgotPasswordRequest {
+  readonly email: string;
+}
+
+export interface ForgotPasswordResponse {
+  /** Always generic, so the endpoint cannot be used to enumerate accounts. */
+  readonly message: string;
+}
+
+export interface ResetPasswordRequest {
+  readonly token: string;
+  readonly newPassword: string;
+  readonly confirmPassword: string;
+}
+
+export interface ResetPasswordResponse {
+  readonly message: string;
 }

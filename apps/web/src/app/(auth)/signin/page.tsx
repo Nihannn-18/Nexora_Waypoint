@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Mono } from '@waypoint/ui';
 import type { Role } from '@waypoint/shared-types';
@@ -156,6 +157,14 @@ export default function SignInPage() {
             onChange={(event) => setPassword(event.target.value)}
             className="tap-target w-full rounded-control bg-card px-3 text-ink ring-1 ring-ink/15 focus-visible:ring-2 focus-visible:ring-brand"
           />
+          <div className="mt-1.5 text-right">
+            <Link
+              href="/forgot-password"
+              className="text-sm font-medium text-link hover:underline"
+            >
+              Forgot password?
+            </Link>
+          </div>
         </div>
 
         <button
