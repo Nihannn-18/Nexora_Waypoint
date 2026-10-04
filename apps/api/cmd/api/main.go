@@ -136,7 +136,7 @@ func run() error {
 	// Orders: intake, retrieval and confirmation. The shared API clock drives the
 	// 16:00 cutoff, so the demo day is honoured like every other "now".
 	orderRepo := orders.NewPGRepository(db.Pool())
-	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), clk)
+	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), clk, orders.NewPGOperatingDayReader(db.Pool()))
 	orderHandler := orders.NewHandler(orderService, authMiddleware)
 
 	// Planning: deterministic, constraint-aware proposals. The engine is pure;
