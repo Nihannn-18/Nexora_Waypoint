@@ -12,6 +12,22 @@ func testDate(y int, m time.Month, d int) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
+// TestOrderBusinessInstant pins the regression where created_at was left to the
+// database wall clock: under DEMO_MODE the seeded business day is in the past,
+// so a real-time stamp pushed a freshly placed order above genuinely older
+// orders in the store's "today" list and contradicted the cutoff clock.
+func TestOrderBusinessInstant(t *testing.T) {
+	demoDay := time.Date(2026, time.September, 25, 15, 49, 0, 0, time.FixedZone("+0530", 5*3600+30*60))
+	got := orderBusinessInstant(demoDay)
+	want := time.Date(2026, time.September, 25, 0, 0, 0, 0, demoDay.Location())
+	if !got.Equal(want) {
+		t.Fatalf("orderBusinessInstant = %v, want the business day's start %v", got, want)
+	}
+	if !got.Before(time.Now()) {
+		t.Fatal("a demo-business-day instant must predate the wall clock")
+	}
+}
+
 func validOrder() Order {
 	return Order{
 		OrderID:               "o1",
