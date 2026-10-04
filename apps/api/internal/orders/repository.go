@@ -197,7 +197,34 @@ func (r *PGRepository) loadWithLines(ctx context.Context, row pgx.Row, ref strin
 		return Order{}, err
 	}
 	o.Lines = lines
+	// The latest deferral, so a store manager reading their own order sees why
+	// it was deferred without dispatcher-only access.
+	if err := r.attachLatestDeferral(ctx, &o); err != nil {
+		return Order{}, err
+	}
 	return o, nil
+}
+
+// attachLatestDeferral loads the most recent deferral_log row for an order, if
+// any. deferral_log is append-only across runs, so the latest decision is the
+// one the store is owed.
+func (r *PGRepository) attachLatestDeferral(ctx context.Context, o *Order) error {
+	var d Deferral
+	err := r.pool.QueryRow(ctx, `
+		SELECT d.reason, COALESCE(d.constraint_code, ''), d.decided_at,
+		       COALESCE(d.deferred_to_date::text, '')
+		FROM deferral_log d
+		WHERE d.order_id = $1
+		ORDER BY d.decided_at DESC, d.deferral_id DESC
+		LIMIT 1`, o.OrderID).Scan(&d.ReasonText, &d.ConstraintCode, &d.DecidedAt, &d.DeferredToDate)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load latest deferral: %w", err)
+	}
+	o.Deferral = &d
+	return nil
 }
 
 func (r *PGRepository) linesFor(ctx context.Context, orderID string) ([]OrderLine, error) {

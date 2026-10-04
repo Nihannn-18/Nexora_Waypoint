@@ -61,7 +61,28 @@ describe('S-04 order detail', () => {
     await waitFor(() => expect(mocked.getOrder).toHaveBeenCalledWith('o1'));
   });
 
-  it('explains a deferred order without inventing a reason', async () => {
+  it('explains a deferred order with the recorded reason when available', async () => {
+    mocked.getOrder.mockResolvedValue(
+      makeOrder({
+        status: 'DEFERRED',
+        deferral: {
+          reasonText: 'Refrigerated capacity ran out for this district.',
+          constraintCode: 'FRESH_TIME_BUDGET',
+          decidedAt: '2026-09-25T16:20:00+05:30',
+          deferredToDate: '2026-09-28',
+        },
+      }),
+    );
+    await renderPage();
+
+    expect(await screen.findByText(/this order was deferred/i)).toBeTruthy();
+    expect(
+      screen.getByText(/refrigerated capacity ran out/i),
+    ).toBeTruthy();
+    expect(screen.getByText('FRESH_TIME_BUDGET')).toBeTruthy();
+  });
+
+  it('does not invent a reason when the deferral record is absent', async () => {
     mocked.getOrder.mockResolvedValue(makeOrder({ status: 'DEFERRED' }));
     await renderPage();
 

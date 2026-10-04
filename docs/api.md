@@ -230,9 +230,20 @@ the wall clock in the business timezone.
       "totalWeightKg": 20.0,
       "totalVolumeM3": 0.024
     }
-  ]
+  ],
+  "deferral": {
+    "reasonText": "Refrigerated capacity ran out for this district.",
+    "constraintCode": "FRESH_TIME_BUDGET",
+    "decidedAt": "2026-09-25T16:20:00+05:30",
+    "deferredToDate": "2026-09-28"
+  }
 }
 ```
+
+`deferral` is present only when the order has a `deferral_log` row; it is the latest
+decision, so a store manager reading their own order sees why it was deferred (and the run
+it moved to) without dispatcher-only access. It is loaded on the scoped read, so it never
+widens what a caller may see.
 
 Totals are never accepted from the client. They are computed from the lines and the
 catalogue, because they are what the capacity rules are checked against. Each line snapshots

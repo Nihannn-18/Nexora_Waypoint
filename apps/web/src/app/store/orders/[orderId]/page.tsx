@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { use, useState } from 'react';
 import { Mono, OrderStatusBadge } from '@waypoint/ui';
+import type { CustomerOrder } from '@waypoint/shared-types';
 import { formatDay, formatKg, formatM3, plural } from '../../../../lib/format';
 import { api } from '../../../../lib/api';
 import { useStoreScope } from '../../_components/store-shell';
@@ -80,7 +81,7 @@ export default function OrderDetailPage({
         <OrderStatusBadge status={order.status} />
       </header>
 
-      {order.status === 'DEFERRED' && <DeferredNotice />}
+      {order.status === 'DEFERRED' && <DeferredNotice order={order} />}
       {order.status === 'PLACED' && (
         <ConfirmOrderAction order={order} onConfirmed={state.reload} />
       )}
@@ -266,20 +267,42 @@ function ConfirmedNotice() {
 }
 
 /**
- * S-05's notice, honestly scoped. The store cannot yet read the dispatcher's
- * deferral reason or acknowledge it through the API, so this states the fact
- * and where the reason lives instead of inventing either.
+ * S-05's notice. When the server returns the deferral the dispatcher recorded,
+ * the store sees the reason, the binding constraint's code and the run it moved
+ * to. A deferral record that has not reached the read model yet is shown as a
+ * fact with a pointer to the log, never an invented reason.
  */
-function DeferredNotice() {
+function DeferredNotice({ order }: { order: CustomerOrder }) {
+  const deferral = order.deferral;
   return (
     <Card className="gap-1 border-warning bg-warning-bg">
       <h2 className="text-sm font-semibold text-warning-ink">
         This order was deferred
       </h2>
-      <p className="text-sm text-ink">
-        It could not be served on its planned day and is held for a later run.
-        The dispatcher’s deferral log holds the reason and the new date.
-      </p>
+      {deferral ? (
+        <>
+          <p className="text-sm text-ink">{deferral.reasonText}</p>
+          <p className="text-xs text-ink-muted">
+            {deferral.constraintCode ? (
+              <>
+                Blocking rule <Mono>{deferral.constraintCode}</Mono> ·{' '}
+              </>
+            ) : null}
+            decided <Mono>{formatDay(deferral.decidedAt.slice(0, 10))}</Mono>
+            {deferral.deferredToDate ? (
+              <>
+                {' '}· moving to{' '}
+                <Mono>{formatDay(deferral.deferredToDate)}</Mono>
+              </>
+            ) : null}
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-ink">
+          It could not be served on its planned day and is held for a later run.
+          The dispatcher’s deferral log holds the reason and the new date.
+        </p>
+      )}
     </Card>
   );
 }

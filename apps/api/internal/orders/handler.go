@@ -98,6 +98,16 @@ type orderResponse struct {
 	AfterCutoff            bool                `json:"afterCutoff"`
 	Notes                  string              `json:"notes,omitempty"`
 	Lines                  []orderLineResponse `json:"lines"`
+	Deferral               *deferralResponse   `json:"deferral,omitempty"`
+}
+
+// deferralResponse is the store-facing reason an order was deferred, from the
+// latest deferral_log row.
+type deferralResponse struct {
+	ReasonText     string `json:"reasonText"`
+	ConstraintCode string `json:"constraintCode,omitempty"`
+	DecidedAt      string `json:"decidedAt"`
+	DeferredToDate string `json:"deferredToDate,omitempty"`
 }
 
 func toResponse(o Order) orderResponse {
@@ -130,6 +140,19 @@ func toResponse(o Order) orderResponse {
 		AfterCutoff:            o.AfterCutoff,
 		Notes:                  o.Notes,
 		Lines:                  lines,
+		Deferral:               toDeferralResponse(o.Deferral),
+	}
+}
+
+func toDeferralResponse(d *Deferral) *deferralResponse {
+	if d == nil {
+		return nil
+	}
+	return &deferralResponse{
+		ReasonText:     d.ReasonText,
+		ConstraintCode: d.ConstraintCode,
+		DecidedAt:      d.DecidedAt.Format(time.RFC3339),
+		DeferredToDate: d.DeferredToDate,
 	}
 }
 
