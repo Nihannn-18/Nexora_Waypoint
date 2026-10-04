@@ -28,21 +28,27 @@ and an AI tool disclosure.
 │                          Go 1.24 REST API                          │
 │                                                                    │
 │  httpx         router, strict JSON decoding, one error shape       │
-│  auth          verify bearer session, RBAC, depot/outlet scope     │
+│  auth*         opaque bearer sessions, Argon2id, RBAC, scope       │
 │  useradmin     Dispatcher account mgmt + self-service reset        │
-│  orders        lifecycle, 16:00 cutoff, aggregate totals           │
+│  catalog       outlets, vehicles, calendar, travel, allowance      │
+│  assignment    driver→vehicle, loader→depot, manager→outlet        │
+│  orders        lifecycle, 16:00 cutoff, queue close, totals        │
 │  planning      ▸ ConstraintValidator — the only feasibility rule   │
 │                ▸ TripTimeCalculator — the official formula         │
-│                ▸ FuelService        — weekly quota                 │
-│  routes        routes, legs, sequence, ETA, optimistic locking     │
-│  deferrals     reasons, history, notifications                     │
+│                ▸ PlanningEngine + job runner, fuel, windows        │
+│  routes        confirm, legs, ETA, deferral log, optimistic lock   │
+│  loading       reverse-order lists, line-level shortfall flags     │
 │  delivery      events, POD, idempotent offline reconciliation      │
-│  forecast      demand by depot × brand × week                      │
+│  receipts      store GRN, DELIVERED → RECEIVED                     │
+│  notify        notifications to users and outlets                  │
+│  media         photo/signature uploads, scope-checked              │
 │  audit         immutable operational history                       │
+│  clock, demo   injected time, demo stages and reset                │
+│  store, seed   pgx pool, goose migrations, embedded CSV seed       │
 └────────┬──────────────────────────────────────────┬────────────────┘
-         │                                          │ AMQP
+         │                                          │ in-process call
 ┌────────┴─────────────────┐          ┌─────────────┴────────────────┐
-│       PostgreSQL 17      │          │       Planning worker        │
+│       PostgreSQL 17      │          │    Planning job (inline)     │
 │                          │          │                              │
 │  authoritative facts     │◄─────────│  loads orders + reference    │
 │  planning_result (draft) │          │  runs PlanningEngine         │
@@ -137,9 +143,9 @@ are never merged: they have different vehicle requirements.
 ```
 16:00  POST /orders/close          queue frozen; later orders held for the next run
        POST /allocations/suggest   → 202 { jobId, QUEUED }
-                                     │ publish to waypoint.planning
+                                     │ runs in-process (see note below)
                                      ▼
-                                   Planning worker
+                                   planning.Service
                                      ├ group by depot + brand + district
                                      ├ candidate vehicles: home depot, available,
                                      │   capacity, temperature, access
@@ -157,8 +163,10 @@ are never merged: they have different vehicle requirements.
                                           → notify loader and stores
 ```
 
-The HTTP request returns in milliseconds while a full-depot run takes seconds to minutes.
-That is the only reason the queue exists.
+The job API (`202 {jobId}` → poll) is the contract. Today the engine runs inline inside
+`planning.Service.Suggest`: it is pure and fast at this dataset size, and the job row is
+already `COMPLETED` when the client first polls. RabbitMQ is in `docker-compose.yml` but no
+AMQP consumer is wired yet; a worker can replace the inline call without changing the API.
 
 ### Driver offline and reconnection
 
@@ -191,22 +199,22 @@ is always safe, which is what lets the client retry aggressively on a bad connec
 | Vehicle breaks down        | DG-C   | The dispatcher marks it unavailable. Only **unserved** stops are re-queued; a recommended replacement is shown with every constraint check visible, and deferral is the fallback.                                                     |
 | Loader finds a shortfall   | —      | Recorded against the specific order line before departure, never as a trip-level note. The dispatcher is notified and route readiness can be blocked.                                                                                 |
 | Plan changes while loading | —      | Optimistic locking on `route_version` plus a visible change indicator. A stale write is rejected, so the loader never works from a silently outdated list.                                                                            |
-| Worker fails               | —      | Transient failures retry, then dead-letter. The job becomes `FAILED` with its error, and no partial plan is persisted.                                                                                                                |
+| Planning run fails         | —      | The job becomes `FAILED` with its error, and no partial plan is persisted. (Retry and dead-lettering arrive with the AMQP worker.)                                                                                                    |
 
 ---
 
 ## Technology choices
 
-| Layer    | Choice                           | Why this one                                                                                                          |
-| -------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Frontend | Next.js 16, React 19, TypeScript | App Router suits four distinct role shells; strict TypeScript against a shared contract catches drift at compile time |
-| Styling  | Tailwind v4                      | Day 5 tokens as CSS custom properties — each colour defined once                                                      |
-| Offline  | Service worker + IndexedDB       | The only reliable way to keep a phone useful without signal                                                           |
-| Backend  | Go 1.24                          | Static binary, fast start, small container; see the README for the departure from Spring Boot                         |
-| Routing  | `net/http` ServeMux              | Go 1.22+ method-and-path patterns cover this API; no dependency to justify                                            |
-| Database | PostgreSQL 17                    | Transactions, `JSONB` for constraint results, ISO week functions for the forecast                                     |
-| Queue    | RabbitMQ                         | Named in the specification; dead-lettering is what we need for a retryable planning job                               |
-| Monorepo | Nx                               | One install and one command surface across both languages, with caching and `nx affected`                             |
+| Layer    | Choice                            | Why this one                                                                                                          |
+| -------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Frontend | Next.js 16, React 19, TypeScript  | App Router suits four distinct role shells; strict TypeScript against a shared contract catches drift at compile time |
+| Styling  | Tailwind v4                       | Day 5 tokens as CSS custom properties — each colour defined once                                                      |
+| Offline  | Service worker + IndexedDB        | The only reliable way to keep a phone useful without signal                                                           |
+| Backend  | Go 1.24                           | Static binary, fast start, small container; see the README for the departure from Spring Boot                         |
+| Routing  | `net/http` ServeMux               | Go 1.22+ method-and-path patterns cover this API; no dependency to justify                                            |
+| Database | PostgreSQL 17                     | Transactions, `JSONB` for constraint results, ISO week functions for the forecast                                     |
+| Queue    | RabbitMQ (provisioned, not wired) | Named in the specification; the planning job runs in-process until the AMQP consumer lands                            |
+| Monorepo | Nx                                | One install and one command surface across both languages, with caching and `nx affected`                             |
 
 ---
 
@@ -218,6 +226,7 @@ is always safe, which is what lets the client retry aggressively on a bad connec
 - **Realtime is polling, at a 30-second interval** on the dispatcher's trip tracker, as the
   Day 5 design specifies. WebSockets would reduce latency but add a failure mode for a gain
   nobody in this workflow needs.
-- **The forecast endpoint is read-only** and intentionally decoupled from the Datathon
+- **The forecast endpoint (`GET /forecast/demand`) is specified but not built** in this
+  phase (first on the cut line). It is intentionally decoupled from the Datathon
   model. The two phases are judged separately, so the model stays modular rather than
   embedded.
