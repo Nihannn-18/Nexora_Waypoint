@@ -44,8 +44,8 @@ describe('CloseQueueButton', () => {
     open();
     // Deselect STYLE and TECH (rows 2 and 3) so only FRESH is sent.
     const boxes = screen.getAllByRole('checkbox');
-    fireEvent.click(boxes[1]);
-    fireEvent.click(boxes[2]);
+    fireEvent.click(boxes[1] as HTMLElement);
+    fireEvent.click(boxes[2] as HTMLElement);
     fireEvent.click(screen.getByRole('button', { name: /close selected/i }));
 
     await waitFor(() =>
