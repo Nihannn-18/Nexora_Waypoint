@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import type { DeliveryOutcome } from '@waypoint/shared-types';
+import { endSession } from '../../../lib/session';
 import { useOutbox } from '../_lib/use-outbox';
 import type { OutboxEvent } from '../_lib/outbox';
 
@@ -82,15 +83,18 @@ export function DriverShell({ children }: { children: ReactNode }) {
             {sync.text}
           </p>
         </div>
-        <Link
-          href="/signin"
-          aria-label="Account"
+        <button
+          type="button"
+          onClick={() => {
+            void endSession();
+          }}
+          aria-label="Sign out"
           className="flex size-11 items-center justify-center"
         >
           <span className="flex rounded-control bg-black p-2 text-white">
             <Icon name="user" size={16} />
           </span>
-        </Link>
+        </button>
       </header>
 
       {!online ? (

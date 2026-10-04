@@ -12,6 +12,7 @@ import {
 import { Mono } from '@waypoint/ui';
 import type { MetaResponse, Outlet } from '@waypoint/shared-types';
 import { formatCountdown, formatInstantDay } from '../../../lib/format';
+import { endSession } from '../../../lib/session';
 import { useApiClock, useStoreOutlet } from '../_lib/use-store';
 import { cutoffRemainingMs, offsetOf } from '../_lib/store';
 import { BrandChip } from './ui';
@@ -106,6 +107,15 @@ function StoreHeader() {
 
         <div className="order-2 ml-auto flex items-center gap-2">
           <CutoffPill />
+          <button
+            type="button"
+            onClick={() => {
+              void endSession();
+            }}
+            className="tap-target rounded-control px-2 text-sm font-medium text-ink-muted hover:bg-page hover:text-ink"
+          >
+            Sign out
+          </button>
         </div>
 
         <nav
