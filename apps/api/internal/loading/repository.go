@@ -84,7 +84,7 @@ func (r *PGRepository) RouteLoading(ctx context.Context, routeID string) (RouteL
 		       v.type, v.temp, v.weight_cap_kg, v.volume_cap_m3
 		FROM route r
 		JOIN vehicle v ON v.vehicle_id = r.vehicle_id
-		WHERE r.route_id = $1`, routeID).
+		WHERE r.route_id::text = $1`, routeID).
 		Scan(&rl.RouteID, &rl.VehicleID, &rl.DepotID, &rl.RouteDate, &rl.TripNo, &rl.Brand, &rl.District, &rl.Status,
 			&rl.VehicleType, &rl.VehicleTemp, &rl.WeightCapKg, &rl.VolumeCapM3)
 	if errors.Is(err, pgx.ErrNoRows) {

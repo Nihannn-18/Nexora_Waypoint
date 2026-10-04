@@ -105,7 +105,7 @@ func (r *PGRepository) LegDetail(ctx context.Context, legID string) (LegDetail, 
 		FROM route_leg leg
 		JOIN route ON route.route_id = leg.route_id
 		JOIN outlet o ON o.outlet_id = leg.to_outlet
-		WHERE leg.leg_id = $1`, legID).
+		WHERE leg.leg_id::text = $1`, legID).
 		Scan(&d.LegID, &d.RouteID, &d.DepotID, &d.RouteDate, &d.ToOutlet, &d.Status,
 			&d.Seq, &planned,
 			&d.Route.VehicleID, &d.Route.TripNo, &d.Route.Brand, &d.Route.District, &d.Route.Status,

@@ -134,7 +134,7 @@ func (r *PGRepository) GetJob(ctx context.Context, jobID string) (Job, error) {
 	err := r.pool.QueryRow(ctx, `
 		SELECT job_id, planning_date, depot_id, status, COALESCE(requested_by, ''),
 		       created_at, started_at, completed_at, COALESCE(error_message, '')
-		FROM planning_job WHERE job_id = $1`, jobID).
+		FROM planning_job WHERE job_id::text = $1`, jobID).
 		Scan(&out.JobID, &out.PlanningDate, &out.DepotID, &out.Status, &out.RequestedBy,
 			&out.CreatedAt, &out.StartedAt, &out.CompletedAt, &out.ErrorMessage)
 	if errors.Is(err, pgx.ErrNoRows) {

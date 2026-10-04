@@ -423,7 +423,7 @@ func (r *PGRepository) GetRoute(ctx context.Context, routeID string) (Route, err
 		       status, route_version, COALESCE(outbound_min,0), COALESCE(inter_stop_min,0),
 		       COALESCE(handling_min,0), COALESCE(total_trip_min,0), COALESCE(total_weight_kg,0),
 		       COALESCE(total_volume_m3,0), COALESCE(distance_km,0)
-		FROM route WHERE route_id = $1`, routeID).
+		FROM route WHERE route_id::text = $1`, routeID).
 		Scan(&rt.RouteID, &rt.VehicleID, &rt.DepotID, &rt.RouteDate, &rt.TripNo, &rt.Brand,
 			&rt.District, &rt.Status, &rt.RouteVersion, &rt.OutboundMin, &rt.InterStopMin,
 			&rt.HandlingMin, &rt.TotalTripMin, &rt.TotalWeightKg, &rt.TotalVolumeM3, &rt.DistanceKm)

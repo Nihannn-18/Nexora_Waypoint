@@ -68,6 +68,12 @@ func TestNetworkWriteIntegration(t *testing.T) {
 		t.Fatalf("depot exists = %v, %v", ok, err)
 	}
 
+	// Regression: a malformed (non-UUID) depot id is "not a known depot", not
+	// a uuid-cast error that would surface as a 500.
+	if ok, err := writer.DepotExists(ctx, "not-a-uuid"); err != nil || ok {
+		t.Fatalf("malformed depot exists = %v, %v; want false, nil", ok, err)
+	}
+
 	created, err := writer.CreateVehicle(ctx, VehicleWrite{
 		VehicleID: vehID, Type: domain.VehicleTruck, TempClass: domain.VehicleTempReefer,
 		WeightCapKg: 3000, VolumeCapM3: 18, FuelType: "diesel", KmPerL: 6,

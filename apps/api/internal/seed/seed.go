@@ -215,16 +215,25 @@ func seedDemoAssignment(ctx context.Context, tx pgx.Tx) (int, error) {
 		return 0, fmt.Errorf("seed demo assignment: VEH014 is missing from the fleet")
 	}
 
-	tag, err := tx.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO driver_vehicle_assignment (driver_id, vehicle_id, assignment_date, depot_id, assigned_by)
 		SELECT 'seed-driver', v.vehicle_id, $1::date, v.depot_id, 'seed-dispatcher'
 		FROM vehicle v
 		WHERE v.vehicle_id = 'VEH014'
-		ON CONFLICT (vehicle_id, assignment_date) DO NOTHING`, demoDeliveryDate)
-	if err != nil {
+		ON CONFLICT (vehicle_id, assignment_date) DO NOTHING`, demoDeliveryDate); err != nil {
 		return 0, fmt.Errorf("seed demo assignment: %w", err)
 	}
-	return int(tag.RowsAffected()), nil
+
+	// Report the assignment's presence, not the rows this run inserted, so the
+	// summary is stable across re-runs (idempotency) while leaving a manual
+	// reassignment of VEH014 for the demo day untouched (DO NOTHING).
+	var count int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM driver_vehicle_assignment
+		WHERE vehicle_id = 'VEH014' AND assignment_date = $1::date`, demoDeliveryDate).Scan(&count); err != nil {
+		return 0, fmt.Errorf("seed demo assignment: count: %w", err)
+	}
+	return count, nil
 }
 
 func seedDepots(ctx context.Context, tx pgx.Tx) (map[string]string, error) {

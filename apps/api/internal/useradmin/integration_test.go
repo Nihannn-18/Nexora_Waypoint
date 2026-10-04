@@ -71,6 +71,15 @@ func TestUserAdminIntegration(t *testing.T) {
 	svc := NewService(NewPGStore(pool, testAudit{}), fixedClock{demoNow})
 	actor := "it-actor"
 
+	// Regression: a malformed (non-UUID) depot id must surface as a field
+	// validation error, not a 500 from PostgreSQL's uuid cast.
+	if _, err := svc.CreateAccount(ctx, CreateInput{
+		Email: "it-bad-depot@waypoint.lk", DisplayName: "Bad Depot",
+		Role: domain.RoleDriver, DepotID: "not-a-uuid", InitialPassword: "initial-pass",
+	}, actor); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("malformed depot id err = %v, want ErrInvalid", err)
+	}
+
 	// Create a driver: password is hashed, depot is set, audit row written.
 	driver, err := svc.CreateAccount(ctx, CreateInput{
 		Email:           "it-driver@waypoint.lk",
@@ -119,6 +128,22 @@ func TestUserAdminIntegration(t *testing.T) {
 	}
 	if sm.DepotID != depotID {
 		t.Fatalf("store manager depot = %q, want %q", sm.DepotID, depotID)
+	}
+
+	// Regression: an outlet has exactly one manager, so creating a second
+	// store manager for the same outlet releases the first.
+	if _, err := svc.CreateAccount(ctx, CreateInput{
+		Email: "it-store2@waypoint.lk", DisplayName: "IT Store 2",
+		Role: domain.RoleStoreManager, OutletID: "OUT991", InitialPassword: "initial-pass",
+	}, actor); err != nil {
+		t.Fatalf("create second store manager: %v", err)
+	}
+	var firstOutlet *string
+	if err := pool.QueryRow(ctx, `SELECT outlet_id FROM app_user WHERE user_id = $1`, sm.UserID).Scan(&firstOutlet); err != nil {
+		t.Fatalf("read first manager outlet: %v", err)
+	}
+	if firstOutlet != nil {
+		t.Fatalf("first manager still holds outlet %q after a second was created", *firstOutlet)
 	}
 
 	// A session for the driver, which a reset must revoke.

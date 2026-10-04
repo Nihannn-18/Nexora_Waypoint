@@ -141,7 +141,11 @@ export class HttpClient {
       );
     }
 
-    if (response.status === 401) {
+    // A 401 on an authenticated call means the session is gone, so the UI
+    // returns to sign-in. An anonymous call (POST /auth/login) must NOT trigger
+    // that: a wrong password is a normal failure the form must show in place,
+    // not a redirect that wipes the message before it renders.
+    if (response.status === 401 && !options.anonymous) {
       this.onUnauthorized?.();
     }
 

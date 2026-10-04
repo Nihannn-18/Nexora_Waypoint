@@ -42,7 +42,7 @@ const itemColumns = `item_id, sku, name, brand, COALESCE(category, ''), unit_wei
 
 // GetByID implements Repository.
 func (r *PGRepository) GetByID(ctx context.Context, itemID string) (Item, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+itemColumns+` FROM item WHERE item_id = $1`, itemID)
+	row := r.pool.QueryRow(ctx, `SELECT `+itemColumns+` FROM item WHERE item_id::text = $1`, itemID)
 	item, err := scanItem(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Item{}, fmt.Errorf("%w: %s", ErrNotFound, itemID)
