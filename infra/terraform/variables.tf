@@ -61,6 +61,24 @@ variable "github_repo" {
   default     = "Nexora_Waypoint"
 }
 
+variable "github_owner_id" {
+  description = <<-EOT
+    Immutable numeric owner ID GitHub embeds in the OIDC subject claim for
+    repositories created on/after 15 Jul 2026 (the immutable subject format).
+    The claim shape is repo:OWNER@OWNER-ID/REPO@REPO-ID:ref:refs/heads/BRANCH.
+    Read it from GET /repos/{owner}/{repo}/actions/oidc/customization/sub or
+    GET /repos/{owner}/{repo} (owner.id). Empty keeps the legacy name-only form.
+  EOT
+  type        = string
+  default     = "231072512"
+}
+
+variable "github_repo_id" {
+  description = "Immutable numeric repository ID for the OIDC subject claim. See github_owner_id."
+  type        = string
+  default     = "1399951841"
+}
+
 variable "deploy_branches" {
   description = "Branches whose pushes may assume the deploy role."
   type        = list(string)
