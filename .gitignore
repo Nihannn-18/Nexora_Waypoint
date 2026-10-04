@@ -69,6 +69,11 @@ apps/api/waypoint-worker
 docs/general-data/task1_test_inputs.csv
 docs/general-data/task2a_test_inputs.csv
 
+# Any remaining environment files are local-only. The committed template is
+# .env.example, which the negation below keeps tracked.
+.env.*
+!.env.example
+
 # TypeScript build info
 *.tsbuildinfo
 
@@ -77,3 +82,40 @@ docs/general-data/task2a_test_inputs.csv
 /test-results/
 /blob-report/
 /playwright/.cache/
+
+# --- Deployment / infrastructure -------------------------------------------
+# Vercel link state (per-developer, never shared).
+.vercel/
+.vercel
+.env.vercel
+
+# Terraform: state, plans and variable files carry environment detail and, for
+# variable files, potentially secrets. Only *.tfvars.example is committed.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Terraform CLI config may hold credentials.
+.terraformrc
+terraform.rc
+
+# AWS CLI credentials and config, if ever written into the workspace.
+.aws/
+credentials
+
+# Local deployment scratch: rendered env files and SSM output never get
+# committed. (The real production file lives on the instance, not here.)
+infra/deploy/.env*
+!infra/deploy/.env.example
+.env*

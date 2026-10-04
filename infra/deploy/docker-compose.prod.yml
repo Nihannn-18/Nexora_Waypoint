@@ -1,0 +1,71 @@
+# Production stack for the Waypoint Go API on EC2.
+#
+#   PostgreSQL : Neon        (DATABASE_URL, from SSM — never stored here)
+#   Media      : private S3  (MEDIA_STORAGE=s3, instance role supplies creds)
+#   Web app    : Vercel      (this file never runs Next.js)
+#   TLS        : Caddy       (Let's Encrypt on a free sslip.io hostname)
+#
+# Secrets are not in this file. /opt/waypoint/.env and /opt/waypoint/rabbitmq.env
+# are rendered from SSM Parameter Store at deploy time by
+# infra/deploy/render-env.sh; /opt/waypoint/config.env holds the non-secret
+# interpolation values below.
+#
+# This is a production-only file: the judge `docker compose up` stack in the
+# repository root still starts Postgres and the web app for a fresh clone.
+
+name: waypoint-prod
+
+services:
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    env_file:
+      - /opt/waypoint/rabbitmq.env
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    # No published ports: the broker is reachable only inside this network.
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      WAYPOINT_API_HOST: ${WAYPOINT_API_HOST}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - /opt/waypoint/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  api:
+    image: ${ECR_REPO}:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - /opt/waypoint/.env
+    expose:
+      - '8080'
+    # Loopback only, for on-instance debugging. Caddy reaches the API over the
+    # compose network as api:8080, so the app port is never public.
+    ports:
+      - '127.0.0.1:8080:8080'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  rabbitmq-data:
+  caddy-data:
+  caddy-config:

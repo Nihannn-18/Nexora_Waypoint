@@ -1,0 +1,11 @@
+# Caddy site configuration for the Waypoint API.
+#
+# The hostname is a free sslip.io name derived from the Elastic IP (for example
+# 203-0-113-10.sslip.io) and is supplied by Docker Compose as
+# WAYPOINT_API_HOST. Caddy obtains and renews a Let's Encrypt certificate over
+# the HTTP-01 challenge automatically; no domain purchase is required.
+
+{$WAYPOINT_API_HOST} {
+	encode zstd gzip
+	reverse_proxy api:8080
+}

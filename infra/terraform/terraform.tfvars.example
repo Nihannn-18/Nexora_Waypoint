@@ -1,0 +1,12 @@
+# Example variable file. Copy to terraform.tfvars (gitignored) and adjust if
+# needed. No secret belongs here.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+
+aws_region      = "us-east-1"
+instance_type   = "t3.small"
+s3_bucket_name  = "waypoint-project-media-985096928297-us-east-1-an"
+
+github_org      = "Nihannn-18"
+github_repo     = "Nexora_Waypoint"
+deploy_branches = ["development", "main"]

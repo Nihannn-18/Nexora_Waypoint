@@ -78,13 +78,22 @@ a session lasts (default `12h`); see `docs/api.md`.
 AWS is the **hosted deployment target**; Docker Compose above is the reproducible fallback.
 Neither replaces the other, and AWS is never required to run locally.
 
-The hosted stack is EC2 (Nginx + Next.js + Go API) with a private **S3** bucket for media,
-**Neon** PostgreSQL and **RabbitMQ**. Configuration is entirely environment-driven
-(`MEDIA_STORAGE=s3`, `S3_BUCKET`, `AWS_REGION`, `DATABASE_URL`); credentials come from an EC2
-instance role, never the repository. `/healthz` and `/readyz` expose liveness and readiness.
+The hosted topology splits the app across managed/serverless hosting and a small EC2 host:
 
-Full procedure: [`docs/deployment.md`](docs/deployment.md). Media storage is a **team
-deployment decision**, not a Challenge Booklet requirement.
+- **Vercel** serves `apps/web` (Next.js) over HTTPS.
+- **EC2** runs the containerised Go API and **RabbitMQ** (Docker Compose), behind **Caddy**
+  for HTTPS on a free `sslip.io` hostname — no domain purchase.
+- **Neon** provides PostgreSQL and a **private S3** bucket stores media
+  (`MEDIA_STORAGE=s3`).
+- Images are built in **GitHub Actions**, pushed to **ECR** with a commit-SHA tag using
+  **GitHub OIDC** (no AWS access keys), and deployed to the instance over **SSM Run
+  Command** — the repository is never cloned onto EC2.
+
+Configuration is entirely environment-driven. Production secrets live in **SSM Parameter
+Store** (`/waypoint/prod/*`, SecureString) and are read by the least-privilege EC2 instance
+role; nothing is committed. `/healthz` and `/readyz` expose liveness and readiness. Full
+procedure, rollback and troubleshooting: [`docs/deployment.md`](docs/deployment.md). Media
+storage is a **team deployment decision**, not a Challenge Booklet requirement.
 
 ---
 

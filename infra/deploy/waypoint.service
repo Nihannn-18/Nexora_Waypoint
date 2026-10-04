@@ -1,0 +1,16 @@
+[Unit]
+Description=Waypoint production stack (Docker Compose: RabbitMQ, Caddy, Go API)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/waypoint
+ExecStart=/usr/local/bin/waypoint-deploy.sh
+ExecStop=/usr/bin/docker compose --env-file /opt/waypoint/config.env -f /opt/waypoint/docker-compose.prod.yml down
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
