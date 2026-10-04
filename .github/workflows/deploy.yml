@@ -36,33 +36,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # TEMPORARY DIAGNOSTIC — decodes only non-secret OIDC claims. Removed
-      # immediately after the subject mismatch is proven.
-      - name: DIAG OIDC claims
-        run: |
-          set -euo pipefail
-          echo "github.repository=${{ github.repository }}"
-          echo "github.event_name=${{ github.event_name }}"
-          echo "github.ref=${{ github.ref }}"
-          echo "github.ref_name=${{ github.ref_name }}"
-          echo "github.sha=${{ github.sha }}"
-          echo "vars.AWS_DEPLOY_ROLE_ARN=${{ vars.AWS_DEPLOY_ROLE_ARN }}"
-          IDT_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
-          IDT_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
-          if [ -z "${IDT_URL:-}" ]; then echo "ID token request URL not available"; exit 1; fi
-          OIDC_JSON="$(curl -sS -H "Authorization: bearer ${IDT_TOKEN}" "${IDT_URL}&audience=sts.amazonaws.com")"
-          JWT="$(printf '%s' "${OIDC_JSON}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["value"])')"
-          python3 - "$JWT" "$IDT_URL" <<'PY'
-          import sys, base64, json
-          jwt, idt_url = sys.argv[1], sys.argv[2]
-          def b64(s): return base64.urlsafe_b64decode(s + '=' * (-len(s) % 4))
-          payload = json.loads(b64(jwt.split('.')[1]))
-          for k in ("sub", "aud", "repository", "ref", "event_name"):
-              print(f"claim.{k}={payload.get(k)}")
-          # Confirm the issued token audience matches what was requested.
-          print("requested_token_url_host=%s" % idt_url.split('?')[0])
-          PY
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
