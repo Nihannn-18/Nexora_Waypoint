@@ -3,6 +3,7 @@ package orders
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,9 @@ import (
 // Routes implemented (docs/api.md "Store manager"):
 //
 //	POST /api/v1/orders            — create (store manager owns the outlet)
+//	GET  /api/v1/orders            — filtered, paged list (dispatcher, store manager)
+//	POST /api/v1/orders/close      — close the planning queue (dispatcher)
+//	GET  /api/v1/orders/queue      — confirmed orders in the closed queue (dispatcher)
 //	GET  /api/v1/orders/{id}       — read one, scope-enforced
 //	POST /api/v1/orders/{id}/confirm — confirm before the cutoff
 //
@@ -36,8 +40,18 @@ func NewHandler(service *Service, authMiddleware *auth.Middleware) *Handler {
 // RegisterRoutes mounts the order endpoints on the API mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/orders", h.auth.RequireAuthenticated(http.HandlerFunc(h.Create)))
+	// Listing is for the roles that work with orders as orders. Loaders and
+	// drivers reach their orders through their routes instead.
+	mux.Handle("GET /api/v1/orders", h.auth.RequireAnyRole(
+		[]domain.Role{domain.RoleDispatcher, domain.RoleStoreManager}, http.HandlerFunc(h.List)))
 	mux.Handle("GET /api/v1/orders/{id}", h.auth.RequireAuthenticated(http.HandlerFunc(h.Get)))
 	mux.Handle("POST /api/v1/orders/{id}/confirm", h.auth.RequireAuthenticated(http.HandlerFunc(h.Confirm)))
+	// Closing the planning queue is a dispatcher action; the queue read is for
+	// the dispatcher's planning board.
+	mux.Handle("POST /api/v1/orders/close", h.auth.RequireRole(
+		domain.RoleDispatcher, http.HandlerFunc(h.CloseQueue)))
+	mux.Handle("GET /api/v1/orders/queue", h.auth.RequireRole(
+		domain.RoleDispatcher, http.HandlerFunc(h.Queue)))
 }
 
 type createOrderRequest struct {
@@ -55,6 +69,8 @@ type lineRequest struct {
 type orderLineResponse struct {
 	OrderItemID          string  `json:"orderItemId"`
 	ItemID               string  `json:"itemId"`
+	SKU                  string  `json:"sku"`
+	Name                 string  `json:"name"`
 	Quantity             int     `json:"quantity"`
 	UnitWeightKgSnapshot float64 `json:"unitWeightKgSnapshot"`
 	UnitVolumeM3Snapshot float64 `json:"unitVolumeM3Snapshot"`
@@ -85,6 +101,8 @@ func toResponse(o Order) orderResponse {
 		lines = append(lines, orderLineResponse{
 			OrderItemID:          ln.OrderItemID,
 			ItemID:               ln.ItemID,
+			SKU:                  ln.SKU,
+			Name:                 ln.Name,
 			Quantity:             ln.Quantity,
 			UnitWeightKgSnapshot: ln.UnitWeightKgSnapshot,
 			UnitVolumeM3Snapshot: ln.UnitVolumeM3Snapshot,
@@ -168,6 +186,196 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toResponse(order))
+}
+
+type listResponse struct {
+	Orders []orderResponse `json:"orders"`
+	Total  int             `json:"total"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
+}
+
+// List handles GET /api/v1/orders. Every filter is applied in SQL, so a page
+// and its total always describe the same filtered set.
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	identity, err := auth.MustIdentity(r.Context())
+	if err != nil {
+		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
+		return
+	}
+	q := r.URL.Query()
+	filter := Filter{
+		OutletID: strings.TrimSpace(q.Get("outletId")),
+		Status:   strings.TrimSpace(q.Get("status")),
+		Brand:    strings.TrimSpace(q.Get("brand")),
+		DepotID:  strings.TrimSpace(q.Get("depotId")),
+		District: strings.TrimSpace(q.Get("district")),
+		Search:   q.Get("search"),
+	}
+	if v := q.Get("deliveryDate"); v != "" {
+		d, err := parseDate(v)
+		if err != nil {
+			httpx.WriteValidation(w, []httpx.FieldError{{Field: "deliveryDate", Message: "must be YYYY-MM-DD"}})
+			return
+		}
+		filter.DeliveryDate = &d
+	}
+	for _, p := range []struct {
+		name string
+		dst  *int
+	}{{"limit", &filter.Limit}, {"offset", &filter.Offset}} {
+		if v := q.Get(p.name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				httpx.WriteValidation(w, []httpx.FieldError{{Field: p.name, Message: "must be a whole number"}})
+				return
+			}
+			*p.dst = n
+		}
+	}
+
+	page, err := h.service.ListPage(r.Context(), filter, scopeOf(identity))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := listResponse{Orders: make([]orderResponse, 0, len(page.Orders)), Total: page.Total, Limit: page.Limit, Offset: page.Offset}
+	for _, o := range page.Orders {
+		out.Orders = append(out.Orders, toResponse(o))
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// closeQueueRequest is the body of POST /orders/close. `brands` narrows the
+// close to the brands the dispatcher confirmed; empty means every brand.
+type closeQueueRequest struct {
+	Date    string   `json:"date"`
+	DepotID string   `json:"depotId"`
+	Brands  []string `json:"brands,omitempty"`
+}
+
+type closeQueueResponse struct {
+	Date          string       `json:"date"`
+	DepotID       string       `json:"depotId"`
+	Brands        []string     `json:"brands"`
+	Closed        int          `json:"closed"`
+	AlreadyClosed []string     `json:"alreadyClosed"`
+	Queue         listResponse `json:"queue"`
+}
+
+// queueResponse is the closed-queue read: the confirmed orders for a date and
+// depot plus the brands whose queue is already closed.
+type queueResponse struct {
+	Orders       []orderResponse `json:"orders"`
+	Total        int             `json:"total"`
+	Limit        int             `json:"limit"`
+	Offset       int             `json:"offset"`
+	ClosedBrands []string        `json:"closedBrands"`
+}
+
+// CloseQueue handles POST /api/v1/orders/close. It freezes the queue for the
+// given delivery date and depot, per brand when `brands` is supplied and for
+// every brand otherwise. Closing is idempotent; the response reports the closure
+// state and the resulting queue contents so the board can go read-only.
+func (h *Handler) CloseQueue(w http.ResponseWriter, r *http.Request) {
+	identity, err := auth.MustIdentity(r.Context())
+	if err != nil {
+		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
+		return
+	}
+	var req closeQueueRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteBadRequest(w, err.Error())
+		return
+	}
+	date, err := parseDate(req.Date)
+	if err != nil {
+		httpx.WriteValidation(w, []httpx.FieldError{{Field: "date", Message: "must be YYYY-MM-DD"}})
+		return
+	}
+	brands := make([]domain.Brand, 0, len(req.Brands))
+	for _, b := range req.Brands {
+		brands = append(brands, domain.Brand(strings.TrimSpace(b)))
+	}
+
+	result, err := h.service.CloseQueue(r.Context(), CloseQueueInput{
+		Date: date, DepotID: req.DepotID, Brands: brands, Actor: identity.UserID,
+	}, scopeOf(identity))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// The closed queue is the CONFIRMED orders for the date at the depot.
+	page, err := h.service.ListPage(r.Context(), Filter{
+		DeliveryDate: &date,
+		DepotID:      req.DepotID,
+		Status:       string(domain.OrderConfirmed),
+		Limit:        maxPageSize,
+	}, scopeOf(identity))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	queue := listResponse{Orders: make([]orderResponse, 0, len(page.Orders)), Total: page.Total, Limit: page.Limit, Offset: page.Offset}
+	for _, o := range page.Orders {
+		queue.Orders = append(queue.Orders, toResponse(o))
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, closeQueueResponse{
+		Date: result.Date, DepotID: result.DepotID, Brands: result.Brands,
+		Closed: result.Closed, AlreadyClosed: result.AlreadyClosed, Queue: queue,
+	})
+}
+
+// Queue handles GET /api/v1/orders/queue?date=&depotId=&brand=. It returns the
+// confirmed orders in the closed queue for a date and depot, so the planning
+// board can list them read-only after the queue is closed.
+func (h *Handler) Queue(w http.ResponseWriter, r *http.Request) {
+	identity, err := auth.MustIdentity(r.Context())
+	if err != nil {
+		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
+		return
+	}
+	q := r.URL.Query()
+	dateStr := q.Get("date")
+	if dateStr == "" {
+		httpx.WriteValidation(w, []httpx.FieldError{{Field: "date", Message: "is required (YYYY-MM-DD)"}})
+		return
+	}
+	date, err := parseDate(dateStr)
+	if err != nil {
+		httpx.WriteValidation(w, []httpx.FieldError{{Field: "date", Message: "must be YYYY-MM-DD"}})
+		return
+	}
+	page, err := h.service.ListPage(r.Context(), Filter{
+		DeliveryDate: &date,
+		DepotID:      q.Get("depotId"),
+		Brand:        q.Get("brand"),
+		District:     q.Get("district"),
+		Status:       string(domain.OrderConfirmed),
+		Limit:        maxPageSize,
+	}, scopeOf(identity))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	closedBrands, err := h.service.ClosedBrands(r.Context(), date, q.Get("depotId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := queueResponse{
+		Orders:       make([]orderResponse, 0, len(page.Orders)),
+		Total:        page.Total,
+		Limit:        page.Limit,
+		Offset:       page.Offset,
+		ClosedBrands: closedBrands,
+	}
+	for _, o := range page.Orders {
+		out.Orders = append(out.Orders, toResponse(o))
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // Confirm handles POST /api/v1/orders/{id}/confirm.

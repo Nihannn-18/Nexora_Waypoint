@@ -360,6 +360,35 @@ Inter and Cousine ship with the app via Fontsource instead of Google Fonts. The 
 surface has to render correctly with no connectivity, and a CDN stylesheet is one more
 thing that fails on a hill-country route.
 
+### Dispatcher workspace
+
+The dispatcher screens follow the Day 5 frames' layout and language (KPI cards that link to
+the screen that resolves them, mono section headings, trip cards with weight / volume /
+time-budget meters, the overcapacity banner, the rule panel with E-0x ids). Where a frame
+needs data or an action the API does not have, the screen says so instead of faking it:
+
+- **Deferral reasons are given inline, not in the D-04 modal.** Confirmation only accepts
+  the engine's own DEFER proposals, so the dispatcher's decision is the _reason_, not the
+  deferral. Each deferral has its own reason field, Confirm stays disabled until every one
+  is filled, and one click applies the engine's explanation to every order blocked by the
+  same rule (DG-A's bulk apply).
+- **No drag-and-drop or "feasible alternative in one click" on D-03.** Confirmation accepts
+  only the engine's vehicle and trip for each order, and `POST /allocations/validate` /
+  `recalculate` are not implemented, so the plan is reviewed and confirmed as proposed.
+- **No "Close queue" on D-02** (`POST /orders/close` is not implemented) and **no "Notify N
+  stores"** on confirm (confirmation does not notify stores).
+- **D-06 shows progress from each stop's recorded status.** Driver, ETA and offline/sync
+  status per trip need `GET /routes/live`, which is not implemented.
+- **D-08 forecast is not in the navigation.** `GET /forecast/demand` is not implemented and
+  forecasting belongs to the Datathon.
+- **Added: Audit trail and Notifications.** Not Day 5 screens; they surface the audit and
+  in-app notification APIs.
+- **Dropped from the frames:** driver names, plate numbers, live temperatures, stop ETAs,
+  "Optimal match" suggestions and System Settings. Nothing in the data supports them, and
+  CLAUDE.md rules out settings pages.
+- **Surfaces use the shared tokens** (grey `page`, white `card`) rather than the frame's
+  white page and grey sidebar, so the dispatcher matches the other three workspaces.
+
 ### Any further departures
 
 Record them here as they happen, with the reason. An undocumented departure costs marks

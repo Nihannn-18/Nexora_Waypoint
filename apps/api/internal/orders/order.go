@@ -71,6 +71,10 @@ type OrderLine struct {
 	OrderID     string
 	ItemID      string
 	Quantity    int
+	// SKU and Name are the item's current display identity, joined on read for
+	// the order detail. They are not snapshots: only the dimensions are frozen.
+	SKU  string
+	Name string
 	// Snapshot values captured from the catalogue at creation.
 	UnitWeightKgSnapshot float64
 	UnitVolumeM3Snapshot float64

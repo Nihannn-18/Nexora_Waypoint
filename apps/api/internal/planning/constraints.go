@@ -280,6 +280,48 @@ func computeTrip(in Input, c Candidate, weight, volume float64) (PlannedTrip, []
 	return trip, arrivals
 }
 
+// RouteStopSchedule is one stop's planned arrival and handling time for a
+// confirmed route. ArrivalMin is minutes since midnight (business timezone; the
+// route date supplies the day); ServiceMin is the handling allowance the official
+// formula applies to the stop.
+type RouteStopSchedule struct {
+	ArrivalMin int
+	ServiceMin int
+}
+
+// ScheduleRoute reuses the authoritative arrival walk to compute each stop's
+// planned arrival and service time for a confirmed route, in the given order.
+// Confirmation persists these so the loader and driver read a stored fact rather
+// than re-deriving the formula. It performs no feasibility checks; it is the same
+// arithmetic the trip-time and window rules use.
+func ScheduleRoute(in Input, vehicle Vehicle, tripNo int, orders []Order) ([]RouteStopSchedule, error) {
+	if len(orders) == 0 {
+		return nil, nil
+	}
+	cand := Candidate{Vehicle: vehicle, TripNo: tripNo, Orders: orders}
+	brand := orders[0].Brand
+	district := orders[0].District
+	travel := in.Travel[vehicle.DepotID+"|"+district]
+
+	// The arrival walk returns "HH:MM" strings; convert to minutes since
+	// midnight so the caller can place them on the route date in its timezone.
+	arrivals := arrivalsFor(in, cand, travel)
+	out := make([]RouteStopSchedule, 0, len(orders))
+	for i, o := range orders {
+		svc := in.ServiceAllowances[string(brand)+"|"+dockKey(in, o)]
+		arrivalMin := 0
+		if i < len(arrivals) {
+			m, err := ParseClock(arrivals[i])
+			if err != nil {
+				return nil, err
+			}
+			arrivalMin = m
+		}
+		out = append(out, RouteStopSchedule{ArrivalMin: arrivalMin, ServiceMin: svc})
+	}
+	return out, nil
+}
+
 // orderIDs returns order ids in the candidate's (already stable) order.
 func orderIDs(orders []Order) []string {
 	out := make([]string, len(orders))

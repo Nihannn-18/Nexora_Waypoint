@@ -205,6 +205,49 @@ func (s *Service) List(ctx context.Context, filter Filter, scope Scope) ([]Order
 	return s.repo.List(ctx, filter)
 }
 
+// Page is one page of a filtered order listing plus the total match count.
+type Page struct {
+	Orders []Order
+	Total  int
+	Limit  int
+	Offset int
+}
+
+// maxPageSize caps one page so a caller cannot pull the whole table at once.
+const maxPageSize = 200
+
+// ListPage returns one page of orders matching filter, scoped to the caller,
+// with the total number of matches. The total is counted with the same scoped
+// filter, so it never includes orders the caller may not see.
+func (s *Service) ListPage(ctx context.Context, filter Filter, scope Scope) (Page, error) {
+	if filter.Brand != "" && !domain.Brand(filter.Brand).Valid() {
+		return Page{}, ValidationError{Field: "brand", Message: "must be one of FRESH, STYLE, TECH"}
+	}
+	if filter.Limit < 0 || filter.Limit > maxPageSize {
+		return Page{}, ValidationError{Field: "limit", Message: fmt.Sprintf("must be between 1 and %d", maxPageSize)}
+	}
+	if filter.Limit == 0 {
+		filter.Limit = 50
+	}
+	if filter.Offset < 0 {
+		return Page{}, ValidationError{Field: "offset", Message: "must not be negative"}
+	}
+	orders, err := s.List(ctx, filter, scope)
+	if err != nil {
+		return Page{}, err
+	}
+	// List has already rejected an out-of-scope outlet; pin the count to the
+	// same scope it applied.
+	if !scope.AllOutlets() {
+		filter.OutletID = scope.OutletID
+	}
+	total, err := s.repo.Count(ctx, filter)
+	if err != nil {
+		return Page{}, err
+	}
+	return Page{Orders: orders, Total: total, Limit: filter.Limit, Offset: filter.Offset}, nil
+}
+
 // Confirm moves a PLACED (or re-entered DEFERRED) order to CONFIRMED, applying
 // the cutoff policy. Confirming again is a conflict, not a silent no-op.
 //
@@ -219,6 +262,90 @@ func (s *Service) Confirm(ctx context.Context, orderID string, scope Scope) (Ord
 		return Order{}, fmt.Errorf("%w: cannot confirm an order in status %s", ErrConflict, order.Status)
 	}
 	return s.repo.UpdateStatus(ctx, order.OrderID, string(domain.OrderConfirmed))
+}
+
+// CloseQueue freezes the planning queue for a delivery date and depot. It is a
+// dispatcher action. `brands` is the set the dispatcher confirmed; empty means
+// every brand. Closing is recorded per (date, depot, brand) and is idempotent:
+// closing an already-closed brand writes nothing and is not an error.
+//
+// The date and the acting depot are server-derived from the injected clock and
+// the caller's scope — the browser never supplies the delivery day as a trusted
+// fact beyond the explicit request, and never supplies the actor.
+type CloseQueueInput struct {
+	Date    time.Time
+	DepotID string
+	Brands  []domain.Brand
+	// Actor is the confirming user id, recorded on the closure row. It is set by
+	// the handler from the authenticated identity, never from the request body.
+	Actor string
+}
+
+// CloseQueueResult reports what the close did, so the UI can show a clear state.
+type CloseQueueResult struct {
+	Date          string   `json:"date"`
+	DepotID       string   `json:"depotId"`
+	Brands        []string `json:"brands"`
+	Closed        int      `json:"closed"`
+	AlreadyClosed []string `json:"alreadyClosed"`
+}
+
+// CloseQueue closes the planning queue for a date and depot, optionally limited
+// to the brands the dispatcher confirmed. Every brand is validated; an unknown
+// brand is a field error. A repeat close is idempotent.
+func (s *Service) CloseQueue(ctx context.Context, in CloseQueueInput, scope Scope) (CloseQueueResult, error) {
+	if in.Date.IsZero() {
+		return CloseQueueResult{}, ValidationError{Field: "date", Message: "is required"}
+	}
+	if scope.Role != domain.RoleDispatcher {
+		return CloseQueueResult{}, fmt.Errorf("%w: only a dispatcher may close the queue", ErrInvalid)
+	}
+	depotID := strings.TrimSpace(in.DepotID)
+	if depotID == "" {
+		// A dispatcher plans both depots but always works one at a time. The
+		// depot is required rather than guessed.
+		return CloseQueueResult{}, ValidationError{Field: "depotId", Message: "is required"}
+	}
+
+	brands := in.Brands
+	if len(brands) == 0 {
+		brands = []domain.Brand{domain.BrandFresh, domain.BrandStyle, domain.BrandTech}
+	}
+	seen := map[domain.Brand]bool{}
+	names := make([]string, 0, len(brands))
+	for _, b := range brands {
+		if !b.Valid() {
+			return CloseQueueResult{}, ValidationError{Field: "brand", Message: "must be one of FRESH, STYLE, TECH"}
+		}
+		if seen[b] {
+			continue
+		}
+		seen[b] = true
+		names = append(names, string(b))
+	}
+
+	date := dateOnly(in.Date)
+	already, err := s.repo.ClosedBrands(ctx, date, depotID)
+	if err != nil {
+		return CloseQueueResult{}, err
+	}
+	closed, err := s.repo.CloseQueue(ctx, date, depotID, names, in.Actor)
+	if err != nil {
+		return CloseQueueResult{}, err
+	}
+	return CloseQueueResult{
+		Date:          date.Format("2006-01-02"),
+		DepotID:       depotID,
+		Brands:        names,
+		Closed:        closed,
+		AlreadyClosed: already,
+	}, nil
+}
+
+// ClosedBrands reports which brands' queues are closed for a date and depot, so
+// the planning board can render the queue read-only and disable Close.
+func (s *Service) ClosedBrands(ctx context.Context, date time.Time, depotID string) ([]string, error) {
+	return s.repo.ClosedBrands(ctx, dateOnly(date), strings.TrimSpace(depotID))
 }
 
 // now returns the injected clock's instant, falling back to the wall clock only

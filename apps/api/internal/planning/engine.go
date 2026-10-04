@@ -96,6 +96,13 @@ func (e *Engine) Plan(in Input) Result {
 
 // tryPlace attempts to place one whole order onto a run trip. It returns true on
 // success.
+//
+// Budget accounting: budget[v] is the vehicle's minutes already committed for
+// the day, including the current contribution of its open trip. When we test an
+// extension we first subtract the open trip's old minutes so the candidate's
+// total is measured once, then re-accrue the new total. Accruing the delta (not
+// the whole trip again) is what makes trip 2 see trip 1's final, possibly
+// extended, minutes — the bug that let a Fresh vehicle exceed 270.
 func tryPlace(in Input, o Order, g groupKey, budget map[string]VehicleDayBudget, committed map[string]int, openTrips map[string]int, fuelAccrued map[string]float64, runTrips *[]runTrip) bool {
 	for _, v := range compatibleVehicles(in, g) {
 		weeklyUsed := in.FuelUsedL[v.VehicleID] + fuelAccrued[v.VehicleID]
@@ -104,12 +111,18 @@ func tryPlace(in Input, o Order, g groupKey, budget map[string]VehicleDayBudget,
 			rt := &(*runTrips)[idx]
 			if rt.brand == g.Brand && rt.district == g.District {
 				extended := append(append([]Order{}, rt.orders...), o)
+				// The vehicle's budget excluding this trip's current minutes, so
+				// the candidate's full total is checked exactly once.
+				others := withoutTrip(budget[v.VehicleID], rt.computed)
 				cand := Candidate{
 					Vehicle: v, TripNo: rt.tripNo, Orders: extended,
-					DayBudget: budget[v.VehicleID], WeeklyFuelUsedL: weeklyUsed,
+					DayBudget: others, WeeklyFuelUsedL: weeklyUsed,
 				}
 				verdict := CheckTrip(in, cand)
 				if verdict.OK {
+					// Replace this trip's budget contribution with the extended
+					// trip's total, leaving other trips' minutes in place.
+					budget[v.VehicleID] = addTrip(others, verdict.Trip)
 					rt.orders = extended
 					rt.computed = verdict.Trip
 					return true
@@ -134,7 +147,7 @@ func tryPlace(in Input, o Order, g groupKey, budget map[string]VehicleDayBudget,
 			})
 			openTrips[v.VehicleID] = len(*runTrips) - 1
 			committed[v.VehicleID]++
-			accrue(budget, v.VehicleID, verdict.Trip)
+			budget[v.VehicleID] = addTrip(budget[v.VehicleID], verdict.Trip)
 			if fuel, err := tripFuelLitres(in, verdict.Trip, v); err == nil {
 				fuelAccrued[v.VehicleID] += fuel
 			}
@@ -159,15 +172,27 @@ func compatibleVehicles(in Input, g groupKey) []Vehicle {
 	return out
 }
 
-// accrue adds a completed trip's minutes to the vehicle's day budget.
-func accrue(budget map[string]VehicleDayBudget, vehicleID string, t PlannedTrip) {
-	b := budget[vehicleID]
+// addTrip returns the budget with one more completed trip's minutes added to the
+// pool that trip's brand draws on (Fresh alone; Style and Tech share one pool).
+func addTrip(b VehicleDayBudget, t PlannedTrip) VehicleDayBudget {
 	if t.Brand == domain.BrandFresh {
 		b.FreshMinutesUsed += t.TotalTripMin
 	} else {
 		b.StyleTechMinutesUsed += t.TotalTripMin
 	}
-	budget[vehicleID] = b
+	return b
+}
+
+// withoutTrip returns the budget with one trip's minutes removed from its pool.
+// It is used when re-checking an extension: the vehicle's other committed trips
+// must remain counted, but the trip being extended is measured fresh.
+func withoutTrip(b VehicleDayBudget, t PlannedTrip) VehicleDayBudget {
+	if t.Brand == domain.BrandFresh {
+		b.FreshMinutesUsed -= t.TotalTripMin
+	} else {
+		b.StyleTechMinutesUsed -= t.TotalTripMin
+	}
+	return b
 }
 
 // bestEffortDeferral explains why an order could not be placed: it re-checks it

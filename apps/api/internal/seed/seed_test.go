@@ -217,3 +217,50 @@ func TestDemoDayDatasets(t *testing.T) {
 		}
 	}
 }
+
+// TestDemoOperatingDay pins the rule the demo calendar extension derives: the
+// supplied file marks Saturday operating and Sunday not, so operations run
+// Monday–Saturday. The supplied calendar.csv ends before the demo day, so this
+// rule is what guarantees the demo day is operable without editing the file.
+func TestDemoOperatingDay(t *testing.T) {
+	operating := []string{"2026-09-25", "2026-09-26", "2026-09-28"} // Fri, Sat, Mon
+	closed := []string{"2026-09-27"}                                // Sunday
+	for _, s := range operating {
+		d, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !demoOperatingDay(d) {
+			t.Errorf("%s should be operating", s)
+		}
+	}
+	for _, s := range closed {
+		d, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if demoOperatingDay(d) {
+			t.Errorf("%s should not be operating", s)
+		}
+	}
+}
+
+// TestSuppliedCalendarEndsBeforeDemoDay documents the gap this fix addresses:
+// the supplied calendar.csv does not reach the demo delivery day, so relying on
+// it alone would make POST /allocations/suggest fail. The seed extension fills
+// the window at start-up.
+func TestSuppliedCalendarEndsBeforeDemoDay(t *testing.T) {
+	rows, err := readCSV("data/calendar.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var maxDate string
+	for _, r := range rows {
+		if r["date"] > maxDate {
+			maxDate = r["date"]
+		}
+	}
+	if maxDate >= demoDeliveryDate {
+		t.Fatalf("supplied calendar now reaches %s (>= %s); the seed extension may be redundant", maxDate, demoDeliveryDate)
+	}
+}

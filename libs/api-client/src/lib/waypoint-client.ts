@@ -7,9 +7,15 @@
  */
 
 import type {
+  AppNotification,
+  AuditQuery,
+  AuditRecord,
   Brand,
   ClockTime,
+  CloseQueueRequest,
+  CloseQueueResponse,
   ConfirmAllocationRequest,
+  ConfirmAllocationResponse,
   CreateOrderRequest,
   CreateReceiptRequest,
   CustomerOrder,
@@ -18,24 +24,31 @@ import type {
   DeliveryEventRequest,
   DemandForecastPoint,
   DemandForecastQuery,
+  Depot,
   DockType,
   IsoDate,
   IsoDateTime,
+  Item,
+  ListOrdersQuery,
   LiveRouteState,
   LoadItemRecord,
   LoginRequest,
   LoginResponse,
   MetaResponse,
+  OrderPage,
+  OrderQueueQuery,
   Outlet,
   ParkingConstraint,
   PlanningJob,
   PlanningResults,
+  QueueResponse,
   RecordShortfallRequest,
   ReorderLegsRequest,
   Receipt,
   Route,
   RouteLeg,
   SuggestPlanRequest,
+  SuggestPlanResponse,
   SyncEventsRequest,
   SyncResult,
   TempRequirement,
@@ -172,6 +185,14 @@ export class WaypointClient {
     return this.http.get<CustomerOrder>(`/orders/${orderId}`);
   }
 
+  /**
+   * One page of orders, filtered server-side. A store manager is pinned to
+   * their outlet by the server; a dispatcher sees every outlet.
+   */
+  listOrders(query: ListOrdersQuery = {}): Promise<OrderPage> {
+    return this.http.get<OrderPage>('/orders', { query: { ...query } });
+  }
+
   getOrderEta(
     orderId: string,
   ): Promise<{ eta: string | null; status: string }> {
@@ -184,24 +205,27 @@ export class WaypointClient {
 
   /* --- Dispatcher: queue ------------------------------------------------- */
 
-  getOrderQueue(
-    date: IsoDate,
-    depotId?: string,
-  ): Promise<readonly CustomerOrder[]> {
-    return this.http.get<readonly CustomerOrder[]>('/orders/queue', {
-      query: { date, depotId },
+  /** The closed-queue page of CONFIRMED orders for a date and depot. */
+  getOrderQueue(query: OrderQueueQuery): Promise<QueueResponse> {
+    return this.http.get<QueueResponse>('/orders/queue', {
+      query: { ...query },
     });
   }
 
-  closeQueue(date: IsoDate, depotId?: string): Promise<{ closed: number }> {
-    return this.http.post('/orders/close', { date, depotId });
+  /**
+   * Freeze the planning queue. `brands` narrows the close to the brands the
+   * dispatcher confirmed; omit it to close every brand. Idempotent: closing an
+   * already-closed brand writes nothing and is not an error.
+   */
+  closeQueue(body: CloseQueueRequest): Promise<CloseQueueResponse> {
+    return this.http.post<CloseQueueResponse>('/orders/close', body);
   }
 
   /* --- Dispatcher: planning --------------------------------------------- */
 
   /** Returns 202 immediately; poll `getPlanningJob` until COMPLETED. */
-  suggestPlan(body: SuggestPlanRequest): Promise<PlanningJob> {
-    return this.http.post<PlanningJob>('/allocations/suggest', body);
+  suggestPlan(body: SuggestPlanRequest): Promise<SuggestPlanResponse> {
+    return this.http.post<SuggestPlanResponse>('/allocations/suggest', body);
   }
 
   getPlanningJob(jobId: string): Promise<PlanningJob> {
@@ -218,22 +242,41 @@ export class WaypointClient {
     return this.http.post<ValidationResponse>('/allocations/validate', body);
   }
 
-  /** Persists the plan transactionally after a full server-side revalidation. */
-  confirmAllocation(body: ConfirmAllocationRequest): Promise<{
-    routeIds: readonly string[];
-    deferralIds: readonly string[];
-  }> {
-    return this.http.post('/allocations/confirm', body);
+  /**
+   * Persists the plan in one transaction after revalidating it against current
+   * state. A retry of an already-confirmed plan is a 409, never a duplicate.
+   */
+  confirmAllocation(
+    body: ConfirmAllocationRequest,
+  ): Promise<ConfirmAllocationResponse> {
+    return this.http.post<ConfirmAllocationResponse>(
+      '/allocations/confirm',
+      body,
+    );
   }
 
   /* --- Dispatcher: routes ----------------------------------------------- */
+
+  /** Confirmed routes for a date, with their legs, ordered by vehicle and trip. */
+  async listRoutes(query: {
+    date: IsoDate;
+    depotId?: string;
+  }): Promise<readonly Route[]> {
+    const body = await this.http.get<{ routes: readonly Route[] }>('/routes', {
+      query,
+    });
+    return body.routes;
+  }
 
   getRoute(routeId: string): Promise<Route> {
     return this.http.get<Route>(`/routes/${routeId}`);
   }
 
-  getRouteLegs(routeId: string): Promise<readonly RouteLeg[]> {
-    return this.http.get<readonly RouteLeg[]>(`/routes/${routeId}/legs`);
+  async getRouteLegs(routeId: string): Promise<readonly RouteLeg[]> {
+    const body = await this.http.get<{ legs: readonly RouteLeg[] }>(
+      `/routes/${routeId}/legs`,
+    );
+    return body.legs;
   }
 
   /** Rejected with 409 when `routeVersion` is stale. */
@@ -253,11 +296,14 @@ export class WaypointClient {
 
   /* --- Dispatcher: deferrals ------------------------------------------- */
 
-  getDeferrals(query?: {
-    date?: IsoDate;
+  /** The full deferral history, newest first; `outletId` narrows server-side. */
+  async getDeferrals(query?: {
     outletId?: string;
   }): Promise<readonly DeferralLogEntry[]> {
-    return this.http.get<readonly DeferralLogEntry[]>('/deferrals', { query });
+    const body = await this.http.get<{
+      deferrals: readonly DeferralLogEntry[];
+    }>('/deferrals', { query });
+    return body.deferrals;
   }
 
   deferOrder(
@@ -324,19 +370,84 @@ export class WaypointClient {
     return this.http.get('/sync/status');
   }
 
-  /* --- Reference data -------------------------------------------------- */
+  /* --- Audit and notifications ---------------------------------------- */
 
-  getOutlets(query?: {
-    depotId?: string;
-    brand?: string;
-  }): Promise<readonly Outlet[]> {
-    return this.http.get<readonly Outlet[]>('/outlets', { query });
+  /** Dispatcher-only, newest first. Page with `limit` (≤ 200) and `offset`. */
+  async listAudit(query: AuditQuery = {}): Promise<readonly AuditRecord[]> {
+    const body = await this.http.get<{ records: readonly AuditRecord[] }>(
+      '/audit',
+      { query: { ...query } },
+    );
+    return body.records;
   }
 
-  getVehicles(query?: {
+  /** The caller's own notifications, newest first. */
+  async listNotifications(query?: {
+    limit?: number;
+    offset?: number;
+  }): Promise<readonly AppNotification[]> {
+    const body = await this.http.get<{
+      notifications: readonly AppNotification[];
+    }>('/notifications', { query });
+    return body.notifications;
+  }
+
+  async getUnreadNotificationCount(): Promise<number> {
+    const body = await this.http.get<{ unread: number }>(
+      '/notifications/unread-count',
+    );
+    return body.unread;
+  }
+
+  /** Idempotent: marking an already-read notification is not an error. */
+  async markNotificationRead(id: string): Promise<void> {
+    await this.http.post(`/notifications/${id}/read`);
+  }
+
+  /** Returns how many notifications changed from unread to read. */
+  async markAllNotificationsRead(): Promise<number> {
+    const body = await this.http.post<{ markedRead: number }>(
+      '/notifications/read-all',
+    );
+    return body.markedRead;
+  }
+
+  /* --- Reference data -------------------------------------------------- */
+
+  /** The depots, with the internal `depotId` planning and routes filter by. */
+  async getDepots(): Promise<readonly Depot[]> {
+    const body = await this.http.get<{ depots: readonly Depot[] }>('/depots');
+    return body.depots;
+  }
+
+  async getOutlets(query?: { depotId?: string }): Promise<readonly Outlet[]> {
+    const body = await this.http.get<{ outlets: readonly Outlet[] }>(
+      '/outlets',
+      { query },
+    );
+    return body.outlets;
+  }
+
+  /** Vehicles with their availability on `date` (default: today on the API clock). */
+  async getVehicles(query?: {
     depotId?: string;
     date?: IsoDate;
   }): Promise<readonly Vehicle[]> {
-    return this.http.get<readonly Vehicle[]>('/vehicles', { query });
+    const body = await this.http.get<{ vehicles: readonly Vehicle[] }>(
+      '/vehicles',
+      { query },
+    );
+    return body.vehicles;
+  }
+
+  /** The SKU catalogue, used to name order lines. */
+  async listItems(query?: {
+    brand?: string;
+    search?: string;
+  }): Promise<readonly Item[]> {
+    const body = await this.http.get<{ items: readonly Item[] }>('/items', {
+      query,
+    });
+    return body.items;
   }
 }

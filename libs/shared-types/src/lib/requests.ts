@@ -3,7 +3,12 @@
  * Endpoint contracts are listed in docs/api.md.
  */
 
-import type { Brand, DeliveryFailureReason, TripNumber } from './domain';
+import type {
+  Brand,
+  DeliveryFailureReason,
+  OrderStatus,
+  TripNumber,
+} from './domain';
 import type {
   ClockTime,
   IsoDate,
@@ -34,9 +39,29 @@ export interface CreateOrderRequest {
   readonly notes?: string;
 }
 
+/** Query of GET /orders. Every filter is applied server-side. */
+export interface ListOrdersQuery {
+  readonly deliveryDate?: IsoDate;
+  readonly status?: OrderStatus;
+  readonly brand?: Brand;
+  readonly depotId?: string;
+  readonly district?: string;
+  readonly outletId?: string;
+  /** Matches the order number or outlet id, case-insensitively. */
+  readonly search?: string;
+  /** 1–200; the server defaults to 50. */
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
 export interface CloseQueueRequest {
   readonly date: IsoDate;
   readonly depotId?: string;
+  /**
+   * The brands the dispatcher confirmed. Omit to close every brand. Closing is
+   * per brand so one brand can be frozen while another keeps taking orders.
+   */
+  readonly brands?: readonly Brand[];
 }
 
 export interface OrderQueueQuery {
@@ -147,6 +172,21 @@ export interface DemandForecastQuery {
   readonly brand?: Brand;
   readonly weekFrom?: IsoWeek;
   readonly weekTo?: IsoWeek;
+}
+
+/* --- Audit ---------------------------------------------------------------- */
+
+/** Query of GET /audit. `from`/`to` are RFC 3339; `limit` ≤ 200. */
+export interface AuditQuery {
+  readonly actor?: string;
+  readonly action?: string;
+  readonly entityType?: string;
+  readonly entityId?: string;
+  readonly depotId?: string;
+  readonly from?: IsoDateTime;
+  readonly to?: IsoDateTime;
+  readonly limit?: number;
+  readonly offset?: number;
 }
 
 /* --- Live ----------------------------------------------------------------- */

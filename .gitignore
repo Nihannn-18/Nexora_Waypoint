@@ -68,3 +68,6 @@ apps/api/waypoint-worker
 # Task 2B files). A teammate keeps the originals locally; they are not tracked.
 docs/general-data/task1_test_inputs.csv
 docs/general-data/task2a_test_inputs.csv
+
+# TypeScript build info
+*.tsbuildinfo

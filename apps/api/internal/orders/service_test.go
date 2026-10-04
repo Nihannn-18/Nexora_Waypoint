@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -17,6 +18,11 @@ type fakeRepo struct {
 	byID      map[string]Order
 	statuses  map[string]string
 	createErr error
+	// lastCount is the filter the last Count call received, so a test can
+	// check the total was scoped like the page.
+	lastCount  Filter
+	closedRows map[string]bool
+	closedBy   string
 }
 
 func newFakeRepo() *fakeRepo {
@@ -52,6 +58,22 @@ func (f *fakeRepo) GetByNumber(_ context.Context, n string) (Order, error) {
 }
 
 func (f *fakeRepo) List(_ context.Context, filter Filter) ([]Order, error) {
+	out := f.matching(filter)
+	sort.Slice(out, func(i, j int) bool { return out[i].OrderNumber < out[j].OrderNumber })
+	start := min(filter.Offset, len(out))
+	end := len(out)
+	if filter.Limit > 0 {
+		end = min(start+filter.Limit, len(out))
+	}
+	return out[start:end], nil
+}
+
+func (f *fakeRepo) Count(_ context.Context, filter Filter) (int, error) {
+	f.lastCount = filter
+	return len(f.matching(filter)), nil
+}
+
+func (f *fakeRepo) matching(filter Filter) []Order {
 	out := make([]Order, 0)
 	for _, o := range f.byID {
 		if filter.OutletID != "" && o.OutletID != filter.OutletID {
@@ -60,9 +82,12 @@ func (f *fakeRepo) List(_ context.Context, filter Filter) ([]Order, error) {
 		if filter.Status != "" && string(o.Status) != filter.Status {
 			continue
 		}
+		if filter.Brand != "" && string(o.Brand) != filter.Brand {
+			continue
+		}
 		out = append(out, o)
 	}
-	return out, nil
+	return out
 }
 
 func (f *fakeRepo) UpdateStatus(_ context.Context, id string, status string) (Order, error) {
@@ -74,6 +99,34 @@ func (f *fakeRepo) UpdateStatus(_ context.Context, id string, status string) (Or
 	f.byID[id] = o
 	f.statuses[id] = status
 	return o, nil
+}
+
+// closed stores the closure rows keyed by date|depot|brand.
+func (f *fakeRepo) CloseQueue(_ context.Context, date time.Time, depotID string, brands []string, actor string) (int, error) {
+	if f.closedRows == nil {
+		f.closedRows = map[string]bool{}
+	}
+	f.closedBy = actor
+	n := 0
+	for _, b := range brands {
+		k := date.Format("2006-01-02") + "|" + depotID + "|" + b
+		if f.closedRows[k] {
+			continue
+		}
+		f.closedRows[k] = true
+		n++
+	}
+	return n, nil
+}
+
+func (f *fakeRepo) ClosedBrands(_ context.Context, date time.Time, depotID string) ([]string, error) {
+	out := make([]string, 0)
+	for _, b := range []string{"FRESH", "STYLE", "TECH"} {
+		if f.closedRows[date.Format("2006-01-02")+"|"+depotID+"|"+b] {
+			out = append(out, b)
+		}
+	}
+	return out, nil
 }
 
 type fakeCatalogue struct {
@@ -405,5 +458,71 @@ func TestServiceConfirmNotFound(t *testing.T) {
 	_, err := svc.Confirm(context.Background(), "missing", Scope{Role: domain.RoleDispatcher})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestServiceCloseQueuePerBrandIdempotent(t *testing.T) {
+	svc, repo, _ := fixture(time.Date(2026, time.September, 25, 10, 0, 0, 0, time.UTC))
+	dispatcher := Scope{Role: domain.RoleDispatcher}
+	date := time.Date(2026, time.September, 26, 0, 0, 0, 0, time.UTC)
+
+	first, err := svc.CloseQueue(context.Background(), CloseQueueInput{
+		Date: date, DepotID: "d1", Brands: []domain.Brand{domain.BrandFresh}, Actor: "u-disp",
+	}, dispatcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Closed != 1 || len(first.AlreadyClosed) != 0 {
+		t.Fatalf("first close = %+v", first)
+	}
+	if repo.closedBy != "u-disp" {
+		t.Fatalf("actor not recorded: %q", repo.closedBy)
+	}
+
+	// A repeat close of the same brand writes nothing and is not an error.
+	second, err := svc.CloseQueue(context.Background(), CloseQueueInput{
+		Date: date, DepotID: "d1", Brands: []domain.Brand{domain.BrandFresh},
+	}, dispatcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Closed != 0 || len(second.AlreadyClosed) != 1 || second.AlreadyClosed[0] != "FRESH" {
+		t.Fatalf("repeat close = %+v", second)
+	}
+
+	// Closing all brands closes the two that were still open.
+	all, err := svc.CloseQueue(context.Background(), CloseQueueInput{Date: date, DepotID: "d1"}, dispatcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.Closed != 2 {
+		t.Fatalf("closing all should close the 2 remaining brands, got %d", all.Closed)
+	}
+	closed, _ := repo.ClosedBrands(context.Background(), date, "d1")
+	if len(closed) != 3 {
+		t.Fatalf("closed brands = %v, want 3", closed)
+	}
+}
+
+func TestServiceCloseQueueRejectsBadInput(t *testing.T) {
+	svc, _, _ := fixture(time.Date(2026, time.September, 25, 10, 0, 0, 0, time.UTC))
+	date := time.Date(2026, time.September, 26, 0, 0, 0, 0, time.UTC)
+	dispatcher := Scope{Role: domain.RoleDispatcher}
+
+	// Missing date.
+	if _, err := svc.CloseQueue(context.Background(), CloseQueueInput{DepotID: "d1"}, dispatcher); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing date = %v, want ErrInvalid", err)
+	}
+	// Missing depot.
+	if _, err := svc.CloseQueue(context.Background(), CloseQueueInput{Date: date}, dispatcher); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing depot = %v, want ErrInvalid", err)
+	}
+	// Unknown brand.
+	if _, err := svc.CloseQueue(context.Background(), CloseQueueInput{Date: date, DepotID: "d1", Brands: []domain.Brand{"GROCERY"}}, dispatcher); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("bad brand = %v, want ErrInvalid", err)
+	}
+	// Non-dispatcher.
+	if _, err := svc.CloseQueue(context.Background(), CloseQueueInput{Date: date, DepotID: "d1"}, Scope{Role: domain.RoleLoader, DepotID: "d1"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("loader close = %v, want ErrInvalid", err)
 	}
 }

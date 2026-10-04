@@ -35,6 +35,14 @@ stale number that looks authoritative is worse than no number.
   item whose totals are the CSV values verbatim; the line's unit snapshots are derived from them
   and may differ from the totals by rounding. An existing order number is never overwritten, so a
   re-seed cannot rewind an order that has moved through the lifecycle.
+- **Demo-day calendar window (seed-side extension).** The supplied `calendar.csv` ends on
+  2026-06-28, before the demo delivery day, so relying on it alone would make
+  `POST /allocations/suggest` fail with a missing `calendar_day` row. The seed therefore derives
+  and upserts the demo window (25 Sep – 3 Oct 2026) **without editing the supplied CSV**:
+  Monday–Saturday are operating and Sunday is not, the convention the file itself records. The
+  insert is `ON CONFLICT (date) DO NOTHING`, so a supplied row always wins and a re-seed changes
+  nothing. `calendar_day.is_operating` remains the single authority; no business logic derives an
+  operating day from the weekday.
 - **Deferral history:** `customer_order.deferred_yesterday` and `days_since_last_served`
   (migration `00003`) carry the S1 history that the fairness guard and D-07 read. The source
   rows are per order; the prioritisation policy (rules 1–2) is stated per **outlet**, so the

@@ -28,6 +28,11 @@ type Confirmation struct {
 	// travel/allowance/outlet supply the official trip metrics, reused from the
 	// planning inputs rather than recomputed with a new formula.
 	refs ReferenceReader
+	// planInput loads the authoritative planning input (orders, vehicles,
+	// reference, calendar, fuel) for the job's date and depot, so confirmation
+	// can re-run planning.CheckTrip — the single feasibility authority — against
+	// current database state before it persists anything.
+	planInput PlanInputReader
 	// clock is the injected clock; kept for future use (e.g. deferral target
 	// dates). Confirmation itself is deterministic and date-driven.
 	clock Clock
@@ -91,8 +96,8 @@ type TravelRef struct {
 }
 
 // NewConfirmation builds the confirmation service.
-func NewConfirmation(repo Repository, pr PlanningReader, or OrderReader, vr VehicleReader, refs ReferenceReader, clock Clock) *Confirmation {
-	return &Confirmation{repo: repo, planning: pr, orders: or, vehicles: vr, refs: refs, clock: clock}
+func NewConfirmation(repo Repository, pr PlanningReader, or OrderReader, vr VehicleReader, refs ReferenceReader, planInput PlanInputReader, clock Clock) *Confirmation {
+	return &Confirmation{repo: repo, planning: pr, orders: or, vehicles: vr, refs: refs, planInput: planInput, clock: clock}
 }
 
 // ConfirmInput is the dispatcher's confirmation of a planning job.
@@ -150,7 +155,17 @@ func (c *Confirmation) Confirm(ctx context.Context, in ConfirmInput) (Confirmati
 		}
 	}
 
-	plan, err := c.buildPlan(ctx, job, in, serveByOrder, deferByOrder)
+	// Facts are loaded once and shared with the hard-constraint revalidation,
+	// so both the route build and the validator see the same current state. The
+	// authoritative planning input is loaded once too, so confirmation can both
+	// re-run planning.CheckTrip and derive each stop's planned arrival from the
+	// same reference data the planner used.
+	input, err := c.planInput.LoadInput(ctx, job.PlanningDate, job.DepotID)
+	if err != nil {
+		return ConfirmationResult{}, fmt.Errorf("load planning input for revalidation: %w", err)
+	}
+	facts := map[string]OrderFacts{}
+	plan, err := c.buildPlan(ctx, job, in, serveByOrder, deferByOrder, facts, input)
 	if err != nil {
 		return ConfirmationResult{}, err
 	}
@@ -162,11 +177,20 @@ func (c *Confirmation) Confirm(ctx context.Context, in ConfirmInput) (Confirmati
 		return ConfirmationResult{}, err
 	}
 
+	// Hard-constraint revalidation, reusing the authoritative validator. This is
+	// the last gate before the transactional write: a plan that violates a hard
+	// rule on current state is rejected and never persisted.
+	if err := c.revalidateHardConstraints(ctx, plan.RouteDate, in.Routes, facts, input); err != nil {
+		return ConfirmationResult{}, err
+	}
+
 	return c.repo.Confirm(ctx, plan)
 }
 
 // buildPlan validates every chosen route and deferral and assembles the writes.
-func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in ConfirmInput, serveByOrder, deferByOrder map[string]planning.Proposal) (ConfirmationPlan, error) {
+// It records each order's freshly-loaded facts in `facts` for the later
+// hard-constraint revalidation pass.
+func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in ConfirmInput, serveByOrder, deferByOrder map[string]planning.Proposal, facts map[string]OrderFacts, input planning.Input) (ConfirmationPlan, error) {
 	plan := ConfirmationPlan{
 		DepotID:       job.DepotID,
 		RouteDate:     job.PlanningDate.Format("2006-01-02"),
@@ -200,6 +224,7 @@ func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in Confi
 			RouteDate: plan.RouteDate,
 			TripNo:    choice.TripNo,
 			Status:    RouteConfirmed,
+			Location:  c.clock.Now().Location(),
 		}
 
 		for _, orderID := range choice.OrderIDs {
@@ -219,25 +244,26 @@ func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in Confi
 				return ConfirmationPlan{}, fmt.Errorf("%w: order %s was proposed for trip %d, not %d", ErrInvalid, orderID, p.TripNo, choice.TripNo)
 			}
 
-			facts, err := c.orders.LoadOrderFacts(ctx, orderID)
+			orderFacts, err := c.orders.LoadOrderFacts(ctx, orderID)
 			if err != nil {
 				return ConfirmationPlan{}, err
 			}
-			if err := c.assertOrderConfirmable(orderID, facts); err != nil {
+			if err := c.assertOrderConfirmable(orderID, orderFacts); err != nil {
 				return ConfirmationPlan{}, err
 			}
+			facts[orderID] = orderFacts
 			if route.Brand == "" {
-				route.Brand, route.District = facts.Brand, facts.District
-			} else if facts.Brand != route.Brand || facts.District != route.District {
+				route.Brand, route.District = orderFacts.Brand, orderFacts.District
+			} else if orderFacts.Brand != route.Brand || orderFacts.District != route.District {
 				return ConfirmationPlan{}, fmt.Errorf("%w: order %s breaks the one brand + district rule for this trip", ErrInvalid, orderID)
 			}
-			route.TotalWeightKg += facts.TotalWeightKg
-			route.TotalVolumeM3 += facts.TotalVolumeM3
+			route.TotalWeightKg += orderFacts.TotalWeightKg
+			route.TotalVolumeM3 += orderFacts.TotalVolumeM3
 		}
 
 		// Build legs in the dispatcher's chosen stop order, from the proposal's
 		// sequence if present, else the given order.
-		if err := c.buildLegs(ctx, &route, choice.OrderIDs, serveByOrder); err != nil {
+		if err := c.buildLegs(ctx, &route, choice.OrderIDs, serveByOrder, input); err != nil {
 			return ConfirmationPlan{}, err
 		}
 		plan.Routes = append(plan.Routes, route)
@@ -270,8 +296,9 @@ func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in Confi
 }
 
 // buildLegs fills the route's legs in stop order and computes the official
-// trip metrics from the authoritative reference data.
-func (c *Confirmation) buildLegs(ctx context.Context, route *Route, orderIDs []string, serveByOrder map[string]planning.Proposal) error {
+// trip metrics and each stop's planned arrival/service time from the
+// authoritative planning reference, so the loader and driver read stored facts.
+func (c *Confirmation) buildLegs(ctx context.Context, route *Route, orderIDs []string, serveByOrder map[string]planning.Proposal, input planning.Input) error {
 	// Order the stops by the proposal's sequence when available, so the route
 	// reflects the plan; ties fall back to the given order.
 	ordered := append([]string{}, orderIDs...)
@@ -287,10 +314,6 @@ func (c *Confirmation) buildLegs(ctx context.Context, route *Route, orderIDs []s
 		if err != nil {
 			return err
 		}
-		outlet, err := c.refs.OutletFor(ctx, facts.OutletID)
-		if err != nil {
-			return err
-		}
 		fromPoint := "DEPOT"
 		if i > 0 {
 			prev, err := c.orders.LoadOrderFacts(ctx, ordered[i-1])
@@ -302,7 +325,6 @@ func (c *Confirmation) buildLegs(ctx context.Context, route *Route, orderIDs []s
 		route.Legs = append(route.Legs, RouteLeg{
 			OrderID: orderID, Seq: i, FromPoint: fromPoint, ToOutlet: facts.OutletID, Status: LegPending,
 		})
-		_ = outlet
 	}
 
 	travel, err := c.refs.Travel(ctx, route.DepotID, route.District)
@@ -334,14 +356,54 @@ func (c *Confirmation) buildLegs(ctx context.Context, route *Route, orderIDs []s
 		} else {
 			route.Legs[i].DistanceKm = travel.DepotToDistrictKm
 		}
+		route.Legs[i].ServiceTimeMin = mins
 	}
 	route.HandlingMin = handling
 	route.TotalTripMin = route.OutboundMin + route.InterStopMin + route.HandlingMin
+
+	// Planned arrivals from the authoritative planner schedule, placed on the
+	// route date in the injected clock's timezone. Best-effort: if the schedule
+	// cannot be derived the legs keep empty arrivals rather than fail confirm.
+	if schedule, err := c.routeSchedule(ctx, route, input); err == nil {
+		for i := range route.Legs {
+			if i < len(schedule) {
+				route.Legs[i].PlannedArrival = planning.FormatClock(schedule[i].ArrivalMin)
+			}
+		}
+	}
 
 	if err := route.Validate(); err != nil {
 		return err
 	}
 	return ValidateLegOrder(route.Legs)
+}
+
+// routeSchedule derives each stop's planned arrival/service time by reusing the
+// planner's arrival walk over the route's orders.
+func (c *Confirmation) routeSchedule(ctx context.Context, route *Route, input planning.Input) ([]planning.RouteStopSchedule, error) {
+	vehicle, ok := vehicleByID(input, route.VehicleID)
+	if !ok {
+		return nil, fmt.Errorf("%w: vehicle %s missing from planning input", ErrInvalid, route.VehicleID)
+	}
+	orders := make([]planning.Order, 0, len(route.Legs))
+	for _, leg := range route.Legs {
+		facts, err := c.orders.LoadOrderFacts(ctx, leg.OrderID)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, orderFromFacts(facts, input, leg.OrderID))
+	}
+	return planning.ScheduleRoute(input, vehicle, route.TripNo, orders)
+}
+
+// vehicleByID finds a vehicle in the loaded planning input.
+func vehicleByID(in planning.Input, vehicleID string) (planning.Vehicle, bool) {
+	for _, v := range in.Vehicles {
+		if v.VehicleID == vehicleID {
+			return v, true
+		}
+	}
+	return planning.Vehicle{}, false
 }
 
 // assertOrderConfirmable rejects an order that is not in a state a confirmation
