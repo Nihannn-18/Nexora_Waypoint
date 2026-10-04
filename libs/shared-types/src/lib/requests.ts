@@ -22,7 +22,6 @@ import type {
   IsoWeek,
   LoadItemRecord,
   ProofOfDelivery,
-  ReceiptIssue,
 } from './entities';
 import type { ConstraintCode, DeferralReasonType } from './constraints';
 
@@ -166,14 +165,19 @@ export interface SyncEventsRequest {
 
 /* --- Receipt -------------------------------------------------------------- */
 
+/**
+ * POST /orders/{id}/receipt — the store's count for every order line. Status,
+ * shortages and issues are derived by the server, never sent.
+ */
 export interface CreateReceiptRequest {
-  readonly status: 'RECEIVED' | 'RECEIVED_WITH_ISSUE' | 'REJECTED';
-  readonly receivedItems: readonly {
+  readonly lines: readonly {
     readonly orderItemId: string;
-    readonly quantity: number;
+    /** Arrived in good condition. */
+    readonly receivedQty: number;
+    /** Arrived damaged. */
+    readonly damagedQty: number;
   }[];
-  readonly issues?: readonly ReceiptIssue[];
-  readonly proof?: ProofOfDelivery;
+  readonly notes?: string;
 }
 
 /* --- Forecast ------------------------------------------------------------- */

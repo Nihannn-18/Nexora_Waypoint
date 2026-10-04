@@ -1,5 +1,5 @@
 import { WaypointApiError, type MediaUpload } from '@waypoint/api-client';
-import { uploadMediaObject } from './media';
+import { fetchMediaObjectUrl, uploadMediaObject } from './media';
 import { tokenStore } from './api';
 
 jest.mock('./api', () => ({
@@ -89,5 +89,31 @@ describe('uploadMediaObject', () => {
     const err = await uploadMediaObject(inlineSlot, body()).catch((e) => e);
     expect(err).toBeInstanceOf(WaypointApiError);
     expect(err.isOffline).toBe(true);
+  });
+});
+
+describe('fetchMediaObjectUrl', () => {
+  it('reads the object with the bearer token and returns an object URL', async () => {
+    getToken.mockReturnValue('session-token');
+    const blob = new Blob(['img'], { type: 'image/jpeg' });
+    fetchMock.mockResolvedValue({ ok: true, status: 200, blob: () => blob });
+    const createObjectURL = jest.fn().mockReturnValue('blob:pod');
+    URL.createObjectURL = createObjectURL;
+
+    await expect(fetchMediaObjectUrl('pod/LEG1/xyz')).resolves.toBe('blob:pod');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/media/pod/LEG1/xyz',
+      { headers: { Authorization: 'Bearer session-token' } },
+    );
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+  });
+
+  it('reports a refused read as an API error, not an image', async () => {
+    getToken.mockReturnValue('session-token');
+    fetchMock.mockResolvedValue({ ok: false, status: 403 });
+
+    await expect(fetchMediaObjectUrl('pod/LEG1/xyz')).rejects.toMatchObject({
+      status: 403,
+    });
   });
 });

@@ -26,6 +26,7 @@ var operationalTables = []string{
 	"order_item_delivery",
 	"delivery_event",
 	"load_item",
+	"receipt_line",
 	"receipt",
 	"notification",
 	"allocation",

@@ -405,6 +405,7 @@ are not deleted.
 | `POST` | `/orders/{id}/confirm` | Confirm before cutoff              | Compare against 16:00 Asia/Colombo and the operating calendar                                                                                                                         |
 | `GET`  | `/orders/{id}`         | Order, lines, allocation, ETA      | Restrict to the caller's outlet                                                                                                                                                       |
 | `GET`  | `/orders/{id}/eta`     | Expected arrival                   | Compute from current route state and remaining stops, including waiting for a window that has not opened                                                                              |
+| `GET`  | `/orders/{id}/receipt` | GRN view: expected lines, loader flags, POD, recorded GRN | Restrict to the caller's outlet (dispatcher may read any); expected = the loader's loaded count when recorded, else ordered                                                   |
 | `POST` | `/orders/{id}/receipt` | Confirm receipt or report an issue | Validate received quantities against delivered; record damage and shortage; transition the order                                                                                      |
 
 ### `POST /orders`
@@ -484,9 +485,98 @@ manager is pinned to their outlet; asking for another outlet is `404`.
 **Implemented:** `GET /orders`, `POST /orders`, `GET /orders/{id}` and
 `POST /orders/{id}/confirm` are mounted. A store manager may only order for and read their own outlet; a dispatcher may act
 across outlets. `POST /orders/{id}/confirm` moves `PLACED`/`DEFERRED` to `CONFIRMED` and returns
-`409 CONFLICT` if the order is already past that point. `GET /orders/{id}/eta` and
-`POST /orders/{id}/receipt` are **not** implemented — they need route state and delivery
-outcomes owned by later agents.
+`409 CONFLICT` if the order is already past that point. `GET /orders/{id}/eta` is **not**
+implemented. The receipt endpoints below are implemented in `internal/receipts`.
+
+### `GET /orders/{id}/receipt` (S-06)
+
+Store manager for their own outlet, or dispatcher; loaders and drivers are `403`, and another
+outlet's order is `404`. Everything the GRN screen needs in one read:
+
+```json
+{
+  "orderId": "a3f1…",
+  "orderNumber": "S1-014",
+  "orderStatus": "DELIVERED",
+  "lines": [
+    {
+      "orderItemId": "…",
+      "sku": "FR-MILK-1L",
+      "name": "Fresh milk 1L",
+      "orderedQty": 10,
+      "expectedQty": 8,
+      "expectedSource": "LOADER",
+      "loaderFlag": { "missingQty": 2, "damagedQty": 0, "photoRef": "shortfall/…/…" }
+    }
+  ],
+  "proofOfDelivery": {
+    "outcome": "DELIVERED",
+    "receiverName": "Ishara",
+    "fileRef": "pod/<legId>/…",
+    "signature": "pod/<legId>/…",
+    "occurredAt": "2026-09-26T07:42:00+05:30"
+  },
+  "receipt": { "…": "same shape as the POST response, once recorded" }
+}
+```
+
+`expectedQty` is what should have arrived: the loader's `loaded_qty` when the loader recorded a
+count for the line (`expectedSource: "LOADER"` — a flagged shortfall never left the dock), else
+the ordered quantity (`"ORDER"`). `loaderFlag` is present only when the loader recorded a
+missing or damaged quantity. `proofOfDelivery` is the latest `DELIVERED`/`DELAYED` event on the
+order's leg; its media keys are readable by the store manager through `GET /media/{key}`.
+`receipt` is absent until a GRN is recorded.
+
+### `POST /orders/{id}/receipt` (S-06b)
+
+Store manager only, for their own outlet. One count per order line — every line, each once:
+
+```json
+{
+  "lines": [
+    { "orderItemId": "…", "receivedQty": 7, "damagedQty": 1 },
+    { "orderItemId": "…", "receivedQty": 5, "damagedQty": 0 }
+  ],
+  "notes": "Optional, ≤ 500 characters"
+}
+```
+
+→ `201`
+
+```json
+{
+  "receiptId": "…",
+  "orderId": "a3f1…",
+  "status": "RECEIVED_WITH_ISSUE",
+  "receivedAt": "2026-09-26T07:50:00+05:30",
+  "receivedBy": "seed-store-manager",
+  "receivedByName": "Ishara S.",
+  "notes": "Optional",
+  "lines": [
+    {
+      "orderItemId": "…", "sku": "FR-MILK-1L", "name": "Fresh milk 1L",
+      "orderedQty": 10, "expectedQty": 8, "receivedQty": 7, "damagedQty": 1, "shortQty": 0,
+      "condition": "DAMAGED"
+    }
+  ],
+  "issues": [{ "type": "DAMAGED", "orderItemId": "…", "sku": "FR-MILK-1L", "name": "Fresh milk 1L", "quantity": 1 }]
+}
+```
+
+The server derives everything but the counts: `shortQty = expectedQty − receivedQty −
+damagedQty` (computed on read, never stored), each line's `condition` (`GOOD`, `DAMAGED`,
+`SHORT`, `DAMAGED_AND_SHORT`), the `issues`, and `status` — `RECEIVED` when every line arrived as
+expected, `RECEIVED_WITH_ISSUE` otherwise. `receivedAt` is the API clock. In one transaction it
+locks the order, requires `DELIVERED`, writes `receipt` and `receipt_line`, moves the order to
+`RECEIVED`, records `RECEIPT_RECORDED` on the audit trail and, when there is an issue, notifies
+the depot's dispatchers (`RECEIPT_ISSUE`, reference `receipt:<orderId>`).
+
+Errors: a missing, unknown or duplicated line, a negative quantity, or `receivedQty +
+damagedQty` above `expectedQty` is `400 VALIDATION_FAILED` naming the line; any other body field
+is `400` (strict decoding — `status` is not accepted). An order that is not `DELIVERED` yet, or
+already has a GRN, is `409 CONFLICT`; a second submission never records a second receipt (row
+lock plus `UNIQUE (order_id)`). A store refusing the delivery at the door is not a receipt: it is
+the driver's `FAILED` outcome with `REFUSED_BY_STORE`.
 
 ---
 

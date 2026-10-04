@@ -1,6 +1,11 @@
 'use client';
 
-import type { CustomerOrder, Item, Outlet } from '@waypoint/shared-types';
+import type {
+  CustomerOrder,
+  Item,
+  Outlet,
+  ReceiptView,
+} from '@waypoint/shared-types';
 import { api } from '../../../lib/api';
 import { useApiQuery, type ApiQuery } from '../../../lib/use-api-query';
 
@@ -50,5 +55,16 @@ export function useOutletItems(
 ): ApiQuery<readonly Item[]> {
   return useApiQuery(brand ? `store-items-${brand}` : null, () =>
     api.listItems({ brand: brand as string }),
+  );
+}
+
+/**
+ * S-06: one order's GRN view — expected lines with the loader's flags, the
+ * driver's POD and the receipt once recorded. Scoped server-side to the
+ * caller's outlet.
+ */
+export function useOrderReceipt(orderId: string | null): ApiQuery<ReceiptView> {
+  return useApiQuery(orderId ? `store-receipt-${orderId}` : null, () =>
+    api.getReceipt(orderId as string),
   );
 }

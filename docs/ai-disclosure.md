@@ -72,10 +72,23 @@ assignment in the seed, and driver-run narrowing in `GET /driver/routes`. The bu
 previous one) were chosen by the team; the model implemented them. Reviewed and verified with
 Go unit/handler tests, web Jest tests and the full `npm run verify` pipeline.
 
+### Store goods received note (S-06)
+
+A pass on the `feature/waypoint/store-grn` branch, AI-assisted with Claude Code, built the
+store manager's GRN: migration `00011` (`receipt_line`, one receipt per order, the shared
+status vocabulary), the `internal/receipts` package (`GET`/`POST /orders/{id}/receipt`, one
+transaction for the GRN, the `DELIVERED` → `RECEIVED` transition, audit and dispatcher
+notification), the shared-types and API-client contract, and the `/store/orders/[orderId]/receipt`
+screen with its success state. The rule that a line's expected quantity is the loader's loaded
+count (so a flagged shortfall is pre-filled rather than reported twice) follows the S-06 design;
+the team reviewed it. Verified with Go unit/service/handler tests, web Jest tests and the full
+`npm run verify` pipeline; its PostgreSQL integration test is subject to the status below.
+
 ### Integration test status — NOT CONFIGURED in CI
 
 The PostgreSQL integration tests (`TestSeedIntegration`, `TestRoutesIntegration`,
-`TestCloseQueueAuditIntegration`, `TestAssignmentIntegration`, `TestUserAdminIntegration`)
+`TestCloseQueueAuditIntegration`, `TestAssignmentIntegration`, `TestUserAdminIntegration`,
+`TestReceiptsIntegration`)
 skip when `WAYPOINT_TEST_DATABASE_URL` is unset, so `npm run verify` and `nx test api` do
 **not** run them; CI has no PostgreSQL service. This is reported honestly as **NOT
 CONFIGURED**, not as passing. Run them by hand:
