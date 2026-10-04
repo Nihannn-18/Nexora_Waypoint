@@ -272,7 +272,7 @@ func NewPGNetworkWriter(pool interface {
 // DepotExists reports whether depotID is a known depot.
 func (w *PGNetworkWriter) DepotExists(ctx context.Context, depotID string) (bool, error) {
 	var exists bool
-	err := w.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM depot WHERE depot_id = $1 AND is_active)`, depotID).Scan(&exists)
+	err := w.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM depot WHERE depot_id::text = $1 AND is_active)`, depotID).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check depot: %w", err)
 	}

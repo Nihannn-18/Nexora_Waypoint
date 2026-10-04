@@ -127,6 +127,27 @@ describe('HttpClient', () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 
+  it('does not call onUnauthorized for a failed anonymous login', async () => {
+    const onUnauthorized = jest.fn();
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(jsonResponse({ message: 'Invalid email or password' }, 401));
+
+    const client = new HttpClient({
+      baseUrl: 'http://api.test/api/v1',
+      getToken: () => null,
+      onUnauthorized,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    // The sign-in form must show the error in place; a wrong password is not an
+    // expired session and must not trigger the return-to-sign-in redirect.
+    await client
+      .post('/auth/login', { email: 'a@b.c', password: 'wrong' }, { anonymous: true })
+      .catch(() => undefined);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
   it('treats 204 as an empty success rather than a parse error', async () => {
     const fetchImpl = jest
       .fn()

@@ -19,6 +19,8 @@
     "typecheck": "tsc -p libs/shared-types/tsconfig.lib.json --noEmit && tsc -p libs/api-client/tsconfig.lib.json --noEmit && tsc -p libs/ui/tsconfig.lib.json --noEmit",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
     "graph": "nx graph",
+    "e2e": "playwright test",
+    "e2e:report": "playwright show-report",
     "up": "docker compose up --build",
     "down": "docker compose down",
     "reset": "docker compose down -v && docker compose up --build"
@@ -35,6 +37,7 @@
     "@nx/next": "^23.2.1",
     "@nx/react": "^23.2.1",
     "@nx/workspace": "23.2.1",
+    "@playwright/test": "^1.63.0",
     "@swc-node/register": "~1.11.1",
     "@swc/cli": "~0.8.1",
     "@swc/core": "~1.15.5",

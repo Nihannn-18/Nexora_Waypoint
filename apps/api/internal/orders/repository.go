@@ -175,7 +175,7 @@ func (r *PGRepository) Create(ctx context.Context, o Order) (Order, error) {
 
 // GetByID implements Repository.
 func (r *PGRepository) GetByID(ctx context.Context, orderID string) (Order, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+orderColumns+` FROM customer_order WHERE order_id = $1`, orderID)
+	row := r.pool.QueryRow(ctx, `SELECT `+orderColumns+` FROM customer_order WHERE order_id::text = $1`, orderID)
 	return r.loadWithLines(ctx, row, orderID)
 }
 

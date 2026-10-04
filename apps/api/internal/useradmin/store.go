@@ -119,7 +119,7 @@ func (s *PGStore) EmailExists(ctx context.Context, email string) (bool, error) {
 // DepotExists reports whether a depot exists and is active.
 func (s *PGStore) DepotExists(ctx context.Context, depotID string) (bool, error) {
 	var exists bool
-	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM depot WHERE depot_id = $1 AND is_active)`, depotID).Scan(&exists); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM depot WHERE depot_id::text = $1 AND is_active)`, depotID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check depot: %w", err)
 	}
 	return exists, nil
@@ -136,6 +136,50 @@ func (s *PGStore) OutletDepot(ctx context.Context, outletID string) (string, err
 		return "", fmt.Errorf("get outlet depot: %w", err)
 	}
 	return depotID, nil
+}
+
+// releaseOutletManagers clears every store manager currently on an outlet
+// except keepUserID (which may be empty), auditing each release, so an outlet
+// never holds more than one manager. It runs inside the caller's transaction,
+// so a failed mutation releases nobody.
+func (s *PGStore) releaseOutletManagers(ctx context.Context, tx pgx.Tx, outletID, keepUserID, actor string) error {
+	if outletID == "" {
+		return nil
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT user_id
+		FROM app_user
+		WHERE role = 'STORE_MANAGER' AND outlet_id = $1 AND user_id <> $2
+		FOR UPDATE`, outletID, keepUserID)
+	if err != nil {
+		return fmt.Errorf("load outlet managers: %w", err)
+	}
+	var replaced []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan outlet manager: %w", err)
+		}
+		replaced = append(replaced, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate outlet managers: %w", err)
+	}
+	for _, id := range replaced {
+		if _, err := tx.Exec(ctx, `
+			UPDATE app_user SET outlet_id = NULL, depot_id = NULL
+			WHERE user_id = $1 AND role = 'STORE_MANAGER'`, id); err != nil {
+			return fmt.Errorf("release previous manager: %w", err)
+		}
+		if err := s.recordAudit(ctx, tx, "MANAGER_UNASSIGNED", "OUTLET_MANAGER", outletID, actor, "", outletID, map[string]any{
+			"userId": id, "releasedFor": keepUserID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CreateAccount inserts an account and audits the creation in one transaction.
@@ -155,6 +199,15 @@ func (s *PGStore) CreateAccount(ctx context.Context, in CreateInput, passwordHas
 	var outletID *string
 	if in.OutletID != "" {
 		outletID = &in.OutletID
+	}
+
+	// An outlet holds exactly one manager: creating a store manager for an
+	// outlet releases whoever held it before, mirroring the assignment
+	// endpoint, so the invariant cannot be bypassed through account creation.
+	if in.Role == domain.RoleStoreManager {
+		if err := s.releaseOutletManagers(ctx, tx, in.OutletID, "", actor); err != nil {
+			return Account{}, err
+		}
 	}
 
 	var userID string
@@ -221,6 +274,14 @@ func (s *PGStore) UpdateAccount(ctx context.Context, userID string, in UpdateInp
 	}
 	if outletID != "" {
 		outletArg = &outletID
+	}
+
+	// A store manager's outlet is exclusive: moving one onto an occupied
+	// outlet releases the previous manager, exactly as creation does.
+	if before.Role == domain.RoleStoreManager && outletArg != nil {
+		if err := s.releaseOutletManagers(ctx, tx, outletID, userID, actor); err != nil {
+			return Account{}, err
+		}
 	}
 
 	if _, err := tx.Exec(ctx, `
