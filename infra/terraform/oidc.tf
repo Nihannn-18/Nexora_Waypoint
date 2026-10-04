@@ -82,12 +82,14 @@ data "aws_iam_policy_document" "github_deploy" {
   }
 
   # Only the RunShellScript document and the one instance can be targeted.
+  # AWS-RunShellScript is an AWS-owned public document, so its ARN has an empty
+  # account segment (arn:aws:ssm:<region>::document/AWS-RunShellScript).
   statement {
     sid     = "SendDeployCommand"
     actions = ["ssm:SendCommand"]
 
     resources = [
-      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:document/AWS-RunShellScript",
+      "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
       "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.api.id}",
     ]
   }
