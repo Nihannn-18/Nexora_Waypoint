@@ -1,4 +1,4 @@
-// Composition-root adapters. Two business packages (delivery, loading) each
+// Composition-root adapters. The business packages (delivery, loading, receipts) each
 // declare their own narrow AuditSink/NotifySink interfaces so they never import
 // audit/notify. These adapters bridge those interfaces to the audit/notify
 // transaction-bound writers, keeping the dependency direction inward.
@@ -14,6 +14,7 @@ import (
 	"waypoint.lk/api/internal/loading"
 	"waypoint.lk/api/internal/notify"
 	"waypoint.lk/api/internal/orders"
+	"waypoint.lk/api/internal/receipts"
 	"waypoint.lk/api/internal/routes"
 	"waypoint.lk/api/internal/useradmin"
 )
@@ -88,5 +89,20 @@ func (loadingAudit) RecordTx(ctx context.Context, tx pgx.Tx, e loading.AuditEven
 type loadingNotify struct{}
 
 func (loadingNotify) NotifyDispatchersTx(ctx context.Context, tx pgx.Tx, depotID, outletID, notifType, title, message, reference string) error {
+	return notify.CreateForDispatchersTx(ctx, tx, depotID, outletID, notifType, title, message, reference)
+}
+
+// receiptsAudit adapts audit.RecordTx to receipts.AuditSink, so a GRN and its
+// audit row commit in one transaction.
+type receiptsAudit struct{}
+
+func (receiptsAudit) RecordTx(ctx context.Context, tx pgx.Tx, e receipts.AuditEvent) error {
+	return audit.RecordTx(ctx, tx, e.Action, e.EntityType, e.EntityID, e.Actor, e.DepotID, e.OutletID, e.Result, e.Detail)
+}
+
+// receiptsNotify adapts notify.CreateForDispatchersTx to receipts.NotifySink.
+type receiptsNotify struct{}
+
+func (receiptsNotify) NotifyDispatchersTx(ctx context.Context, tx pgx.Tx, depotID, outletID, notifType, title, message, reference string) error {
 	return notify.CreateForDispatchersTx(ctx, tx, depotID, outletID, notifType, title, message, reference)
 }

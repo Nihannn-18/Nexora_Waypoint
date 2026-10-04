@@ -9,6 +9,7 @@ import { api } from '../../../../lib/api';
 import { useStoreScope } from '../../_components/store-shell';
 import {
   BrandChip,
+  ButtonLink,
   Card,
   ErrorState,
   Eyebrow,
@@ -25,9 +26,8 @@ import { readableStoreError } from '../../_lib/store';
  *
  * Status, lines and totals are the order the server returned for the caller's
  * outlet. The arrival window shown is the outlet's own delivery window, which
- * is real reference data; the API does not expose a per-order ETA, a deferral
- * reason or a receipt to the store manager yet, so the screen does not fake
- * any of them.
+ * is real reference data; the API does not expose a per-order ETA, so the
+ * screen does not fake one. A delivered order links to its GRN (S-06).
  */
 export default function OrderDetailPage({
   params,
@@ -171,7 +171,7 @@ export default function OrderDetailPage({
         )}
       </section>
 
-      <DeliveryNote status={order.status} />
+      <DeliveryNote orderId={order.orderId} status={order.status} />
     </div>
   );
 }
@@ -308,23 +308,55 @@ function DeferredNotice({ order }: { order: CustomerOrder }) {
 }
 
 /**
- * What a delivery outcome means for the store today. A receipt (GRN) and the
- * driver's proof of delivery are not exposed to the store manager by the API
- * yet, so the screen says so rather than showing an empty receipt form.
+ * What a delivery outcome means for the store. A delivered order leads to its
+ * goods received note (S-06); a received one to the recorded GRN (S-06b).
  */
-function DeliveryNote({ status }: { status: string }) {
-  if (status !== 'DELIVERED' && status !== 'RECEIVED' && status !== 'FAILED') {
-    return null;
+function DeliveryNote({
+  orderId,
+  status,
+}: {
+  orderId: string;
+  status: string;
+}) {
+  if (status === 'FAILED') {
+    return (
+      <Card>
+        <p className="text-sm text-ink-muted">
+          The driver recorded this delivery as failed. The dispatcher can
+          re-plan the stop or defer it.
+        </p>
+      </Card>
+    );
   }
-  const copy =
-    status === 'FAILED'
-      ? 'The driver recorded this delivery as failed. The dispatcher can re-plan the stop or defer it.'
-      : status === 'RECEIVED'
-        ? 'This delivery has been received.'
-        : 'The driver recorded this delivery. Receipt confirmation and proof of delivery are not yet exposed to the store manager.';
-  return (
-    <Card>
-      <p className="text-sm text-ink-muted">{copy}</p>
-    </Card>
-  );
+  if (status === 'DELIVERED') {
+    return (
+      <Card className="gap-3 border-brand bg-info-bg">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-semibold text-ink">
+            Delivered — confirm what arrived
+          </h2>
+          <p className="text-sm text-ink-muted">
+            Count each line against what left the depot and report anything
+            damaged or short. The driver’s proof of delivery is attached.
+          </p>
+        </div>
+        <ButtonLink href={`/store/orders/${orderId}/receipt`} variant="ink">
+          Open the GRN
+        </ButtonLink>
+      </Card>
+    );
+  }
+  if (status === 'RECEIVED') {
+    return (
+      <Card className="gap-3">
+        <p className="text-sm text-ink-muted">
+          This delivery has been received.
+        </p>
+        <ButtonLink href={`/store/orders/${orderId}/receipt`}>
+          View the GRN
+        </ButtonLink>
+      </Card>
+    );
+  }
+  return null;
 }

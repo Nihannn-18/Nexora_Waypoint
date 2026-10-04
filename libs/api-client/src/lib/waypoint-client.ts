@@ -60,6 +60,7 @@ import type {
   RecordShortfallRequest,
   ReorderLegsRequest,
   Receipt,
+  ReceiptView,
   ResetPasswordRequest,
   ResetPasswordResponse,
   Route,
@@ -330,6 +331,12 @@ export class WaypointClient {
     return this.http.get(`/orders/${orderId}/eta`);
   }
 
+  /** S-06: expected lines with the loader's flags, the driver's POD and any GRN. */
+  getReceipt(orderId: string): Promise<ReceiptView> {
+    return this.http.get<ReceiptView>(`/orders/${orderId}/receipt`);
+  }
+
+  /** S-06b: record the GRN. 409 when not delivered yet or already received. */
   createReceipt(orderId: string, body: CreateReceiptRequest): Promise<Receipt> {
     return this.http.post<Receipt>(`/orders/${orderId}/receipt`, body);
   }

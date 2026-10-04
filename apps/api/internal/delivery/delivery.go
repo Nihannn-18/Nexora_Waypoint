@@ -6,8 +6,9 @@
 //   - Upstream: internal/routes produced the confirmed route, legs and
 //     allocations; internal/loading recorded the load state. Delivery reads the
 //     operational route/leg/order state; it does not create it.
-//   - Downstream: store-manager receipt/GRN is a later concern; this package
-//     stops at the delivery event, POD and the order/leg status it implies.
+//   - Downstream: internal/receipts reads the POD for the store manager's
+//     GRN; this package stops at the delivery event, POD and the order/leg
+//     status it implies.
 //
 // delivery_event is the authoritative delivery record, mirroring the schema:
 // one row per driver outcome, keyed for idempotency by client_event_id (generated

@@ -138,6 +138,22 @@ describe('S-04 order detail', () => {
     expect((pending as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('leads a delivered order to its goods received note', async () => {
+    mocked.getOrder.mockResolvedValue(makeOrder({ status: 'DELIVERED' }));
+    await renderPage();
+
+    const link = await screen.findByRole('link', { name: /open the grn/i });
+    expect(link.getAttribute('href')).toBe('/store/orders/o1/receipt');
+  });
+
+  it('lets a received order reopen its recorded GRN', async () => {
+    mocked.getOrder.mockResolvedValue(makeOrder({ status: 'RECEIVED' }));
+    await renderPage();
+
+    const link = await screen.findByRole('link', { name: /view the grn/i });
+    expect(link.getAttribute('href')).toBe('/store/orders/o1/receipt');
+  });
+
   it('shows an error when the order is out of scope or missing', async () => {
     mocked.getOrder.mockRejectedValue(
       new WaypointApiError('not found', { status: 404 }),

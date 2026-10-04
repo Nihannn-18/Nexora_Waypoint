@@ -14,6 +14,7 @@ import {
   LoadingState,
   SectionHeading,
 } from './_components/ui';
+import { awaitingReceipt } from './_lib/receipt';
 import { useMyOrders } from './_lib/use-store';
 import {
   deferredOrders,
@@ -74,7 +75,7 @@ export default function StoreHomePage() {
         )}
       </header>
 
-      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Tile
           href="/store/order"
           label="Place an order"
@@ -92,6 +93,12 @@ export default function StoreHomePage() {
           label="Deferred"
           value={list ? `${deferredOrders(list).length}` : '—'}
           hint="Held for a later run"
+        />
+        <Tile
+          href={receiptsHref(list)}
+          label="Delivery receipts"
+          value={list ? `${awaitingReceipt(list).length}` : '—'}
+          hint="Delivered, waiting for your GRN"
         />
       </div>
 
@@ -226,4 +233,17 @@ function DeferredSection({ orders }: { orders: readonly CustomerOrder[] }) {
       </ul>
     </section>
   );
+}
+
+/**
+ * The receipts tile opens the one delivery waiting for a GRN directly; with
+ * none or several it opens the order list, where each delivered order leads
+ * to its own GRN.
+ */
+function receiptsHref(orders: readonly CustomerOrder[] | undefined): string {
+  const waiting = orders ? awaitingReceipt(orders) : [];
+  const [only] = waiting;
+  return waiting.length === 1 && only
+    ? `/store/orders/${only.orderId}/receipt`
+    : '/store/orders';
 }

@@ -181,15 +181,35 @@ export type SyncResult = (typeof SYNC_RESULTS)[number];
 /* Receipts and shortfalls                                                    */
 /* -------------------------------------------------------------------------- */
 
-export const RECEIPT_STATUSES = [
-  'RECEIVED',
-  'RECEIVED_WITH_ISSUE',
-  'REJECTED',
-] as const;
+/**
+ * A goods received note's status, derived by the server from its lines:
+ * RECEIVED when every line arrived as expected, RECEIVED_WITH_ISSUE otherwise.
+ * Mirrors the receipt.status CHECK and `internal/receipts`. A store that
+ * refuses a delivery at the door is the driver's FAILED outcome
+ * (REFUSED_BY_STORE), not a receipt.
+ */
+export const RECEIPT_STATUSES = ['RECEIVED', 'RECEIVED_WITH_ISSUE'] as const;
 export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 
-export const ISSUE_TYPES = ['DAMAGED', 'SHORT', 'WRONG_ITEM', 'LATE'] as const;
+/** A discrepancy a GRN raises against one order line. */
+export const ISSUE_TYPES = ['DAMAGED', 'SHORT'] as const;
 export type IssueType = (typeof ISSUE_TYPES)[number];
+
+/** One GRN line's condition, derived from its damaged and short quantities. */
+export const RECEIPT_LINE_CONDITIONS = [
+  'GOOD',
+  'DAMAGED',
+  'SHORT',
+  'DAMAGED_AND_SHORT',
+] as const;
+export type ReceiptLineCondition = (typeof RECEIPT_LINE_CONDITIONS)[number];
+
+/**
+ * Where a line's expected quantity came from: the loader's loaded count when
+ * one was recorded (a flagged shortfall never left the dock), else the order.
+ */
+export const RECEIPT_EXPECTED_SOURCES = ['LOADER', 'ORDER'] as const;
+export type ReceiptExpectedSource = (typeof RECEIPT_EXPECTED_SOURCES)[number];
 
 /* -------------------------------------------------------------------------- */
 /* Planning jobs                                                              */

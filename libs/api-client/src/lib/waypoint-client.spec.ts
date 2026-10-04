@@ -260,3 +260,47 @@ describe('WaypointClient account management', () => {
     expect(fetchImpl.mock.calls[0][1].method).toBe('POST');
   });
 });
+
+describe('WaypointClient store receipts', () => {
+  it('reads the GRN view for one order', async () => {
+    const view = {
+      orderId: 'o1',
+      orderNumber: 'ORD-2026-000001',
+      orderStatus: 'DELIVERED',
+      lines: [],
+    };
+    const { client, fetchImpl } = clientReturning(view);
+    await expect(client.getReceipt('o1')).resolves.toEqual(view);
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://api.test/api/v1/orders/o1/receipt',
+    );
+  });
+
+  it('posts only the line counts and the note', async () => {
+    const { client, fetchImpl } = clientReturning({ receiptId: 'r1' }, 201);
+    await client.createReceipt('o1', {
+      lines: [{ orderItemId: 'l1', receivedQty: 7, damagedQty: 1 }],
+      notes: 'one carton crushed',
+    });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('http://api.test/api/v1/orders/o1/receipt');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      lines: [{ orderItemId: 'l1', receivedQty: 7, damagedQty: 1 }],
+      notes: 'one carton crushed',
+    });
+  });
+
+  it('surfaces a second GRN as a 409 conflict', async () => {
+    const { client } = clientReturning(
+      {
+        message: 'A receipt has already been recorded for this order',
+        code: 'CONFLICT',
+      },
+      409,
+    );
+    await expect(
+      client.createReceipt('o1', { lines: [] }),
+    ).rejects.toMatchObject({ status: 409, code: 'CONFLICT' });
+  });
+});
