@@ -1,6 +1,16 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { Suspense } from 'react';
-import type { LoadingLine, RouteLoading } from '@waypoint/api-client';
+import {
+  WaypointApiError,
+  type LoadingLine,
+  type RouteLoading,
+} from '@waypoint/api-client';
 import PickingListPage from './page';
 import { api } from '../../../../lib/api';
 
@@ -111,8 +121,9 @@ describe('L-02 picking list', () => {
     await renderPage();
 
     expect(
-      screen.getByRole<HTMLButtonElement>('button', { name: /nothing to save/i })
-        .disabled,
+      screen.getByRole<HTMLButtonElement>('button', {
+        name: /nothing to save/i,
+      }).disabled,
     ).toBe(true);
   });
 
@@ -173,11 +184,11 @@ describe('L-02 picking list', () => {
 
   it('keeps the counts and explains a rejected save', async () => {
     mockApi.getRouteLoading.mockResolvedValue(route([line()]));
+    // A real WaypointApiError, so readableError's instanceof check takes the
+    // 409 branch. A plain Error carrying the name would fall through to the
+    // generic message and prove nothing.
     mockApi.recordShortfall.mockRejectedValue(
-      Object.assign(new Error('nope'), {
-        name: 'WaypointApiError',
-        status: 409,
-      }),
+      new WaypointApiError('Route version is stale', { status: 409 }),
     );
     await renderPage();
 
@@ -185,6 +196,8 @@ describe('L-02 picking list', () => {
     fireEvent.click(screen.getByRole('button', { name: /save 1 line/i }));
 
     expect(await screen.findByText(/couldn't save your counts/i)).toBeTruthy();
+    // The 409-specific copy, not the generic fallback.
+    expect(await screen.findByText(/no longer confirmed/i)).toBeTruthy();
     // The work is not thrown away: the line is still counted and resendable.
     expect(
       screen.getByRole<HTMLButtonElement>('button', { name: /save 1 line/i })
@@ -248,7 +261,8 @@ describe('L-03 flag sheet', () => {
     expect(missing.value).toBe('0');
     // Nothing loaded, nothing over-counted, so the sheet still applies cleanly.
     expect(
-      screen.getByRole<HTMLButtonElement>('button', { name: /apply/i }).disabled,
+      screen.getByRole<HTMLButtonElement>('button', { name: /apply/i })
+        .disabled,
     ).toBe(false);
   });
 });

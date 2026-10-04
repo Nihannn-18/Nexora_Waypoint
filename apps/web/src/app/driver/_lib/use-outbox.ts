@@ -7,7 +7,8 @@ import {
   type LegContext,
 } from '@waypoint/api-client';
 import { useOnlineStatus } from '@waypoint/ui';
-import { api, tokenStore } from '../../../lib/api';
+import { api } from '../../../lib/api';
+import { uploadMediaObject } from '../../../lib/media';
 import {
   backoffMs,
   cacheLeg,
@@ -24,29 +25,7 @@ import {
 
 /** Mints a POD key on the API, then PUTs the bytes where it says. */
 async function uploadPod(legId: string, blob: Blob): Promise<string> {
-  const up = await api.createPodUpload(legId, blob.type);
-  const headers: Record<string, string> = { ...up.headers };
-  if (up.uploadMode === 'inline') {
-    // The local backend's PUT route is our own API: authenticate it.
-    headers['Content-Type'] = blob.type;
-    const token = tokenStore.get();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-  }
-  let res: Response;
-  try {
-    res = await fetch(up.uploadUrl, { method: 'PUT', headers, body: blob });
-  } catch {
-    throw new WaypointApiError('Could not reach the server.', {
-      status: 0,
-      isOffline: true,
-    });
-  }
-  if (!res.ok) {
-    throw new WaypointApiError(`Upload failed (${res.status})`, {
-      status: res.status,
-    });
-  }
-  return up.fileRef;
+  return uploadMediaObject(await api.createPodUpload(legId, blob.type), blob);
 }
 
 const deps: SyncDeps = {

@@ -5,6 +5,7 @@ import { use, useState } from 'react';
 import type { LoadingLine, RouteLoading } from '@waypoint/api-client';
 import { Mono } from '@waypoint/ui';
 import { api } from '../../../../lib/api';
+import { uploadMediaObject } from '../../../../lib/media';
 import {
   Card,
   Chip,
@@ -104,14 +105,9 @@ function PickingList({
     setUploadError(null);
     try {
       const slot = await api.createShortfallUpload(line.orderItemId, file.type);
-      const response = await fetch(slot.uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': file.type, ...(slot.headers ?? {}) },
-        body: file,
-      });
-      if (!response.ok) throw new Error('upload failed');
+      const fileRef = await uploadMediaObject(slot, file);
       const current = draftFor(line, drafts);
-      setDraft(line.orderItemId, { ...current, photoRef: slot.fileRef });
+      setDraft(line.orderItemId, { ...current, photoRef: fileRef });
     } catch (e) {
       setUploadError(readableError(e, 'The photo'));
     } finally {
