@@ -130,13 +130,14 @@ func (r *PGRepository) Create(ctx context.Context, o Order) (Order, error) {
 		INSERT INTO customer_order (
 			order_number, outlet_id, brand, order_date, requested_delivery_date,
 			total_units, total_weight_kg, total_volume_m3, temp_requirement,
-			status, after_cutoff, notes, deferred_yesterday, days_since_last_served
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			status, after_cutoff, notes, deferred_yesterday, days_since_last_served,
+			created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
 		RETURNING `+orderColumns,
 		o.OrderNumber, o.OutletID, string(o.Brand), o.OrderDate, o.RequestedDeliveryDate,
 		o.TotalUnits, o.TotalWeightKg, o.TotalVolumeM3, string(o.TempRequirement),
 		string(o.Status), o.AfterCutoff, nullableString(o.Notes),
-		o.DeferredYesterday, o.DaysSinceLastServed)
+		o.DeferredYesterday, o.DaysSinceLastServed, orderBusinessInstant(o.OrderDate))
 	created, err = scanOrder(row)
 	if err != nil {
 		return Order{}, fmt.Errorf("insert order: %w", err)
@@ -386,8 +387,11 @@ func (r *PGRepository) linesForMany(ctx context.Context, orderIDs []string) (map
 
 // UpdateStatus implements Repository.
 func (r *PGRepository) UpdateStatus(ctx context.Context, orderID string, status string) (Order, error) {
+	// updated_at advances by one second from the order's business day, not the
+	// database wall clock: a confirm must not reorder the store's "today" list
+	// under DEMO_MODE (see orderBusinessInstant).
 	row := r.pool.QueryRow(ctx, `
-		UPDATE customer_order SET status = $2, updated_at = now()
+		UPDATE customer_order SET status = $2, updated_at = created_at + interval '1 second'
 		WHERE order_id = $1
 		RETURNING `+orderColumns, orderID, status)
 	return r.loadWithLines(ctx, row, orderID)
@@ -529,4 +533,22 @@ func nullableString(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// orderBusinessInstant is the creation/update instant written for an order. It
+// is derived from the order's business day (the API clock's date), never the
+// database's wall clock: under DEMO_MODE the seeded day is in the past, and a
+// real-time created_at would push a freshly placed order to the top of the
+// store's "today" list and contradict the cutoff clock (CLAUDE.md §2 rule 8).
+//
+// The time-of-day is fixed at the business day's start so ordering is stable
+// and depends only on the date on which orders were placed; the crews' times
+// are carried by the routes and event timestamps, not by this row.
+func orderBusinessInstant(businessDay time.Time) time.Time {
+	y, m, d := businessDay.Date()
+	loc := businessDay.Location()
+	if loc == nil {
+		loc = time.UTC
+	}
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
 }
