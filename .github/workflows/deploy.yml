@@ -1,0 +1,134 @@
+name: Deploy API
+
+# Builds the Go API image, pushes it to ECR using GitHub OIDC (no AWS access
+# keys), then deploys it to the EC2 host over SSM Run Command and verifies the
+# public readiness endpoint. The repository is never cloned onto the instance.
+#
+# Requires these repository VARIABLES (non-secret):
+#   AWS_REGION, ECR_REPOSITORY, EC2_INSTANCE_ID, API_HEALTH_URL, AWS_DEPLOY_ROLE_ARN
+
+on:
+  push:
+    branches: [development, main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # request the OIDC token for AWS
+  contents: read
+
+jobs:
+  deploy:
+    name: Build, push and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      API_HEALTH_URL: ${{ vars.API_HEALTH_URL }}
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push the API image
+        # Tagged with the commit SHA (rollback target) and branch for convenience.
+        # `latest` is only a convenience alias; deploys always use the SHA.
+        run: |
+          set -euo pipefail
+          docker build -f apps/api/Dockerfile -t "$ECR_REPOSITORY:$IMAGE_TAG" -t "$ECR_REPOSITORY:latest" .
+          docker push "$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$ECR_REPOSITORY:latest"
+
+      - name: Deploy to EC2 over SSM Run Command
+        id: deploy
+        run: |
+          set -euo pipefail
+
+          compose_b64="$(base64 -w0 infra/deploy/docker-compose.prod.yml)"
+          caddy_b64="$(base64 -w0 infra/deploy/Caddyfile)"
+          render_b64="$(base64 -w0 infra/deploy/render-env.sh)"
+          deploy_b64="$(base64 -w0 infra/deploy/waypoint-deploy.sh)"
+          service_b64="$(base64 -w0 infra/deploy/waypoint.service)"
+
+          # Build the remote script line by line. The base64 blobs contain only
+          # shell-safe characters, so single-quoting them is sufficient and no
+          # heredoc/indentation tricks are needed. Scripts are refreshed on every
+          # deploy so a fix in the repository reaches the host.
+          {
+            echo '#!/bin/bash'
+            echo 'set -euo pipefail'
+            echo "printf '%s' '$compose_b64' | base64 -d > /opt/waypoint/docker-compose.prod.yml"
+            echo "printf '%s' '$caddy_b64' | base64 -d > /opt/waypoint/Caddyfile"
+            echo "printf '%s' '$render_b64' | base64 -d > /usr/local/bin/waypoint-render-env.sh"
+            echo "printf '%s' '$deploy_b64' | base64 -d > /usr/local/bin/waypoint-deploy.sh"
+            echo "printf '%s' '$service_b64' | base64 -d > /etc/systemd/system/waypoint.service"
+            echo "printf 'IMAGE_TAG=%s\\n' '$IMAGE_TAG' > /opt/waypoint/image.env"
+            echo 'chmod 0755 /usr/local/bin/waypoint-render-env.sh /usr/local/bin/waypoint-deploy.sh'
+            echo 'chmod 0644 /opt/waypoint/docker-compose.prod.yml /opt/waypoint/Caddyfile /opt/waypoint/image.env /etc/systemd/system/waypoint.service'
+            echo 'systemctl daemon-reload'
+            echo '/usr/local/bin/waypoint-deploy.sh'
+          } > remote.sh
+
+          remote_b64="$(base64 -w0 remote.sh)"
+          jq -n --arg cmd "printf '%s' '$remote_b64' | base64 -d | bash" '{commands: [$cmd]}' > params.json
+
+          command_id="$(aws ssm send-command \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy Waypoint API $IMAGE_TAG" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --parameters file://params.json \
+            --query 'Command.CommandId' --output text)"
+          echo "SSM command: $command_id"
+
+          for _ in $(seq 1 60); do
+            status="$(aws ssm get-command-invocation \
+              --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" \
+              --query 'Status' --output text 2>/dev/null || echo Pending)"
+            echo "  status: $status"
+            case "$status" in
+              Success) break ;;
+              Failed | Cancelled | TimedOut)
+                echo "::error::Deployment command failed ($status)"
+                aws ssm get-command-invocation --command-id "$command_id" \
+                  --instance-id "$EC2_INSTANCE_ID" \
+                  --query 'StandardErrorContent' --output text
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+
+          if [ "$status" != "Success" ]; then
+            echo "::error::Deployment command did not complete in time"
+            exit 1
+          fi
+
+      - name: Verify public readiness endpoint
+        # Caddy may need a few seconds to obtain its certificate on first deploy.
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$API_HEALTH_URL" >/dev/null; then
+              echo "API is ready: $API_HEALTH_URL"
+              exit 0
+            fi
+            echo "waiting for $API_HEALTH_URL ($i/30)"
+            sleep 5
+          done
+          echo "::error::API readiness did not succeed: $API_HEALTH_URL"
+          exit 1

@@ -1,0 +1,48 @@
+#!/bin/bash
+#
+# EC2 first-boot bootstrap for the Waypoint API host.
+#
+# Rendered by Terraform (infra/terraform/ec2.tf). The file bodies below are
+# injected as base64 so this template contains no shell interpolation that could
+# collide with Terraform's dollar-brace syntax and no secret (there are none).
+#
+# It installs Docker + the Compose v2 plugin, drops the deployment artifacts in
+# /opt/waypoint and /usr/local/bin, and enables the systemd unit that renders
+# configuration from SSM and starts the stack.
+
+set -euxo pipefail
+exec > >(tee /var/log/waypoint-bootstrap.log) 2>&1
+
+dnf update -y
+dnf install -y docker jq
+systemctl enable --now docker
+
+# Docker Compose v2 CLI plugin is not packaged in the AL2023 repositories.
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+
+install -d -m 0755 /opt/waypoint
+
+printf '%s' '${compose_b64}'       | base64 -d > /opt/waypoint/docker-compose.prod.yml
+printf '%s' '${caddy_b64}'         | base64 -d > /opt/waypoint/Caddyfile
+printf '%s' '${config_env_b64}'    | base64 -d > /opt/waypoint/config.env
+printf '%s' '${render_env_b64}'    | base64 -d > /usr/local/bin/waypoint-render-env.sh
+printf '%s' '${deploy_script_b64}' | base64 -d > /usr/local/bin/waypoint-deploy.sh
+printf '%s' '${service_b64}'       | base64 -d > /etc/systemd/system/waypoint.service
+
+chmod 0755 /usr/local/bin/waypoint-render-env.sh /usr/local/bin/waypoint-deploy.sh
+chmod 0644 \
+  /opt/waypoint/docker-compose.prod.yml \
+  /opt/waypoint/Caddyfile \
+  /opt/waypoint/config.env \
+  /etc/systemd/system/waypoint.service
+
+# No image exists yet; the first CI deploy overwrites this with a SHA tag.
+printf 'IMAGE_TAG=%s\n' 'pending' > /opt/waypoint/image.env
+chmod 0644 /opt/waypoint/image.env
+
+systemctl daemon-reload
+systemctl enable waypoint.service
+systemctl start waypoint.service || true
