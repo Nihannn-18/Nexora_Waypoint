@@ -170,12 +170,16 @@ func NewNetworkHandler(reader NetworkReader, clock Clock, authMiddleware *auth.M
 	return &NetworkHandler{reader: reader, clock: clock, auth: authMiddleware}
 }
 
-// RegisterRoutes mounts the endpoints behind dispatcher authorization: the
-// dispatcher plans both depots, so the whole network is theirs to read.
+// RegisterRoutes mounts the endpoints behind role authorization. A dispatcher
+// plans both depots, so the whole network is theirs to read. A store manager
+// reads outlets too, but the handler pins the result to the caller's own outlet
+// (app_user.outlet_id) regardless of any query parameter — the scope comes from
+// the authenticated identity, never the request.
 func (h *NetworkHandler) RegisterRoutes(mux *http.ServeMux) {
 	d := domain.RoleDispatcher
 	mux.Handle("GET /api/v1/depots", h.auth.RequireRole(d, http.HandlerFunc(h.ListDepots)))
-	mux.Handle("GET /api/v1/outlets", h.auth.RequireRole(d, http.HandlerFunc(h.ListOutlets)))
+	mux.Handle("GET /api/v1/outlets", h.auth.RequireAnyRole(
+		[]domain.Role{d, domain.RoleStoreManager}, http.HandlerFunc(h.ListOutlets)))
 	mux.Handle("GET /api/v1/vehicles", h.auth.RequireRole(d, http.HandlerFunc(h.ListVehicles)))
 }
 
@@ -231,14 +235,36 @@ func (h *NetworkHandler) ListDepots(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListOutlets handles GET /api/v1/outlets.
+//
+// A dispatcher reads the whole network, optionally narrowed by ?depotId. A
+// store manager is pinned to the outlet on their app_user record: the handler
+// ignores any client-supplied depotId, queries without that filter, and returns
+// only outlets the authenticated identity may access. A store manager can never
+// widen their scope — or request another outlet — through the query string.
 func (h *NetworkHandler) ListOutlets(w http.ResponseWriter, r *http.Request) {
-	outlets, err := h.reader.Outlets(r.Context(), strings.TrimSpace(r.URL.Query().Get("depotId")))
+	identity, err := auth.MustIdentity(r.Context())
+	if err != nil {
+		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
+		return
+	}
+
+	depotFilter := strings.TrimSpace(r.URL.Query().Get("depotId"))
+	if identity.Role == domain.RoleStoreManager {
+		// Scope comes from the identity, never the request: drop any depot filter
+		// a store manager supplied and select only their own outlet below.
+		depotFilter = ""
+	}
+
+	outlets, err := h.reader.Outlets(r.Context(), depotFilter)
 	if err != nil {
 		writeNetworkError(w, err)
 		return
 	}
 	out := make([]outletResponse, 0, len(outlets))
 	for _, o := range outlets {
+		if !identity.CanAccessOutlet(o.OutletID) {
+			continue
+		}
 		row := outletResponse{
 			OutletID: o.OutletID, Name: o.Name, Brand: o.Brand, District: o.District,
 			DepotID: o.DepotID, DockType: o.DockType, ParkingConstraint: o.ParkingConstraint,

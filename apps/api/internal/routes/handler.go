@@ -93,13 +93,16 @@ type routeResponse struct {
 }
 
 type legResponse struct {
-	LegID      string  `json:"legId"`
-	OrderID    string  `json:"orderId"`
-	Seq        int     `json:"seq"`
-	FromPoint  string  `json:"fromPoint"`
-	ToOutletID string  `json:"toOutletId"`
-	DistanceKm float64 `json:"distanceKm"`
-	Status     string  `json:"status"`
+	LegID          string  `json:"legId"`
+	RouteID        string  `json:"routeId"`
+	OrderID        string  `json:"orderId"`
+	Seq            int     `json:"seq"`
+	FromPoint      string  `json:"fromPoint"`
+	ToOutletID     string  `json:"toOutletId"`
+	DistanceKm     float64 `json:"distanceKm"`
+	PlannedArrival string  `json:"plannedArrival,omitempty"`
+	ServiceTimeMin int     `json:"serviceTimeMin,omitempty"`
+	Status         string  `json:"status"`
 }
 
 type deferralResponse struct {
@@ -230,8 +233,9 @@ func toRouteResponse(rt Route) routeResponse {
 
 func toLegResponse(l RouteLeg) legResponse {
 	return legResponse{
-		LegID: l.LegID, OrderID: l.OrderID, Seq: l.Seq, FromPoint: l.FromPoint,
-		ToOutletID: l.ToOutlet, DistanceKm: l.DistanceKm, Status: l.Status,
+		LegID: l.LegID, RouteID: l.RouteID, OrderID: l.OrderID, Seq: l.Seq,
+		FromPoint: l.FromPoint, ToOutletID: l.ToOutlet, DistanceKm: l.DistanceKm,
+		PlannedArrival: l.PlannedArrival, ServiceTimeMin: l.ServiceTimeMin, Status: l.Status,
 	}
 }
 

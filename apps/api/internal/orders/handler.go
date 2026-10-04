@@ -69,6 +69,8 @@ type lineRequest struct {
 type orderLineResponse struct {
 	OrderItemID          string  `json:"orderItemId"`
 	ItemID               string  `json:"itemId"`
+	SKU                  string  `json:"sku"`
+	Name                 string  `json:"name"`
 	Quantity             int     `json:"quantity"`
 	UnitWeightKgSnapshot float64 `json:"unitWeightKgSnapshot"`
 	UnitVolumeM3Snapshot float64 `json:"unitVolumeM3Snapshot"`
@@ -99,6 +101,8 @@ func toResponse(o Order) orderResponse {
 		lines = append(lines, orderLineResponse{
 			OrderItemID:          ln.OrderItemID,
 			ItemID:               ln.ItemID,
+			SKU:                  ln.SKU,
+			Name:                 ln.Name,
 			Quantity:             ln.Quantity,
 			UnitWeightKgSnapshot: ln.UnitWeightKgSnapshot,
 			UnitVolumeM3Snapshot: ln.UnitVolumeM3Snapshot,

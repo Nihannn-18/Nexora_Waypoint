@@ -99,8 +99,15 @@ through the API.
 
 ### Network reference: `GET /depots`, `GET /outlets`, `GET /vehicles`
 
-**Implemented**, dispatcher-only (`internal/catalog/network.go`). Read-only reference data;
-no feasibility rule is evaluated here. Each response is an envelope:
+**Implemented** (`internal/catalog/network.go`). `GET /outlets` is available to
+dispatchers and store managers; `GET /depots` and `GET /vehicles` are dispatcher-only.
+Read-only reference data; no feasibility rule is evaluated here. Each response is an
+envelope:
+
+A store manager is pinned to the outlet on their `app_user` record: the handler ignores any
+client-supplied `depotId` or outlet query parameter and returns only the caller's own outlet,
+so scope can never be widened through the request. A dispatcher reads the whole network,
+optionally narrowed by `?depotId=`.
 
 ```json
 { "depots": [{ "depotId": "2bcc…", "code": "PELIYAGODA", "name": "Peliyagoda" }] }

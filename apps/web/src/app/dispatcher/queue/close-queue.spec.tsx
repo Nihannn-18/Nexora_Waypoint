@@ -8,6 +8,8 @@ jest.mock('../../../lib/api', () => ({
 
 const mocked = api as jest.Mocked<typeof api>;
 
+const noop = () => undefined;
+
 function open() {
   render(
     <CloseQueueButton
@@ -15,7 +17,7 @@ function open() {
       depotId="d1"
       counts={{ FRESH: 12, STYLE: 4, TECH: 2 }}
       closedBrands={[]}
-      onClosed={() => {}}
+      onClosed={noop}
     />,
   );
   fireEvent.click(screen.getByRole('button', { name: /close queue/i }));
@@ -70,7 +72,7 @@ describe('CloseQueueButton', () => {
         depotId="d1"
         counts={{ FRESH: 0, STYLE: 4, TECH: 2 }}
         closedBrands={['FRESH']}
-        onClosed={() => {}}
+        onClosed={noop}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: /close queue/i }));

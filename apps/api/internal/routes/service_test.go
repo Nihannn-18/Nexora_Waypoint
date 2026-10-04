@@ -199,6 +199,34 @@ func TestConfirmBuildsRoutesLegsAndMetrics(t *testing.T) {
 	if len(route.Legs) != 2 || route.Legs[0].FromPoint != "DEPOT" || route.Legs[1].FromPoint != "OUT001" {
 		t.Fatalf("legs = %+v", route.Legs)
 	}
+	if route.RouteDate != "2026-09-26" {
+		t.Fatalf("route date = %q, want 2026-09-26", route.RouteDate)
+	}
+	// Confirm passes these contract fields to insertLeg; assert the values
+	// that will be persisted for loader and driver consumers.
+	//
+	// PlannedArrival is a bare "HH:MM" on the route date; insertLeg anchors it
+	// to the authoritative RouteDate (2026-09-26) at persistence time, so this
+	// boundary asserts the clock value the loader/driver rows receive.
+	wantArrivals := []string{"04:09", "05:23"}
+	for i, leg := range route.Legs {
+		if leg.RouteID != route.RouteID {
+			t.Fatalf("leg %d routeId = %q, want %q", i, leg.RouteID, route.RouteID)
+		}
+		if leg.PlannedArrival == "" {
+			t.Fatalf("leg %d plannedArrival is empty, want a start time", i)
+		}
+		if leg.PlannedArrival != wantArrivals[i] {
+			t.Fatalf("leg %d plannedArrival = %q, want %q", i, leg.PlannedArrival, wantArrivals[i])
+		}
+		if leg.ServiceTimeMin != 15 {
+			t.Fatalf("leg %d serviceTimeMin = %d, want 15", i, leg.ServiceTimeMin)
+		}
+	}
+	// Stop-order monotonicity: later stops are reached no earlier than earlier ones.
+	if route.Legs[0].PlannedArrival > route.Legs[1].PlannedArrival {
+		t.Fatalf("planned arrivals out of order: %q then %q", route.Legs[0].PlannedArrival, route.Legs[1].PlannedArrival)
+	}
 	if len(plan.Deferrals) != 1 || plan.Deferrals[0].OrderID != "O3" {
 		t.Fatalf("deferrals = %+v", plan.Deferrals)
 	}

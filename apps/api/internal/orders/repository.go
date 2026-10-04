@@ -174,9 +174,12 @@ func (r *PGRepository) loadWithLines(ctx context.Context, row pgx.Row, ref strin
 
 func (r *PGRepository) linesFor(ctx context.Context, orderID string) ([]OrderLine, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT order_item_id, order_id, item_id, quantity, unit_weight_kg_snapshot,
-		       unit_volume_m3_snapshot, total_weight_kg, total_volume_m3
-		FROM order_item WHERE order_id = $1 ORDER BY order_item_id`, orderID)
+		SELECT oi.order_item_id, oi.order_id, oi.item_id, oi.quantity, oi.unit_weight_kg_snapshot,
+		       oi.unit_volume_m3_snapshot, oi.total_weight_kg, oi.total_volume_m3,
+		       COALESCE(it.sku, ''), COALESCE(it.name, '')
+		FROM order_item oi
+		LEFT JOIN item it ON it.item_id = oi.item_id
+		WHERE oi.order_id = $1 ORDER BY oi.order_item_id`, orderID)
 	if err != nil {
 		return nil, fmt.Errorf("load order lines: %w", err)
 	}
@@ -186,7 +189,8 @@ func (r *PGRepository) linesFor(ctx context.Context, orderID string) ([]OrderLin
 	for rows.Next() {
 		var ln OrderLine
 		if err := rows.Scan(&ln.OrderItemID, &ln.OrderID, &ln.ItemID, &ln.Quantity,
-			&ln.UnitWeightKgSnapshot, &ln.UnitVolumeM3Snapshot, &ln.TotalWeightKg, &ln.TotalVolumeM3); err != nil {
+			&ln.UnitWeightKgSnapshot, &ln.UnitVolumeM3Snapshot, &ln.TotalWeightKg, &ln.TotalVolumeM3,
+			&ln.SKU, &ln.Name); err != nil {
 			return nil, fmt.Errorf("scan order line: %w", err)
 		}
 		lines = append(lines, ln)
@@ -298,9 +302,12 @@ func filterClause(filter Filter) (string, []any) {
 
 func (r *PGRepository) linesForMany(ctx context.Context, orderIDs []string) (map[string][]OrderLine, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT order_item_id, order_id, item_id, quantity, unit_weight_kg_snapshot,
-		       unit_volume_m3_snapshot, total_weight_kg, total_volume_m3
-		FROM order_item WHERE order_id = ANY($1) ORDER BY order_id, order_item_id`, orderIDs)
+		SELECT oi.order_item_id, oi.order_id, oi.item_id, oi.quantity, oi.unit_weight_kg_snapshot,
+		       oi.unit_volume_m3_snapshot, oi.total_weight_kg, oi.total_volume_m3,
+		       COALESCE(it.sku, ''), COALESCE(it.name, '')
+		FROM order_item oi
+		LEFT JOIN item it ON it.item_id = oi.item_id
+		WHERE oi.order_id = ANY($1) ORDER BY oi.order_id, oi.order_item_id`, orderIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load order lines: %w", err)
 	}
@@ -310,7 +317,8 @@ func (r *PGRepository) linesForMany(ctx context.Context, orderIDs []string) (map
 	for rows.Next() {
 		var ln OrderLine
 		if err := rows.Scan(&ln.OrderItemID, &ln.OrderID, &ln.ItemID, &ln.Quantity,
-			&ln.UnitWeightKgSnapshot, &ln.UnitVolumeM3Snapshot, &ln.TotalWeightKg, &ln.TotalVolumeM3); err != nil {
+			&ln.UnitWeightKgSnapshot, &ln.UnitVolumeM3Snapshot, &ln.TotalWeightKg, &ln.TotalVolumeM3,
+			&ln.SKU, &ln.Name); err != nil {
 			return nil, fmt.Errorf("scan order line: %w", err)
 		}
 		out[ln.OrderID] = append(out[ln.OrderID], ln)

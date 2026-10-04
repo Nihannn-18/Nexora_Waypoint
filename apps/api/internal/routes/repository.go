@@ -131,7 +131,7 @@ func (r *PGRepository) Confirm(ctx context.Context, plan ConfirmationPlan) (Conf
 		}
 		result.RouteIDs = append(result.RouteIDs, routeID)
 		for _, leg := range route.Legs {
-			if err := insertLeg(ctx, tx, routeID, leg); err != nil {
+			if err := insertLeg(ctx, tx, routeID, route.RouteDate, leg); err != nil {
 				return ConfirmationResult{}, err
 			}
 			if err := insertAllocation(ctx, tx, leg.OrderID, routeID, plan.Actor); err != nil {
@@ -231,16 +231,39 @@ func insertRoute(ctx context.Context, tx pgx.Tx, route Route) (string, error) {
 	return id, nil
 }
 
-func insertLeg(ctx context.Context, tx pgx.Tx, routeID string, leg RouteLeg) error {
+func insertLeg(ctx context.Context, tx pgx.Tx, routeID, routeDate string, leg RouteLeg) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO route_leg (
-			route_id, order_id, seq, from_point, to_outlet, distance_km, status
-		) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		routeID, leg.OrderID, leg.Seq, leg.FromPoint, leg.ToOutlet, leg.DistanceKm, LegPending)
+			route_id, order_id, seq, from_point, to_outlet, distance_km,
+			planned_arrival, service_time_min, status
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		routeID, leg.OrderID, leg.Seq, leg.FromPoint, leg.ToOutlet, leg.DistanceKm,
+		plannedArrivalTS(routeDate, leg), nullableServiceMinutes(leg), LegPending)
 	if err != nil {
 		return fmt.Errorf("create route leg (route %s seq %d): %w", routeID, leg.Seq, err)
 	}
 	return nil
+}
+
+// plannedArrivalTS places a leg's "HH:MM" planned arrival on the route date at
+// midnight UTC. The arrival is a wall-clock business-time value; the column is
+// TIMESTAMPTZ, so it is anchored to the route date so later reads render the
+// same clock time. Empty stays NULL. The date comes from the authoritative
+// Route, never duplicated onto the leg.
+func plannedArrivalTS(routeDate string, leg RouteLeg) any {
+	if leg.PlannedArrival == "" {
+		return nil
+	}
+	return routeDate + "T" + leg.PlannedArrival + ":00Z"
+}
+
+// nullableServiceMinutes writes the handling allowance, NULL when unset so the
+// column remains distinguishable from a genuine zero-minute service.
+func nullableServiceMinutes(leg RouteLeg) any {
+	if leg.ServiceTimeMin <= 0 {
+		return nil
+	}
+	return leg.ServiceTimeMin
 }
 
 func insertAllocation(ctx context.Context, tx pgx.Tx, orderID, routeID, actor string) error {
@@ -374,7 +397,9 @@ func (r *PGRepository) ListRoutes(ctx context.Context, routeDate, depotID string
 func (r *PGRepository) legsFor(ctx context.Context, routeID string) ([]RouteLeg, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT leg_id, route_id, order_id, seq, from_point, to_outlet,
-		       COALESCE(distance_km,0), status
+		       COALESCE(distance_km,0), status,
+		       COALESCE(to_char(planned_arrival, 'HH24:MI'), ''),
+		       COALESCE(service_time_min, 0)
 		FROM route_leg WHERE route_id = $1 ORDER BY seq`, routeID)
 	if err != nil {
 		return nil, fmt.Errorf("load route legs: %w", err)
@@ -384,7 +409,7 @@ func (r *PGRepository) legsFor(ctx context.Context, routeID string) ([]RouteLeg,
 	for rows.Next() {
 		var l RouteLeg
 		if err := rows.Scan(&l.LegID, &l.RouteID, &l.OrderID, &l.Seq, &l.FromPoint,
-			&l.ToOutlet, &l.DistanceKm, &l.Status); err != nil {
+			&l.ToOutlet, &l.DistanceKm, &l.Status, &l.PlannedArrival, &l.ServiceTimeMin); err != nil {
 			return nil, fmt.Errorf("scan route leg: %w", err)
 		}
 		legs = append(legs, l)

@@ -131,9 +131,10 @@ export interface Item {
 export interface OrderLine {
   readonly orderItemId: string;
   readonly itemId: string;
-  /** Not on the order response today; resolve from GET /items by itemId. */
-  readonly sku?: string;
-  readonly name?: string;
+  /** The item's SKU and name, joined from the catalogue on read. The backend
+      always returns them; only the dimensions are snapshotted at order time. */
+  readonly sku: string;
+  readonly name: string;
   readonly quantity: number;
   /** Dimensions are snapshotted at order time so later catalogue edits
       cannot retroactively change a historical order's totals. */
@@ -199,8 +200,8 @@ export interface CloseQueueResponse {
 
 export interface RouteLeg {
   readonly legId: string;
-  /** Present on the loader/driver views; the dispatcher route view omits it. */
-  readonly routeId?: string;
+  /** The route this leg belongs to; the backend returns it on every leg view. */
+  readonly routeId: string;
   readonly orderId: string;
   /** Stop position within the trip, starting at 0. */
   readonly seq: number;
@@ -208,9 +209,12 @@ export interface RouteLeg {
   readonly fromPoint: string;
   readonly toOutletId: string;
   readonly distanceKm: number;
-  /** Not yet computed by GET /routes (no ETA model is served there). */
+  /** Planned arrival as a business-time "HH:MM" on the route date. Populated by
+      confirmation from the authoritative schedule; absent only before a route
+      is confirmed. */
   readonly plannedArrival?: ClockTime;
   readonly actualArrival?: ClockTime;
+  /** Handling allowance for the stop in minutes, from confirmation. */
   readonly serviceTimeMin?: number;
   readonly status: LegStatus;
 }

@@ -58,6 +58,12 @@ type RouteLeg struct {
 	ToOutlet   string
 	DistanceKm float64
 	Status     string
+	// PlannedArrival is the computed arrival as "HH:MM" on the route date, and
+	// ServiceTimeMin the handling allowance for the stop. Both come from the
+	// authoritative planner schedule, persisted so the loader and driver read a
+	// stored fact. Empty/zero before confirmation computes them.
+	PlannedArrival string
+	ServiceTimeMin int
 }
 
 // Route statuses, mirroring the route CHECK constraint and ROUTE_STATUSES in

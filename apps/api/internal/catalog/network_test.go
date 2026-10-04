@@ -46,6 +46,12 @@ func (v stubVerifier) Verify(context.Context, *auth.RequestHeader) (auth.Identit
 
 func networkMux(role domain.Role, reader NetworkReader, now time.Time) http.Handler {
 	id := auth.Identity{UserID: "u1", Role: role}
+	return networkMuxForIdentity(id, reader, now)
+}
+
+// networkMuxForIdentity mounts the network routes for an arbitrary identity, so
+// tests can exercise outlet-scoped store-manager access as well as dispatchers.
+func networkMuxForIdentity(id auth.Identity, reader NetworkReader, now time.Time) http.Handler {
 	mw := auth.NewMiddleware(auth.NewIdentityLoader(stubVerifier{id: id}, auth.NewStaticUserStore(id)), auth.NewAuthorizer())
 	mux := http.NewServeMux()
 	NewNetworkHandler(reader, fixedNow{t: now}, mw).RegisterRoutes(mux)
@@ -134,4 +140,88 @@ func TestNetworkHandler(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestListOutletsStoreManagerScope proves the store manager's GET /outlets is
+// pinned to the outlet on their authenticated identity: they receive their own
+// outlet, cannot reach another outlet through the query string, and cannot widen
+// scope with a depotId. The dispatcher's unrestricted read is unchanged.
+func TestListOutletsStoreManagerScope(t *testing.T) {
+	demoNow := time.Date(2026, time.September, 25, 15, 40, 0, 0, time.FixedZone("LKT", 5*3600+1800))
+
+	storeMgr := auth.Identity{UserID: "u-store", Role: domain.RoleStoreManager, OutletID: "OUT001"}
+
+	decode := func(t *testing.T, rec *httptest.ResponseRecorder) []outletResponse {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		var body struct {
+			Outlets []outletResponse `json:"outlets"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Outlets
+	}
+
+	t.Run("store manager receives only their own outlet", func(t *testing.T) {
+		reader := &fakeNetwork{}
+		h := networkMuxForIdentity(storeMgr, reader, demoNow)
+		outlets := decode(t, get(h, "/api/v1/outlets"))
+		if len(outlets) != 1 || outlets[0].OutletID != "OUT001" {
+			t.Fatalf("outlets = %+v, want only OUT001", outlets)
+		}
+		// The depot filter a store manager might send is ignored.
+		if reader.gotDepot != "" {
+			t.Fatalf("store manager depot filter = %q, want empty (ignored)", reader.gotDepot)
+		}
+	})
+
+	t.Run("store manager cannot reach another outlet via the query string", func(t *testing.T) {
+		reader := &fakeNetwork{}
+		h := networkMuxForIdentity(storeMgr, reader, demoNow)
+		for _, path := range []string{
+			"/api/v1/outlets?depotId=d-pel",
+			"/api/v1/outlets?outletId=OUT090",
+			"/api/v1/outlets?outletId=OUT001&depotId=d-kandy",
+		} {
+			outlets := decode(t, get(h, path))
+			if len(outlets) != 1 || outlets[0].OutletID != "OUT001" {
+				t.Fatalf("%s: outlets = %+v, want only the caller's OUT001", path, outlets)
+			}
+		}
+	})
+
+	t.Run("dispatcher access is unchanged", func(t *testing.T) {
+		reader := &fakeNetwork{}
+		h := networkMux(domain.RoleDispatcher, reader, demoNow)
+		outlets := decode(t, get(h, "/api/v1/outlets?depotId=d-pel"))
+		if len(outlets) != 2 {
+			t.Fatalf("dispatcher outlets = %+v, want the full list", outlets)
+		}
+		if reader.gotDepot != "d-pel" {
+			t.Fatalf("dispatcher depot filter = %q, want d-pel", reader.gotDepot)
+		}
+	})
+
+	t.Run("unauthenticated access is rejected", func(t *testing.T) {
+		// A verifier that rejects every session: /outlets must be 401, not a list.
+		mw := auth.NewMiddleware(
+			auth.NewIdentityLoader(rejectingVerifier{}, auth.NewStaticUserStore(auth.Identity{})),
+			auth.NewAuthorizer())
+		mux := http.NewServeMux()
+		NewNetworkHandler(&fakeNetwork{}, fixedNow{t: demoNow}, mw).RegisterRoutes(mux)
+		if rec := get(mux, "/api/v1/outlets"); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+	})
+}
+
+// rejectingVerifier fails every session, standing in for a missing or expired
+// bearer token.
+type rejectingVerifier struct{}
+
+func (rejectingVerifier) Verify(context.Context, *auth.RequestHeader) (auth.Identity, error) {
+	return auth.Identity{}, auth.ErrInvalidSession
 }
