@@ -7,6 +7,7 @@ const TYPE: Record<string, { label: string; tone: StatusTone }> = {
   DELIVERY_FAILED: { label: 'Delivery failed', tone: 'error' },
   DELIVERY_DELAYED: { label: 'Delivery delayed', tone: 'warning' },
   ROUTE_ATTENTION: { label: 'Route needs attention', tone: 'info' },
+  RECEIPT_ISSUE: { label: 'Receipt issue', tone: 'warning' },
 };
 
 export function notificationType(type: string): {

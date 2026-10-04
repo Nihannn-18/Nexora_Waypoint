@@ -20,6 +20,8 @@ import type {
   PlanningDecision,
   PlanningJobStatus,
   PodType,
+  ReceiptExpectedSource,
+  ReceiptLineCondition,
   ReceiptStatus,
   Role,
   RouteStatus,
@@ -490,19 +492,84 @@ export interface DeliveryEvent {
 /* Receipt                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/** A discrepancy the GRN raised against one order line. */
 export interface ReceiptIssue {
   readonly type: IssueType;
+  readonly orderItemId: string;
+  readonly sku: string;
+  readonly name: string;
   readonly quantity: number;
-  readonly notes?: string;
 }
 
+/**
+ * One recorded GRN line. `shortQty` = expected − received − damaged, derived
+ * by the server; `expectedQty` is what the store was told to expect when it
+ * counted.
+ */
+export interface ReceiptLine {
+  readonly orderItemId: string;
+  readonly sku: string;
+  readonly name: string;
+  readonly orderedQty: number;
+  readonly expectedQty: number;
+  readonly receivedQty: number;
+  readonly damagedQty: number;
+  readonly shortQty: number;
+  readonly condition: ReceiptLineCondition;
+}
+
+/** A recorded goods received note (S-06b). One per order. */
 export interface Receipt {
   readonly receiptId: string;
   readonly orderId: string;
   readonly status: ReceiptStatus;
   readonly receivedAt: IsoDateTime;
   readonly receivedBy: string;
+  readonly receivedByName?: string;
+  readonly notes?: string;
+  readonly lines: readonly ReceiptLine[];
   readonly issues: readonly ReceiptIssue[];
+}
+
+/** The loader's shortfall on one order line, shown before the store counts. */
+export interface ReceiptLoaderFlag {
+  readonly missingQty: number;
+  readonly damagedQty: number;
+  /** Media key of the loader's photo: `shortfall/<orderItemId>/<id>`. */
+  readonly photoRef?: string;
+}
+
+/** One order line as the store should expect it (S-06). */
+export interface ExpectedReceiptLine {
+  readonly orderItemId: string;
+  readonly sku: string;
+  readonly name: string;
+  readonly orderedQty: number;
+  readonly expectedQty: number;
+  readonly expectedSource: ReceiptExpectedSource;
+  readonly loaderFlag?: ReceiptLoaderFlag;
+}
+
+/** The driver's POD attached to a GRN. Media keys as on ProofOfDelivery. */
+export interface ReceiptProofOfDelivery {
+  readonly outcome: 'DELIVERED' | 'DELAYED';
+  readonly receiverName: string;
+  readonly signature?: string;
+  readonly fileRef?: string;
+  readonly occurredAt: IsoDateTime;
+}
+
+/**
+ * GET /orders/{id}/receipt — everything S-06 needs: expected lines with the
+ * loader's flags, the driver's POD and, once recorded, the GRN itself.
+ */
+export interface ReceiptView {
+  readonly orderId: string;
+  readonly orderNumber: string;
+  readonly orderStatus: OrderStatus;
+  readonly lines: readonly ExpectedReceiptLine[];
+  readonly proofOfDelivery?: ReceiptProofOfDelivery;
+  readonly receipt?: Receipt;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -606,6 +673,7 @@ export const NOTIFICATION_TYPES = [
   'DELIVERY_FAILED',
   'DELIVERY_DELAYED',
   'ROUTE_ATTENTION',
+  'RECEIPT_ISSUE',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

@@ -43,6 +43,7 @@ import (
 	"waypoint.lk/api/internal/notify"
 	"waypoint.lk/api/internal/orders"
 	"waypoint.lk/api/internal/planning"
+	"waypoint.lk/api/internal/receipts"
 	"waypoint.lk/api/internal/routes"
 	"waypoint.lk/api/internal/seed"
 	"waypoint.lk/api/internal/store"
@@ -182,6 +183,12 @@ func run() error {
 	deliveryService := delivery.NewService(deliveryRepo, clk).WithAssignments(assignmentStore)
 	deliveryHandler := delivery.NewHandler(deliveryService, authMiddleware)
 
+	// Receipts: the store manager's GRN (S-06). It reads the loader's counts and
+	// the driver's POD, records the receipt and moves the order DELIVERED →
+	// RECEIVED in one transaction, received at the API clock's time.
+	receiptsRepo := receipts.NewPGRepository(db.Pool()).WithSinks(receiptsAudit{}, receiptsNotify{})
+	receiptsHandler := receipts.NewHandler(receipts.NewService(receiptsRepo, clk), authMiddleware)
+
 	// Audit + notifications: append-only operational trail and in-app alerts.
 	// Both are written inside the delivery/loading transactions via the sink
 	// adapters in sinks.go, so a rolled-back mutation leaves neither.
@@ -205,7 +212,7 @@ func run() error {
 	userAdminService := useradmin.NewService(userAdminStore, clk)
 	userAdminHandler := useradmin.NewHandler(userAdminService, authMiddleware, cfg.DemoMode)
 
-	registrars := []httpx.RouteRegistrar{authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, networkHandler.RegisterMasterDataRoutes, assignmentHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes, userAdminHandler.RegisterRoutes}
+	registrars := []httpx.RouteRegistrar{authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, networkHandler.RegisterMasterDataRoutes, assignmentHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, receiptsHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes, userAdminHandler.RegisterRoutes}
 
 	// Demo controls: jump the clock to a walkthrough stage and reset the demo
 	// data. Mounted only under DEMO_MODE, so a real deployment can never move

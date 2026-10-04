@@ -49,3 +49,39 @@ export async function uploadMediaObject(
 
   return media.fileRef;
 }
+
+/**
+ * Reads a stored media object (a driver's POD or a loader's shortfall photo)
+ * and returns an object URL an `<img>` can show. The media route is
+ * session-guarded, so a plain `<img src>` would arrive without the bearer
+ * token; the bytes are fetched with it instead. The server decides whether the
+ * caller may see the object (a store manager only for their own outlet). The
+ * caller revokes the URL when the image unmounts.
+ */
+export async function fetchMediaObjectUrl(key: string): Promise<string> {
+  const url = `${API_BASE_URL}/media/${key
+    .split('/')
+    .map(encodeURIComponent)
+    .join('/')}`;
+  const token = tokenStore.get();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new WaypointApiError('Could not reach the server.', {
+      status: 0,
+      isOffline: true,
+    });
+  }
+  if (!response.ok) {
+    throw new WaypointApiError(
+      `Could not load the image (${response.status})`,
+      {
+        status: response.status,
+      },
+    );
+  }
+  return URL.createObjectURL(await response.blob());
+}

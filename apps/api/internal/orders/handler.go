@@ -24,8 +24,8 @@ import (
 //	GET  /api/v1/orders/{id}       — read one, scope-enforced
 //	POST /api/v1/orders/{id}/confirm — confirm before the cutoff
 //
-// GET /orders/{id}/eta and POST /orders/{id}/receipt are deliberately absent:
-// they need route state and delivery outcomes owned by later agents.
+// GET/POST /orders/{id}/receipt live in internal/receipts, which owns the GRN.
+// GET /orders/{id}/eta is not implemented.
 type Handler struct {
 	service *Service
 	auth    *auth.Middleware

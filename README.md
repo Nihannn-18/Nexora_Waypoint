@@ -230,8 +230,11 @@ the clock, so the walkthrough can be repeated without restarting Docker.
     is expected, not a fault. Both entries are saved on the device.
 13. **Come back online.** The queue uploads in capture order, keeping the original device
     timestamps. Retrying a sync never double-records a delivery.
-14. **Back as the Store manager**, see the arrival time update, then confirm receipt and
-    report one damaged carton. For a deferred order, see the notice **with its reason**.
+14. **Back as the Store manager**, open the delivered order and choose **Open the GRN**. The
+    loader's flag is already shown and pre-filled, and the driver's proof of delivery is
+    attached. Enter one damaged carton on a line and **Send GRN**: the order becomes
+    RECEIVED, the GRN lists the issue, and the dispatcher is notified. For a deferred order,
+    see the notice **with its reason**.
 15. **Back as the Dispatcher**, open Trip Tracker to see live progress, and Capacity
     Forecast for predicted demand by depot, brand and week.
 
@@ -397,6 +400,14 @@ faking the missing behaviour.
   `client_event_id` sync, and visible pending/synced/conflict states. Offline is neutral grey.
 - **Store manager.** Store home, place order, live/completed order list, order detail with the
   arrival window, and the **deferral reason** on a deferred order.
+- **S-06 goods received note (GRN).** A delivered order opens `/store/orders/[orderId]/receipt`:
+  expected vs received **per order line** with its condition, the loader's shortfall flag (and
+  photo) pre-filled — what was flagged at the dock never left it, so it is not reported again —
+  and the driver's POD (receiver, photo or signature) attached. `POST /orders/{id}/receipt`
+  derives shortages, conditions and status on the server, rejects counting more than was sent,
+  and in one transaction records the GRN, moves the order `DELIVERED` → `RECEIVED`, audits it and
+  notifies the dispatcher of any issue. One GRN per order; a repeat is a `409`. The success state
+  (S-06b) shows the GRN and every issue raised.
 - **Audit trail** for delivery, loading, queue close, allocation confirmation and deferral,
   written in the same transaction as the mutation.
 - **Demo clock** (`DEMO_MODE`) so the seeded past delivery day is "today" for the walkthrough,
@@ -424,9 +435,8 @@ faking the missing behaviour.
   Datathon; the screen is not in the navigation.
 - **DG-C breakdown recovery.** No mark-broken-down action or requeue drawer; a breakdown is
   currently handled as an explicit deferral.
-- **S-06 receipt / GRN.** `POST /orders/{id}/receipt` and `GET /orders/{id}/eta` are not
-  implemented, so no receipt form or per-order ETA is offered. The order detail shows the
-  outlet's real delivery window and the deferral reason instead.
+- **S-04 per-order ETA.** `GET /orders/{id}/eta` is not implemented, so no per-order ETA is
+  offered. The order detail shows the outlet's real delivery window instead.
 - **Driver account screen.** The header sign-out button ends the session; there is no separate
   account page (the two disabled tabs, Deliveries and Vehicle, have no API yet).
 
