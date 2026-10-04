@@ -406,6 +406,29 @@ instead of faking it:
   version would never detect a change. The picking list loads once and holds the loader's
   unsaved counts.
 
+### Store manager workspace
+
+S-01 (store home), S-02/S-03 (place an order) and S-04/S-05/S-07 (order list and detail) are
+built against the existing order APIs. The workspace is scoped to the caller by the server:
+the header outlet comes from `GET /outlets`, which the Go API pins to
+`app_user.outlet_id`, and the order list calls `GET /orders` with no outlet or depot filter at
+all. There is no outlet picker anywhere, so a store manager cannot widen scope through the
+UI or the query string. Where the API does not expose a piece of S-04/S-05/S-06, the screen
+says so rather than faking it:
+
+- **No per-order ETA or arrival minute.** `GET /orders/{id}/eta` is not implemented. The
+  detail screen shows the outlet's own delivery window (real reference data) and does not
+  invent a planned arrival time.
+- **No deferral reason or acknowledgement (S-05).** The deferral history is dispatcher-only
+  (`GET /deferrals`), and the order record carries no reason or `deferredToDate`, so a
+  deferred order is shown as deferred with a pointer to the dispatcher's log. There is no
+  acknowledge endpoint to call.
+- **No receipt / GRN (S-06).** `POST /orders/{id}/receipt` is not implemented, so no receipt
+  form or proof of delivery is offered to the store manager.
+- **Chilled and dry are enforced as separate orders in the form.** The backend derives one
+  temperature per order, so the S-02 form groups items and blocks a draft that mixes chilled
+  and dry lines rather than silently merging them.
+
 ### Any further departures
 
 Record them here as they happen, with the reason. An undocumented departure costs marks
