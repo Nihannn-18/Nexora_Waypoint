@@ -54,17 +54,53 @@ describe('Sign in (G-01)', () => {
     }
   });
 
-  it('pre-fills the demo account when a role card is chosen', () => {
+  it('selecting a role never populates the email field', () => {
+    render(<SignInPage />);
+
+    for (const route of ROLE_ROUTES) {
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(route.label, 'i') }));
+      expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe(
+        '',
+      );
+    }
+  });
+
+  it('selecting a role never populates the password field', () => {
+    render(<SignInPage />);
+
+    for (const route of ROLE_ROUTES) {
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(route.label, 'i') }));
+      expect(
+        (screen.getByLabelText('Password') as HTMLInputElement).value,
+      ).toBe('');
+    }
+  });
+
+  it('lets the user type their own email and password', () => {
+    render(<SignInPage />);
+
+    fireEvent.change(screen.getByLabelText('Email'), {
+      target: { value: 'typed@example.lk' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), {
+      target: { value: 'typed-secret' },
+    });
+
+    expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe(
+      'typed@example.lk',
+    );
+    expect(
+      (screen.getByLabelText('Password') as HTMLInputElement).value,
+    ).toBe('typed-secret');
+  });
+
+  it('requires an explicit submit and never logs in on role selection', () => {
     render(<SignInPage />);
 
     fireEvent.click(screen.getByRole('button', { name: /Dispatcher/i }));
 
-    expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe(
-      'priyantha.w@waypoint.lk',
-    );
-    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe(
-      'waypoint2026',
-    );
+    expect(mockLogin).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it('signs in through the Go API and routes to the server-reported role', async () => {
@@ -80,6 +116,12 @@ describe('Sign in (G-01)', () => {
 
     render(<SignInPage />);
     fireEvent.click(screen.getByRole('button', { name: /Driver/i }));
+    fireEvent.change(screen.getByLabelText('Email'), {
+      target: { value: 'kasun.p@waypoint.lk' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), {
+      target: { value: 'waypoint2026' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /^Sign in$/i }));
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/driver'));
