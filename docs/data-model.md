@@ -16,8 +16,10 @@ stale number that looks authoritative is worse than no number.
   history columns to `customer_order`) and `00004_load_item_unique.sql` (adds
   `UNIQUE (route_id, order_item_id)` on `load_item`) and `00005_notification_unique.sql` (adds
   `UNIQUE (user_id, type, reference)` on `notification`) and `00006_go_auth.sql` (adds
-  `app_user.password_hash`/`display_name` and the `session` table). A new change is a new
-  numbered file, never an edit to an applied one.
+  `app_user.password_hash`/`display_name` and the `session` table). `00007_delivery_event_reason_code.sql`
+  adds `delivery_event.reason_code`; `00008_order_queue_close.sql` adds the `order_queue_close`
+  table; `00009_driver_vehicle_assignment.sql` adds the `driver_vehicle_assignment` table. A new
+  change is a new numbered file, never an edit to an applied one.
 - **Reference seed:** the five operational CSVs are copied into
   `apps/api/internal/seed/data/` and embedded with `//go:embed` (`apps/api/internal/seed`).
   Seeding runs after migrations and is idempotent (upsert on the natural key). It is seeded
@@ -96,6 +98,16 @@ planning, transient:
 | `vehicle`  | `vehicle_id` PK, `type`, `temp`, `weight_cap_kg`, `volume_cap_m3`, `fuel_type`, `km_per_l`, `weekly_fuel_quota_l`, `depot_id` FK                                                | VEH001–VEH060, from `vehicles.csv`: 12 reefer trucks, 40 dry-box trucks, 8 vans (4 refrigerated). Day-to-day availability lives in `vehicle_daily_availability`, not here.                                                                                                                                                                                                         |
 | `item`     | `item_id` PK, `sku` UNIQUE, `brand`, `unit_weight_kg`, `unit_volume_m3`, `temperature_requirement`                                                                              | Real SKUs, not aggregates.                                                                                                                                                                                                                                                                                                                                                         |
 | `app_user` | `user_id` PK, `email` UNIQUE, `display_name`, `password_hash`, `role`, `depot_id` nullable, `outlet_id` nullable, `is_active`                                                   | The application identity and the credential. Authentication is owned by the Go API: `password_hash` is an Argon2id PHC string (never plaintext), verified in constant time at `POST /api/v1/auth/login`. Nullable scope columns: a dispatcher has a depot and no outlet, a store manager the reverse. Enforced server-side on every query, never trusted from a token claim alone. |
+
+### Operational assignments (`00009_driver_vehicle_assignment.sql`)
+
+A date-based link from a driver to a vehicle. The schema has no permanent one-driver-per-vehicle
+relationship, so an assignment is `(driver, vehicle, date)`; history accumulates rather than
+overwriting, and a new operating date is a new row.
+
+| Table                        | Key columns                                                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `driver_vehicle_assignment`  | `assignment_id` PK, `driver_id` FK → `app_user`, `vehicle_id` FK → `vehicle`, `assignment_date`, `depot_id` FK → `depot`, `assigned_by` FK → `app_user`, `created_at` | `UNIQUE (driver_id, assignment_date)` — one driver drives at most one vehicle a day; `UNIQUE (vehicle_id, assignment_date)` — one vehicle has at most one driver a day. `depot_id` is denormalised from the vehicle for depot-scoped reads and is validated to match the driver's depot before insert. Mutations are dispatcher-only and audited in the same transaction. The store-manager-to-outlet link is **not** a table: it is the existing authoritative `app_user.outlet_id`, written through the focused dispatcher assignment endpoint. |
 
 ### Sessions (`00006_go_auth.sql`)
 

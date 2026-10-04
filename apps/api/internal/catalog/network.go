@@ -159,15 +159,34 @@ type Clock interface{ Now() time.Time }
 //	GET /api/v1/depots                       -> { depots }
 //	GET /api/v1/outlets?depotId=             -> { outlets }
 //	GET /api/v1/vehicles?depotId=&date=      -> { vehicles } with the date's status
+//
+// It also serves the Dispatcher master-data mutations (see
+// RegisterMasterDataRoutes): vehicle/outlet create and update, validated
+// server-side and audited. writer is required for those routes.
 type NetworkHandler struct {
 	reader NetworkReader
+	writer MasterDataWriter
 	clock  Clock
 	auth   *auth.Middleware
 }
 
-// NewNetworkHandler builds the handler.
+// MasterDataWriter is the write surface the handler needs. It is satisfied by
+// *PGNetworkWriter and by test fakes.
+type MasterDataWriter interface {
+	VehicleWriter
+	OutletWriter
+}
+
+// NewNetworkHandler builds the handler for the read endpoints.
 func NewNetworkHandler(reader NetworkReader, clock Clock, authMiddleware *auth.Middleware) *NetworkHandler {
 	return &NetworkHandler{reader: reader, clock: clock, auth: authMiddleware}
+}
+
+// WithWriter attaches the master-data writer, enabling the mutation routes. It
+// returns the handler for chaining at the composition root.
+func (h *NetworkHandler) WithWriter(writer MasterDataWriter) *NetworkHandler {
+	h.writer = writer
+	return h
 }
 
 // RegisterRoutes mounts the endpoints behind role authorization. A dispatcher
@@ -323,6 +342,10 @@ func writeNetworkError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.As(err, &invalid):
 		httpx.WriteValidation(w, []httpx.FieldError{{Field: invalid.Field, Message: invalid.Message}})
+	case errors.Is(err, ErrDuplicate):
+		httpx.WriteErrorCode(w, http.StatusConflict, httpx.CodeConflict, "That identifier already exists")
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteErrorCode(w, http.StatusNotFound, httpx.CodeNotFound, "Not found")
 	default:
 		httpx.WriteErrorCode(w, http.StatusInternalServerError, httpx.CodeInternal, "Something went wrong on our side")
 	}

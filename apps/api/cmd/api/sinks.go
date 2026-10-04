@@ -17,6 +17,23 @@ import (
 	"waypoint.lk/api/internal/routes"
 )
 
+// catalogAudit adapts audit.RecordTx to catalog.AuditSink, so a vehicle/outlet
+// master-data change and its audit row commit in one transaction.
+type catalogAudit struct{}
+
+func (catalogAudit) RecordTx(ctx context.Context, tx pgx.Tx, action, entityType, entityID, actor, depotID, outletID, result string, detail map[string]any) error {
+	return audit.RecordTx(ctx, tx, action, entityType, entityID, actor, depotID, outletID, result, detail)
+}
+
+// assignmentAudit adapts audit.RecordTx to assignment.AuditSink, so a
+// driver/vehicle or outlet/manager assignment and its audit row commit in one
+// transaction.
+type assignmentAudit struct{}
+
+func (assignmentAudit) RecordTx(ctx context.Context, tx pgx.Tx, action, entityType, entityID, actor, depotID, outletID, result string, detail map[string]any) error {
+	return audit.RecordTx(ctx, tx, action, entityType, entityID, actor, depotID, outletID, result, detail)
+}
+
 // ordersAudit adapts audit.RecordTx to orders.AuditSink, so a queue close and
 // its audit row commit in one transaction.
 type ordersAudit struct{}

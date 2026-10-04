@@ -184,6 +184,14 @@ Roughly 10 minutes, covering all four roles and the overcapacity degradation pat
    live countdown to the 16:00 cutoff and the day's KPI cards.
 4. Open **Order Queue** and close the queue for the delivery day. The confirmed orders
    freeze; anything arriving later is held for the following run.
+
+   **Master data and assignments.** Still as the Dispatcher, open **Vehicles → VEH014**: the
+   detail screen shows the driver assigned for the delivery day (the seed assigns Kasun P. to
+   VEH014 for Sat 26 Sep) with controls to assign, change or remove it. Open **Outlets →
+   OUT014** to see the assigned store manager; assigning a different active manager releases
+   the previous one. Vehicle/outlet create and edit are on the same screens. These assignments
+   are what let the Driver's cockpit resolve their own run below.
+
 5. Open **Plan & Allocate** and request a suggested plan. The request returns immediately
    with a job id; the board fills in when the worker finishes.
 6. **Read the rule panel** on the right. Each vehicle lane shows live weight, volume, time
@@ -345,6 +353,13 @@ faking the missing behaviour.
   per brand (idempotent), async planning proposal and review, mandatory deferral reasons with
   bulk apply, transactional confirm/publish, routes and trip tracker, deferral history with
   repeat-skip highlighting, fleet, notifications and audit trail.
+- **Dispatcher master data and operational assignments.** Vehicle and outlet create/edit
+  (server-validated, server-generated immutable ids, no hard delete, audited in the same
+  transaction), a date-based **driver-to-vehicle assignment** (one driver/vehicle per operating
+  date, depot-compatible, conflicts reported not overwritten), and a focused
+  **store-manager-to-outlet assignment** writing the authoritative `app_user.outlet_id`. The
+  Driver cockpit resolves the assigned vehicle's run; the driver's own assignment is readable
+  at `GET /driver/assignment` without exposing any credential.
 - **Planning engine.** Every hard constraint with the official trip-time formula, the
   documented [prioritisation policy](docs/prioritisation-policy.md) (deferred-yesterday,
   starved outlets, chilled-first, narrow windows, largest order, Fresh before Style/Tech),

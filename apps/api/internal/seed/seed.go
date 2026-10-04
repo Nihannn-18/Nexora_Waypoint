@@ -52,6 +52,7 @@ type Result struct {
 	Users            int
 	DemoOrders       int
 	DemoAvailability int
+	DemoAssignments  int
 }
 
 // Run seeds every reference dataset in foreign-key order: depots first, then
@@ -91,6 +92,9 @@ func Run(ctx context.Context, pool *pgxpool.Pool) (Result, error) {
 	}
 
 	if res.Users, err = seedUsers(ctx, tx, depotIDs); err != nil {
+		return res, err
+	}
+	if res.DemoAssignments, err = seedDemoAssignment(ctx, tx); err != nil {
 		return res, err
 	}
 	if res.DemoOrders, res.DemoAvailability, err = seedDemoDay(ctx, tx); err != nil {
@@ -166,6 +170,38 @@ func seedUsers(ctx context.Context, tx pgx.Tx, depotIDs map[string]string) (int,
 		}
 	}
 	return len(demoUsers), nil
+}
+
+// seedDemoAssignment gives the demo day a deterministic driver-to-vehicle
+// assignment: the seeded driver is on VEH014 for the S1 delivery date. It uses
+// the vehicle's own depot so the row is always depot-consistent, and DO NOTHING
+// on conflict so a dispatcher's later change is never rewound by a re-seed.
+// The seeded demo can therefore show the driver cockpit resolving VEH014's run.
+func seedDemoAssignment(ctx context.Context, tx pgx.Tx) (int, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app_user WHERE user_id = 'seed-driver')`).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("seed demo assignment: check driver: %w", err)
+	}
+	if !exists {
+		return 0, fmt.Errorf("seed demo assignment: seeded driver is missing")
+	}
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM vehicle WHERE vehicle_id = 'VEH014')`).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("seed demo assignment: check vehicle: %w", err)
+	}
+	if !exists {
+		return 0, fmt.Errorf("seed demo assignment: VEH014 is missing from the fleet")
+	}
+
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO driver_vehicle_assignment (driver_id, vehicle_id, assignment_date, depot_id, assigned_by)
+		SELECT 'seed-driver', v.vehicle_id, $1::date, v.depot_id, 'seed-dispatcher'
+		FROM vehicle v
+		WHERE v.vehicle_id = 'VEH014'
+		ON CONFLICT (vehicle_id, assignment_date) DO NOTHING`, demoDeliveryDate)
+	if err != nil {
+		return 0, fmt.Errorf("seed demo assignment: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func seedDepots(ctx context.Context, tx pgx.Tx) (map[string]string, error) {

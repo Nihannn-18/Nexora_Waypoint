@@ -47,12 +47,12 @@ const hasUnfinished = (
  * R-01 Cockpit (Figma 1:4306 online / 37:5584 offline): active run, current
  * stop with window and unloading bay, planned route with completed stops.
  *
- * GET /driver/routes is depot-scoped and the schema links no driver to a
- * vehicle, so the run cannot be derived server-side. The driver therefore
- * chooses their own run explicitly (remembered on the phone); with more than
- * one candidate and no choice yet we ask rather than guess, so a driver is
- * never silently shown another vehicle's route. A single depot route is
- * unambiguous and auto-selected.
+ * GET /driver/routes is depot-scoped and, when the Dispatcher has assigned this
+ * driver to a vehicle for the run date, narrowed server-side to that vehicle's
+ * trips. The driver still chooses explicitly when more than one trip is theirs
+ * (remembered on the phone); with more than one candidate and no choice yet we
+ * ask rather than guess, so a driver is never silently shown another vehicle's
+ * route. A single route is unambiguous and auto-selected.
  */
 export default function DriverCockpitPage() {
   const { online, events } = useOutbox();

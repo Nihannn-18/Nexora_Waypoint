@@ -190,16 +190,58 @@ func TestDriverRoutesScope(t *testing.T) {
 	svc, repo := fixture()
 	ctx := context.Background()
 
-	if _, err := svc.DriverRoutes(ctx, "d-peli", "26 Sep"); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.DriverRoutes(ctx, "u-driver", "d-peli", "26 Sep"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("bad date = %v, want ErrInvalid", err)
 	}
-	if _, err := svc.DriverRoutes(ctx, "d-peli", "2026-09-26"); err != nil || repo.routesArg != [2]string{"d-peli", "2026-09-26"} {
+	if _, err := svc.DriverRoutes(ctx, "u-driver", "d-peli", "2026-09-26"); err != nil || repo.routesArg != [2]string{"d-peli", "2026-09-26"} {
 		t.Fatalf("own depot: args=%v err=%v", repo.routesArg, err)
 	}
 	repo.routesArg = [2]string{}
-	got, err := svc.DriverRoutes(ctx, "", "2026-09-26")
+	got, err := svc.DriverRoutes(ctx, "u-driver", "", "2026-09-26")
 	if err != nil || len(got) != 0 || repo.routesArg != [2]string{} {
 		t.Fatalf("no depot must not query: got=%v args=%v err=%v", got, repo.routesArg, err)
+	}
+}
+
+// fakeAssignments resolves a single fixed vehicle for a driver, or none.
+type fakeAssignments struct {
+	vehicleID string
+	assigned  bool
+}
+
+func (f fakeAssignments) AssignedVehicle(context.Context, string, string) (string, bool, error) {
+	return f.vehicleID, f.assigned, nil
+}
+
+// TestDriverRoutesNarrowedByAssignment proves a driver with an assignment only
+// sees their own vehicle's routes, and that no assignment preserves the
+// depot-wide fallback (explicit choice) rather than silently guessing.
+func TestDriverRoutesNarrowedByAssignment(t *testing.T) {
+	ctx := context.Background()
+	repo := &fakeRepo{
+		routes: []DriverRoute{
+			{RouteSummary: RouteSummary{RouteID: "R1", RouteDate: "2026-09-26", VehicleID: "VEH014", TripNo: 1, Status: "DISPATCHED"}},
+			{RouteSummary: RouteSummary{RouteID: "R2", RouteDate: "2026-09-26", VehicleID: "VEH001", TripNo: 1, Status: "DISPATCHED"}},
+		},
+		results: map[string]EventResult{},
+	}
+
+	assigned := NewService(repo, nil).WithAssignments(fakeAssignments{vehicleID: "VEH014", assigned: true})
+	got, err := assigned.DriverRoutes(ctx, "u-driver", "d-peli", "2026-09-26")
+	if err != nil {
+		t.Fatalf("assigned: %v", err)
+	}
+	if len(got) != 1 || got[0].VehicleID != "VEH014" {
+		t.Fatalf("assigned narrow = %+v, want only VEH014", got)
+	}
+
+	unassigned := NewService(repo, nil).WithAssignments(fakeAssignments{})
+	got, err = unassigned.DriverRoutes(ctx, "u-driver", "d-peli", "2026-09-26")
+	if err != nil {
+		t.Fatalf("unassigned: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("unassigned = %d routes, want the depot's 2 (explicit choice)", len(got))
 	}
 }
 

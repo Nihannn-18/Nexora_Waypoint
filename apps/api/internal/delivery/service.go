@@ -14,15 +14,33 @@ import (
 type Service struct {
 	repo  Repository
 	clock Clock
+	// assignments resolves the vehicle a driver is assigned to for a date. It is
+	// optional: when nil, or when no assignment exists, the cockpit falls back to
+	// the depot's routes and the driver selects explicitly (the pre-assignment
+	// behaviour), so nothing regresses on a system with no assignments.
+	assignments AssignmentResolver
 }
 
 // Clock reports the current business-time instant, so the active-run lookup
 // uses the API clock (the demo clock under DEMO_MODE), never a device clock.
 type Clock interface{ Now() time.Time }
 
+// AssignmentResolver resolves the vehicle a driver is assigned to on a date.
+// It is satisfied by *assignment.PGStore; the narrow signature keeps delivery
+// free of the assignment package's types.
+type AssignmentResolver interface {
+	AssignedVehicle(ctx context.Context, driverID, date string) (vehicleID string, ok bool, err error)
+}
+
 // NewService builds the delivery service. clock may be nil in narrow tests, in
 // which case the active-run lookup falls back to the wall clock.
 func NewService(repo Repository, clock Clock) *Service { return &Service{repo: repo, clock: clock} }
+
+// WithAssignments attaches the driver-assignment resolver.
+func (s *Service) WithAssignments(r AssignmentResolver) *Service {
+	s.assignments = r
+	return s
+}
 
 func (s *Service) now() time.Time {
 	if s.clock == nil {
@@ -91,32 +109,64 @@ func (s *Service) LegDetail(ctx context.Context, legID, actorDepot string) (LegD
 	return leg, nil
 }
 
-// DriverRoutes lists the caller's depot's driveable routes.
+// DriverRoutes lists the caller's driveable routes.
 //
 // The date is optional: when it is omitted the depot's active run is resolved
 // from the routes themselves — the earliest driveable run that has not passed,
 // or the latest one when none is upcoming — so the cockpit opens on the planned
-// run rather than a date taken from the phone. Depot is the strongest driver
-// boundary the schema has: app_user carries no vehicle, so a driver sees every
-// route of their depot and picks their vehicle.
-func (s *Service) DriverRoutes(ctx context.Context, actorDepot, date string) ([]DriverRoute, error) {
+// run rather than a date taken from the phone.
+//
+// When the Dispatcher has assigned this driver to a vehicle for the resolved
+// date, only that vehicle's routes are returned, so the driver sees their own
+// run and not every route in the depot. Without an assignment (or with no
+// resolver wired) the depot's routes are returned and the driver chooses
+// explicitly, exactly as before. A driver is never silently handed an arbitrary
+// route: with several candidates and no assignment the client asks.
+func (s *Service) DriverRoutes(ctx context.Context, actorUserID, actorDepot, date string) ([]DriverRoute, error) {
 	if actorDepot == "" {
 		return []DriverRoute{}, nil // fail closed: no depot, no routes
 	}
-	if strings.TrimSpace(date) == "" {
+	resolvedDate := strings.TrimSpace(date)
+	if resolvedDate == "" {
 		active, err := s.repo.ActiveRouteDate(ctx, actorDepot, s.now())
 		if err != nil {
 			return nil, err
 		}
-		if active == "" {
-			return []DriverRoute{}, nil
-		}
-		return s.repo.DriverRoutes(ctx, actorDepot, active)
-	}
-	if _, err := time.Parse(time.DateOnly, date); err != nil {
+		resolvedDate = active
+	} else if _, err := time.Parse(time.DateOnly, resolvedDate); err != nil {
 		return nil, ValidationError{Field: "date", Message: "must be YYYY-MM-DD"}
 	}
-	return s.repo.DriverRoutes(ctx, actorDepot, date)
+	if resolvedDate == "" {
+		return []DriverRoute{}, nil
+	}
+	routes, err := s.repo.DriverRoutes(ctx, actorDepot, resolvedDate)
+	if err != nil {
+		return nil, err
+	}
+	return s.narrowToAssignment(ctx, actorUserID, resolvedDate, routes)
+}
+
+// narrowToAssignment returns only the assigned vehicle's routes, if the driver
+// has an assignment for the date. A missing assignment is not an error: it
+// leaves the caller with the depot's routes and the existing explicit choice.
+func (s *Service) narrowToAssignment(ctx context.Context, driverID, date string, routes []DriverRoute) ([]DriverRoute, error) {
+	if s.assignments == nil || driverID == "" {
+		return routes, nil
+	}
+	vehicleID, ok, err := s.assignments.AssignedVehicle(ctx, driverID, date)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return routes, nil
+	}
+	out := make([]DriverRoute, 0, len(routes))
+	for _, r := range routes {
+		if r.VehicleID == vehicleID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // SyncStatus returns the caller's synced/conflict counts.
