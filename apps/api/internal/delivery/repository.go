@@ -34,6 +34,10 @@ type Repository interface {
 	LegDetail(ctx context.Context, legID string) (LegDetail, error)
 	// DriverRoutes returns a depot's driveable routes on a date with their stops.
 	DriverRoutes(ctx context.Context, depotID, date string) ([]DriverRoute, error)
+	// ActiveRouteDate returns the depot's current driveable run: the earliest
+	// non-draft/cancelled route date on or after `today`, or the most recent one
+	// when none is upcoming. Empty when the depot has no driveable routes.
+	ActiveRouteDate(ctx context.Context, depotID string, today time.Time) (string, error)
 	// Record applies one delivery event in a transaction. It returns the sync
 	// result: ACCEPTED for a new event, DUPLICATE when the client_event_id was
 	// already stored. Validation failures the caller should have caught are

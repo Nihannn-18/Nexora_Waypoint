@@ -159,14 +159,14 @@ func run() error {
 	// route. Expected quantities come from order_item via route_leg; load state
 	// is per order line, upserted against the (route_id, order_item_id) key.
 	loadingRepo := loading.NewPGRepository(db.Pool())
-	loadingService := loading.NewService(loadingRepo)
+	loadingService := loading.NewService(loadingRepo, clk)
 	loadingHandler := loading.NewHandler(loadingService, authMiddleware)
 
 	// Delivery: the driver's outcome, POD and idempotent offline-event sync.
 	// delivery_event is the authoritative record, keyed for idempotency by
 	// client_event_id.
 	deliveryRepo := delivery.NewPGRepository(db.Pool())
-	deliveryService := delivery.NewService(deliveryRepo)
+	deliveryService := delivery.NewService(deliveryRepo, clk)
 	deliveryHandler := delivery.NewHandler(deliveryService, authMiddleware)
 
 	// Audit + notifications: append-only operational trail and in-app alerts.

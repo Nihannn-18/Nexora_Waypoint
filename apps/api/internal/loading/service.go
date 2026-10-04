@@ -10,11 +10,24 @@ import (
 // Service is the loading business surface. It validates submissions and enforces
 // route/authorization rules; the repository owns persistence and transactions.
 type Service struct {
-	repo Repository
+	repo  Repository
+	clock Clock
 }
 
-// NewService builds the loading service.
-func NewService(repo Repository) *Service { return &Service{repo: repo} }
+// Clock reports the current business-time instant. Injected so "today" is the
+// API clock (the demo clock under DEMO_MODE), never the wall clock or a device.
+type Clock interface{ Now() time.Time }
+
+// NewService builds the loading service. clock may be nil in narrow tests, in
+// which case the active-run lookup falls back to the wall clock.
+func NewService(repo Repository, clock Clock) *Service { return &Service{repo: repo, clock: clock} }
+
+func (s *Service) now() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock.Now()
+}
 
 // PickingList returns a route's picking list, after checking the caller may see
 // the route (same depot). depotID is the caller's depot; empty means the caller
@@ -33,15 +46,30 @@ func (s *Service) PickingList(ctx context.Context, routeID, callerDepotID string
 	return rl, nil
 }
 
-// Routes lists the confirmed routes the caller's depot must load on a date.
+// Routes lists the confirmed routes the caller's depot must load.
+//
+// The date is optional: when it is omitted the depot's active run is resolved
+// from the routes themselves — the earliest confirmed run that has not passed,
+// or the latest one when none is upcoming — so the loader opens on the work
+// that is actually actionable instead of a date guessed from a device clock.
 // A caller with no depot gets nothing rather than everything: the loader
 // endpoints fail closed, exactly as PickingList does.
 func (s *Service) Routes(ctx context.Context, callerDepotID, date string) ([]RouteSummary, error) {
-	if _, err := time.Parse(time.DateOnly, date); err != nil {
-		return nil, ValidationError{Field: "date", Message: "must be YYYY-MM-DD"}
-	}
 	if callerDepotID == "" {
 		return []RouteSummary{}, nil
+	}
+	if strings.TrimSpace(date) == "" {
+		active, err := s.repo.ActiveRouteDate(ctx, callerDepotID, s.now())
+		if err != nil {
+			return nil, err
+		}
+		if active == "" {
+			return []RouteSummary{}, nil
+		}
+		return s.repo.RoutesForDepot(ctx, callerDepotID, active)
+	}
+	if _, err := time.Parse(time.DateOnly, date); err != nil {
+		return nil, ValidationError{Field: "date", Message: "must be YYYY-MM-DD"}
 	}
 	return s.repo.RoutesForDepot(ctx, callerDepotID, date)
 }

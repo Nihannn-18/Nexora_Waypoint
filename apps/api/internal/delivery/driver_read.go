@@ -152,6 +152,34 @@ func (r *PGRepository) LegDetail(ctx context.Context, legID string) (LegDetail, 
 	return d, rows.Err()
 }
 
+// ActiveRouteDate implements Repository. It resolves the depot's current run
+// deterministically: the earliest non-draft/cancelled route date on or after
+// today, else the most recent one. This is what lets the driver cockpit open on
+// the planned run without the phone or the browser inventing a date.
+func (r *PGRepository) ActiveRouteDate(ctx context.Context, depotID string, today time.Time) (string, error) {
+	var date string
+	err := r.pool.QueryRow(ctx, `
+		SELECT d FROM (
+			SELECT route_date AS d, 0 AS pref
+			FROM route
+			WHERE depot_id = $1 AND status NOT IN ('DRAFT', 'CANCELLED') AND route_date >= $2::date
+			UNION ALL
+			SELECT MAX(route_date) AS d, 1 AS pref
+			FROM route
+			WHERE depot_id = $1 AND status NOT IN ('DRAFT', 'CANCELLED')
+		) runs
+		WHERE d IS NOT NULL
+		ORDER BY pref, d
+		LIMIT 1`, depotID, today.Format("2006-01-02")).Scan(&date)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve active driver route date: %w", err)
+	}
+	return date, nil
+}
+
 // DriverRoutes implements Repository: the depot's live routes on a date, each
 // with its stops in sequence. Draft and cancelled routes are not driveable.
 func (r *PGRepository) DriverRoutes(ctx context.Context, depotID, date string) ([]DriverRoute, error) {

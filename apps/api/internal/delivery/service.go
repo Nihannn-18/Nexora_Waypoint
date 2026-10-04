@@ -12,11 +12,24 @@ import (
 // shape, then delegates the transactional write to the repository. It also
 // implements the batch sync reconciliation, processing each event independently.
 type Service struct {
-	repo Repository
+	repo  Repository
+	clock Clock
 }
 
-// NewService builds the delivery service.
-func NewService(repo Repository) *Service { return &Service{repo: repo} }
+// Clock reports the current business-time instant, so the active-run lookup
+// uses the API clock (the demo clock under DEMO_MODE), never a device clock.
+type Clock interface{ Now() time.Time }
+
+// NewService builds the delivery service. clock may be nil in narrow tests, in
+// which case the active-run lookup falls back to the wall clock.
+func NewService(repo Repository, clock Clock) *Service { return &Service{repo: repo, clock: clock} }
+
+func (s *Service) now() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock.Now()
+}
 
 // RecordOne validates and records a single delivery event for a leg. The caller
 // identity's depot must match the leg's route depot (the strongest available
@@ -78,15 +91,30 @@ func (s *Service) LegDetail(ctx context.Context, legID, actorDepot string) (LegD
 	return leg, nil
 }
 
-// DriverRoutes lists the caller's depot's routes on date (YYYY-MM-DD). Depot is
-// the strongest driver boundary the schema has: app_user carries no vehicle, so
-// a driver sees every route of their depot and picks their vehicle.
+// DriverRoutes lists the caller's depot's driveable routes.
+//
+// The date is optional: when it is omitted the depot's active run is resolved
+// from the routes themselves — the earliest driveable run that has not passed,
+// or the latest one when none is upcoming — so the cockpit opens on the planned
+// run rather than a date taken from the phone. Depot is the strongest driver
+// boundary the schema has: app_user carries no vehicle, so a driver sees every
+// route of their depot and picks their vehicle.
 func (s *Service) DriverRoutes(ctx context.Context, actorDepot, date string) ([]DriverRoute, error) {
-	if _, err := time.Parse(time.DateOnly, date); err != nil {
-		return nil, ValidationError{Field: "date", Message: "must be YYYY-MM-DD"}
-	}
 	if actorDepot == "" {
 		return []DriverRoute{}, nil // fail closed: no depot, no routes
+	}
+	if strings.TrimSpace(date) == "" {
+		active, err := s.repo.ActiveRouteDate(ctx, actorDepot, s.now())
+		if err != nil {
+			return nil, err
+		}
+		if active == "" {
+			return []DriverRoute{}, nil
+		}
+		return s.repo.DriverRoutes(ctx, actorDepot, active)
+	}
+	if _, err := time.Parse(time.DateOnly, date); err != nil {
+		return nil, ValidationError{Field: "date", Message: "must be YYYY-MM-DD"}
 	}
 	return s.repo.DriverRoutes(ctx, actorDepot, date)
 }

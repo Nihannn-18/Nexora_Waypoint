@@ -61,23 +61,26 @@ export function useBusinessDate() {
   return date;
 }
 
-/** The depot's confirmed routes for the business date. */
+/** The depot's confirmed routes for the active run. */
 export function useLoaderRoutes(): State<readonly LoaderRouteSummary[]> & {
   readonly date: string | null;
   readonly reload: () => void;
 } {
-  const date = useBusinessDate();
+  // The API clock is only a fallback for the empty case; the real delivery day
+  // is the route date the server resolved, so the screen shows the run that
+  // actually exists rather than a date taken from the device.
+  const businessDate = useBusinessDate();
   const [state, setState] = useState<State<readonly LoaderRouteSummary[]>>({
     status: 'loading',
   });
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
-    if (!date) return;
     let live = true;
     setState({ status: 'loading' });
+    // No date: the server resolves the depot's active run.
     api
-      .getLoaderRoutes(date)
+      .getLoaderRoutes()
       .then((routes) => live && setState({ status: 'ready', data: routes }))
       .catch(
         (e) =>
@@ -90,7 +93,12 @@ export function useLoaderRoutes(): State<readonly LoaderRouteSummary[]> & {
     return () => {
       live = false;
     };
-  }, [date, nonce]);
+  }, [nonce]);
+
+  const date =
+    state.status === 'ready'
+      ? (state.data[0]?.routeDate ?? businessDate)
+      : businessDate;
 
   return { ...state, date, reload: () => setNonce((n) => n + 1) };
 }

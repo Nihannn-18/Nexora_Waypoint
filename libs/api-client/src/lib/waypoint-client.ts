@@ -394,11 +394,12 @@ export class WaypointClient {
   /* --- Loader ---------------------------------------------------------- */
 
   /**
-   * The depot's confirmed routes on `date`. Scope comes from the signed-in
-   * loader server-side, so this never takes a depot: a loader sees their own
-   * dock and nothing else.
+   * The depot's confirmed routes. Scope comes from the signed-in loader
+   * server-side, so this never takes a depot: a loader sees their own dock and
+   * nothing else. Omit `date` to let the server resolve the depot's active
+   * run from the routes themselves.
    */
-  getLoaderRoutes(date: IsoDate): Promise<readonly LoaderRouteSummary[]> {
+  getLoaderRoutes(date?: IsoDate): Promise<readonly LoaderRouteSummary[]> {
     return this.http
       .get<{ routes: readonly LoaderRouteSummary[] }>('/loading/routes', {
         query: { date },
@@ -437,8 +438,12 @@ export class WaypointClient {
 
   /* --- Driver ---------------------------------------------------------- */
 
-  /** Depot-scoped: every live route of the driver's depot on `date`. */
-  getDriverRoutes(date: IsoDate): Promise<readonly DriverRoute[]> {
+  /**
+   * The depot's driveable routes. Omit `date` to let the server resolve the
+   * depot's active run, so the cockpit opens on the planned run rather than a
+   * date taken from the phone.
+   */
+  getDriverRoutes(date?: IsoDate): Promise<readonly DriverRoute[]> {
     return this.http.get<readonly DriverRoute[]>('/driver/routes', {
       query: { date },
     });
