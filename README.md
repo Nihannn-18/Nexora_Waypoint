@@ -389,6 +389,23 @@ needs data or an action the API does not have, the screen says so instead of fak
 - **Surfaces use the shared tokens** (grey `page`, white `card`) rather than the frame's
   white page and grey sidebar, so the dispatcher matches the other three workspaces.
 
+### Loader workspace
+
+L-01 (today's trips), L-02 (the picking list, reverse stop order, per-order check-off) and
+L-03 (flag damaged/missing with an optional photo) are built. Two L-02 behaviours are **not**
+implemented because the backend has no path for them, and the screen says what it does
+instead of faking it:
+
+- **No "Mark trip loaded".** There is no route-level `LOADED` status or transition endpoint,
+  and no dispatch endpoint exists. The order lifecycle has `ALLOCATED → LOADED`, but nothing
+  exposes it to the loader, so the screen ends at "Save counts". Server-side readiness
+  (`routeReady`) is still computed and shown.
+- **No live plan-change detection (L-02a).** The `route` table has `route_version`, but no
+  code ever increments it and there is no server-side route-edit endpoint
+  (`PATCH /routes/{id}/legs/reorder` is documented but not implemented), so polling the
+  version would never detect a change. The picking list loads once and holds the loader's
+  unsaved counts.
+
 ### Any further departures
 
 Record them here as they happen, with the reason. An undocumented departure costs marks
