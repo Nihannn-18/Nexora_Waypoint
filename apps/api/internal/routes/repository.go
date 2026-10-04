@@ -131,7 +131,7 @@ func (r *PGRepository) Confirm(ctx context.Context, plan ConfirmationPlan) (Conf
 		}
 		result.RouteIDs = append(result.RouteIDs, routeID)
 		for _, leg := range route.Legs {
-			if err := insertLeg(ctx, tx, routeID, route.RouteDate, leg); err != nil {
+			if err := insertLeg(ctx, tx, routeID, route.RouteDate, route.Location, leg); err != nil {
 				return ConfirmationResult{}, err
 			}
 			if err := insertAllocation(ctx, tx, leg.OrderID, routeID, plan.Actor); err != nil {
@@ -231,30 +231,41 @@ func insertRoute(ctx context.Context, tx pgx.Tx, route Route) (string, error) {
 	return id, nil
 }
 
-func insertLeg(ctx context.Context, tx pgx.Tx, routeID, routeDate string, leg RouteLeg) error {
+func insertLeg(ctx context.Context, tx pgx.Tx, routeID, routeDate string, loc *time.Location, leg RouteLeg) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO route_leg (
 			route_id, order_id, seq, from_point, to_outlet, distance_km,
 			planned_arrival, service_time_min, status
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		routeID, leg.OrderID, leg.Seq, leg.FromPoint, leg.ToOutlet, leg.DistanceKm,
-		plannedArrivalTS(routeDate, leg), nullableServiceMinutes(leg), LegPending)
+		plannedArrivalTS(routeDate, loc, leg), nullableServiceMinutes(leg), LegPending)
 	if err != nil {
 		return fmt.Errorf("create route leg (route %s seq %d): %w", routeID, leg.Seq, err)
 	}
 	return nil
 }
 
-// plannedArrivalTS places a leg's "HH:MM" planned arrival on the route date at
-// midnight UTC. The arrival is a wall-clock business-time value; the column is
-// TIMESTAMPTZ, so it is anchored to the route date so later reads render the
-// same clock time. Empty stays NULL. The date comes from the authoritative
-// Route, never duplicated onto the leg.
-func plannedArrivalTS(routeDate string, leg RouteLeg) any {
+// plannedArrivalTS anchors a leg's "HH:MM" planned arrival to the route date in
+// the business timezone, returning nil when unset. The arrival is a wall-clock
+// business time, so it must be stored as the instant that clock reads in the
+// business zone (e.g. 05:52 Asia/Colombo), not as 05:52 UTC — otherwise a
+// session-timezone read (to_char 'HH24:MI') and the driver's RFC3339 would both
+// shift it. The date comes from the authoritative Route, never duplicated onto
+// the leg.
+func plannedArrivalTS(routeDate string, loc *time.Location, leg RouteLeg) any {
 	if leg.PlannedArrival == "" {
 		return nil
 	}
-	return routeDate + "T" + leg.PlannedArrival + ":00Z"
+	if loc == nil {
+		loc = time.UTC
+	}
+	ts, err := time.ParseInLocation("2006-01-02T15:04", routeDate+"T"+leg.PlannedArrival, loc)
+	if err != nil {
+		// A malformed clock value is a programming error, not client input; drop
+		// it rather than persist a wrong instant.
+		return nil
+	}
+	return ts
 }
 
 // nullableServiceMinutes writes the handling allowance, NULL when unset so the

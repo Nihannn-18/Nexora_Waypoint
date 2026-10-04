@@ -20,6 +20,7 @@ package routes
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"waypoint.lk/api/internal/domain"
 )
@@ -43,6 +44,11 @@ type Route struct {
 	TotalWeightKg float64
 	TotalVolumeM3 float64
 	DistanceKm    float64
+	// Location is the business timezone a leg's "HH:MM" planned arrival is read
+	// in. It is not a persisted column: it exists only so confirmation can anchor
+	// a wall-clock time to the correct business-zone instant when writing
+	// route_leg.planned_arrival. A nil location falls back to UTC.
+	Location *time.Location
 	// Legs are the ordered stops, seq starting at 0.
 	Legs []RouteLeg
 }

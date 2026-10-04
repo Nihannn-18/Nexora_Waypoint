@@ -224,6 +224,7 @@ func (c *Confirmation) buildPlan(ctx context.Context, job planning.Job, in Confi
 			RouteDate: plan.RouteDate,
 			TripNo:    choice.TripNo,
 			Status:    RouteConfirmed,
+			Location:  c.clock.Now().Location(),
 		}
 
 		for _, orderID := range choice.OrderIDs {
