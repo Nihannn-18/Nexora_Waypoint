@@ -30,11 +30,21 @@ data "aws_iam_policy_document" "github_assume" {
     }
 
     # Scope the trust to the actual repository and deployment branches.
+    #
+    # GitHub embeds immutable owner/repo IDs in the subject for repositories
+    # created on/after 15 Jul 2026, e.g.
+    #   repo:Owner@ownerId/Repo@repoId:ref:refs/heads/BRANCH
+    # (GET /repos/{owner}/{repo}/actions/oidc/customization/sub,
+    #  sub_claim_prefix). Build that exact shape from the configured IDs so the
+    # match is literal and repo-restricted. When the IDs are unset, fall back to
+    # the legacy name-only subject.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
         for branch in var.deploy_branches :
+        var.github_owner_id != "" && var.github_repo_id != "" ?
+        "repo:${var.github_org}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}:ref:refs/heads/${branch}" :
         "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/${branch}"
       ]
     }
