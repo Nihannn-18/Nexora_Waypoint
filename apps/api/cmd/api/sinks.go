@@ -13,7 +13,24 @@ import (
 	"waypoint.lk/api/internal/delivery"
 	"waypoint.lk/api/internal/loading"
 	"waypoint.lk/api/internal/notify"
+	"waypoint.lk/api/internal/orders"
+	"waypoint.lk/api/internal/routes"
 )
+// ordersAudit adapts audit.RecordTx to orders.AuditSink, so a queue close and
+// its audit row commit in one transaction.
+type ordersAudit struct{}
+
+func (ordersAudit) RecordTx(ctx context.Context, tx pgx.Tx, e orders.AuditEvent) error {
+	return audit.RecordTx(ctx, tx, e.Action, e.EntityType, e.EntityID, e.Actor, e.DepotID, e.OutletID, e.Result, e.Detail)
+}
+
+// routesAudit adapts audit.RecordTx to routes.AuditSink, so an allocation
+// confirmation and its deferral trail commit in one transaction.
+type routesAudit struct{}
+
+func (routesAudit) RecordTx(ctx context.Context, tx pgx.Tx, e routes.AuditEvent) error {
+	return audit.RecordTx(ctx, tx, e.Action, e.EntityType, e.EntityID, e.Actor, e.DepotID, e.OutletID, e.Result, e.Detail)
+}
 
 // deliveryAudit adapts audit.RecordTx to delivery.AuditSink.
 type deliveryAudit struct{}

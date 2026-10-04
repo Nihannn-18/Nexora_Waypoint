@@ -7,9 +7,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"waypoint.lk/api/internal/audit"
 	"waypoint.lk/api/internal/domain"
 	"waypoint.lk/api/internal/store"
 )
+
+// testAudit adapts audit.RecordTx to orders.AuditSink for the close-queue audit
+// integration test.
+type testAudit struct{}
+
+func (testAudit) RecordTx(ctx context.Context, tx pgx.Tx, e AuditEvent) error {
+	return audit.RecordTx(ctx, tx, e.Action, e.EntityType, e.EntityID, e.Actor, e.DepotID, e.OutletID, e.Result, e.Detail)
+}
 
 // TestRepositoryIntegration exercises the pgx repository against a real
 // PostgreSQL when one is reachable, and skips otherwise so the unit suite stays
@@ -138,5 +149,61 @@ func TestRepositoryIntegration(t *testing.T) {
 	// Not found is reported as ErrNotFound.
 	if _, err := repo.GetByID(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing order = %v, want ErrNotFound", err)
+	}
+}
+
+// TestCloseQueueAuditIntegration proves the queue close and its audit record
+// commit together. It skips without a database, like the other integration test.
+func TestCloseQueueAuditIntegration(t *testing.T) {
+	dsn := os.Getenv("WAYPOINT_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("WAYPOINT_TEST_DATABASE_URL not set; skipping PostgreSQL integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	var depotID string
+	if err := db.Pool().QueryRow(ctx, `
+		INSERT INTO depot (code, name) VALUES ('QCDEPOT', 'Queue Close Depot')
+		ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name RETURNING depot_id`).Scan(&depotID); err != nil {
+		t.Fatalf("depot: %v", err)
+	}
+
+	repo := NewPGRepository(db.Pool()).WithAudit(testAudit{})
+	date := time.Date(2026, time.September, 26, 0, 0, 0, 0, time.UTC)
+	entityID := "2026-09-26|" + depotID
+
+	t.Cleanup(func() {
+		_, _ = db.Pool().Exec(context.Background(), `DELETE FROM order_queue_close WHERE depot_id = $1`, depotID)
+		_, _ = db.Pool().Exec(context.Background(), `DELETE FROM audit_log WHERE entity_id = $1`, entityID)
+	})
+
+	closed, err := repo.CloseQueue(ctx, date, depotID, []string{"FRESH", "STYLE"}, "u-disp")
+	if err != nil {
+		t.Fatalf("close queue: %v", err)
+	}
+	if closed != 2 {
+		t.Fatalf("closed = %d, want 2", closed)
+	}
+	var rows int
+	if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'QUEUE_CLOSED' AND entity_id = $1`, entityID).Scan(&rows); err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("QUEUE_CLOSED audit rows = %d, want 1", rows)
+	}
+
+	// A repeat close writes no new closure rows and still records an audit row.
+	if closed, err = repo.CloseQueue(ctx, date, depotID, []string{"FRESH"}, "u-disp"); err != nil || closed != 0 {
+		t.Fatalf("repeat close = (%d, %v), want (0, nil)", closed, err)
 	}
 }

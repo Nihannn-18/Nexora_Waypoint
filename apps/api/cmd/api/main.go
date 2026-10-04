@@ -135,7 +135,7 @@ func run() error {
 
 	// Orders: intake, retrieval and confirmation. The shared API clock drives the
 	// 16:00 cutoff, so the demo day is honoured like every other "now".
-	orderRepo := orders.NewPGRepository(db.Pool())
+	orderRepo := orders.NewPGRepository(db.Pool()).WithAudit(ordersAudit{})
 	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), clk, orders.NewPGOperatingDayReader(db.Pool()))
 	orderHandler := orders.NewHandler(orderService, authMiddleware)
 
@@ -150,7 +150,7 @@ func run() error {
 	// Routes/allocation: turns a confirmed proposal into authoritative route,
 	// route_leg and allocation rows in one transaction. It reuses planning for
 	// proposals and its own readers for order/vehicle/reference facts.
-	routesRepo := routes.NewPGRepository(db.Pool())
+	routesRepo := routes.NewPGRepository(db.Pool()).WithAudit(routesAudit{})
 	routesReaders := routes.NewPGReaders(db.Pool())
 	confirmation := routes.NewConfirmation(routesRepo, planningService, routesReaders, routesReaders, routesReaders, planningLoader, clk)
 	routesHandler := routes.NewHandler(confirmation, routesRepo, authMiddleware)
