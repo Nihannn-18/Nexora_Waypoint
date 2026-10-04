@@ -121,7 +121,7 @@ export function DashboardScreen() {
         <SectionHeading>
           <span id="overview-heading">System overview</span>
         </SectionHeading>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
           <MetricCard
             icon={BoxIcon}
             label="Orders for the day"

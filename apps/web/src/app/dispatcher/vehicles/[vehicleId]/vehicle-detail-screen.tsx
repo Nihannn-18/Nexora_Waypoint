@@ -6,7 +6,12 @@ import { useSearchParams } from 'next/navigation';
 import { Mono, StatusBadge } from '@waypoint/ui';
 import type { Vehicle } from '@waypoint/shared-types';
 import { api } from '../../../../lib/api';
-import { formatKg, formatLitres, formatM3, humanize } from '../../../../lib/format';
+import {
+  formatKg,
+  formatLitres,
+  formatM3,
+  humanize,
+} from '../../../../lib/format';
 import { useApiQuery } from '../../../../lib/use-api-query';
 import { ErrorState, LoadingState } from '../../../../components/states';
 import { PageHeader } from '../../_components/ui';
@@ -81,8 +86,11 @@ export function VehicleDetailScreen({
   return (
     <>
       <div className="mb-2">
-        <Link href="/dispatcher/vehicles" className="text-sm font-medium text-link">
-          ← All vehicles
+        <Link
+          href="/dispatcher/fleet"
+          className="text-sm font-medium text-link"
+        >
+          ← Fleet
         </Link>
       </div>
       <PageHeader
@@ -99,7 +107,11 @@ export function VehicleDetailScreen({
         }
       />
 
-      {saved && <div className="mb-4"><SavedNotice>Vehicle saved.</SavedNotice></div>}
+      {saved && (
+        <div className="mb-4">
+          <SavedNotice>Vehicle saved.</SavedNotice>
+        </div>
+      )}
 
       <SectionHeading>Vehicle</SectionHeading>
       <Card>

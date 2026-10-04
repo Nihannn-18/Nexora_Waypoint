@@ -66,6 +66,54 @@ describe('S-07 my orders', () => {
     expect(screen.queryByText('ORD-LIVE')).toBeNull();
   });
 
+  describe('deferred view (reached from the Store home "Deferred" tile)', () => {
+    beforeEach(() => {
+      mocked.listOrders.mockResolvedValue({
+        orders: [
+          makeOrder({
+            orderId: 'live',
+            orderNumber: 'ORD-LIVE',
+            status: 'CONFIRMED',
+          }),
+          makeOrder({
+            orderId: 'def',
+            orderNumber: 'ORD-DEF',
+            status: 'DEFERRED',
+            requestedDeliveryDate: '2026-09-26',
+          }),
+        ],
+        total: 2,
+        limit: 200,
+        offset: 0,
+      });
+    });
+    afterEach(() => window.history.replaceState(null, '', '/'));
+
+    it('opens on the deferred orders when the URL asks for them', async () => {
+      window.history.replaceState(null, '', '/store/orders?tab=deferred');
+      renderStore(<MyOrdersPage />);
+
+      expect(await screen.findByText('ORD-DEF')).toBeTruthy();
+      expect(screen.queryByText('ORD-LIVE')).toBeNull();
+      expect(
+        screen.getByRole('heading', { name: 'Deferred orders' }),
+      ).toBeTruthy();
+    });
+
+    it('lists deferred orders on their own tab, not under completed', async () => {
+      renderStore(<MyOrdersPage />);
+      await screen.findByText('ORD-LIVE');
+      expect(screen.queryByText('ORD-DEF')).toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: /deferred/i }));
+      expect(screen.getByText('ORD-DEF')).toBeTruthy();
+      expect(window.location.search).toBe('?tab=deferred');
+
+      fireEvent.click(screen.getByRole('button', { name: /completed/i }));
+      expect(screen.queryByText('ORD-DEF')).toBeNull();
+    });
+  });
+
   it('filters by order number in the search box', async () => {
     renderStore(<MyOrdersPage />);
     await screen.findByText('ORD-LIVE');

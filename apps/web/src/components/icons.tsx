@@ -120,3 +120,19 @@ export const AssignmentIcon = (p: P) => (
     <path d="M14 16h2a4 4 0 000-8h-2" />
   </Icon>
 );
+
+export const EyeIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+    <circle cx="12" cy="12" r="3" />
+  </Icon>
+);
+
+export const EyeOffIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M10.6 5.1A10.4 10.4 0 0112 5c6.5 0 10 7 10 7a17 17 0 01-2.2 3.2" />
+    <path d="M6.6 6.6A17.6 17.6 0 002 12s3.5 7 10 7a9.7 9.7 0 005.4-1.6" />
+    <path d="M9.9 9.9a3 3 0 004.2 4.2" />
+    <path d="M3 3l18 18" />
+  </Icon>
+);

@@ -1,4 +1,8 @@
-import { OPERATING_TIMEZONE, type IsoDate } from '@waypoint/shared-types';
+import {
+  ORDER_CUTOFF_LABEL,
+  OPERATING_TIMEZONE,
+  type IsoDate,
+} from '@waypoint/shared-types';
 
 /**
  * Display formatting. Every date and time is rendered in the business timezone
@@ -124,6 +128,21 @@ export function plural(n: number, singular: string, pluralForm?: string) {
 }
 
 /** "hh:mm:ss" for a non-negative duration. */
+/**
+ * Milliseconds from `now` until today's order cutoff (16:00) on the device's
+ * own clock, never negative: at or after the cutoff it is 0. Computed locally,
+ * so the countdown needs no API call.
+ */
+export function msUntilCutoff(
+  now: Date,
+  cutoff: string = ORDER_CUTOFF_LABEL,
+): number {
+  const [h = 16, m = 0] = cutoff.split(':').map(Number);
+  const at = new Date(now);
+  at.setHours(h, m, 0, 0);
+  return Math.max(0, at.getTime() - now.getTime());
+}
+
 export function formatCountdown(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(total / 3600);

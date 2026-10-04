@@ -11,10 +11,13 @@ import {
 } from 'react';
 import { Mono } from '@waypoint/ui';
 import type { MetaResponse, Outlet } from '@waypoint/shared-types';
-import { formatCountdown, formatInstantDay } from '../../../lib/format';
+import {
+  formatCountdown,
+  formatInstantDay,
+  msUntilCutoff,
+} from '../../../lib/format';
 import { endSession } from '../../../lib/session';
 import { useApiClock, useStoreOutlet } from '../_lib/use-store';
-import { cutoffRemainingMs, offsetOf } from '../_lib/store';
 import { BrandChip } from './ui';
 
 /**
@@ -70,7 +73,9 @@ export function StoreShell({ children }: { children: ReactNode }) {
     <Ctx.Provider value={value}>
       <div className="flex min-h-dvh flex-col bg-page">
         <StoreHeader />
-        <main className="mx-auto w-full max-w-4xl flex-1 p-4">{children}</main>
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-5 sm:px-6 lg:py-8">
+          {children}
+        </main>
       </div>
     </Ctx.Provider>
   );
@@ -82,8 +87,10 @@ function StoreHeader() {
 
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-card">
-      <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2">
-        <div className="flex min-w-0 flex-col">
+      {/* Phone: identity + sign out, then the cutoff, then the nav.
+          Tablet: identity, cutoff, sign out, nav below. Desktop: one row. */}
+      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 sm:px-6">
+        <div className="order-1 flex min-w-0 flex-1 flex-col sm:flex-none">
           {outlet ? (
             <>
               <span className="flex items-center gap-2 text-sm font-semibold text-ink">
@@ -105,22 +112,22 @@ function StoreHeader() {
           )}
         </div>
 
-        <div className="order-2 ml-auto flex items-center gap-2">
+        <div className="order-3 w-full sm:order-2 sm:ml-auto sm:w-auto lg:order-3">
           <CutoffPill />
-          <button
-            type="button"
-            onClick={() => {
-              void endSession();
-            }}
-            className="tap-target rounded-control px-2 text-sm font-medium text-ink-muted hover:bg-page hover:text-ink"
-          >
-            Sign out
-          </button>
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            void endSession();
+          }}
+          className="tap-target order-2 whitespace-nowrap rounded-control px-2 text-sm font-medium text-ink-muted hover:bg-page hover:text-ink sm:order-3 lg:order-4"
+        >
+          Sign out
+        </button>
 
         <nav
           aria-label="Store"
-          className="order-last -mx-1 flex w-full gap-1 overflow-x-auto sm:order-none sm:mx-0 sm:w-auto"
+          className="order-4 -mx-1 flex w-full gap-1 overflow-x-auto lg:order-2 lg:mx-0 lg:w-auto"
         >
           {NAV.map((item) => {
             const active = isActive(pathname, item.href);
@@ -152,21 +159,15 @@ function StoreHeader() {
  * re-render every second.
  */
 export function CutoffPill() {
-  const { meta } = useStoreScope();
-  const [now, setNow] = useState<Date | undefined>(undefined);
-
+  // The device's real clock, ticking locally — no API call per second.
+  const [remaining, setRemaining] = useState<number | undefined>(undefined);
   useEffect(() => {
-    if (!meta) return;
-    const offset = Date.parse(meta.now) - Date.now();
-    const update = () => setNow(new Date(Date.now() + offset));
+    const update = () => setRemaining(msUntilCutoff(new Date()));
     update();
     const id = window.setInterval(update, 1000);
     return () => window.clearInterval(id);
-  }, [meta]);
-
-  if (!meta || !now) return null;
-  const today = meta.now.slice(0, 10);
-  const remaining = cutoffRemainingMs(now, today, offsetOf(meta.now));
+  }, []);
+  if (remaining === undefined) return null;
 
   if (remaining <= 0) {
     return (

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { WaypointApiError } from '@waypoint/api-client';
 import { api } from '../../../lib/api';
+import { PasswordInput } from '../../../components/password-input';
 
 /**
  * Password reset (consume token).
@@ -53,7 +54,9 @@ export default function ResetPasswordClient() {
       window.setTimeout(() => router.push('/signin'), 1500);
     } catch (err) {
       if (err instanceof WaypointApiError && err.isOffline) {
-        setError('We could not reach the server. Check the connection and try again.');
+        setError(
+          'We could not reach the server. Check the connection and try again.',
+        );
       } else {
         setError(
           'This reset link is invalid or has expired. Request a new one and try again.',
@@ -88,21 +91,25 @@ export default function ResetPasswordClient() {
             <span aria-hidden="true" className="text-success">
               ✓
             </span>
-            <span>
-              Your password has been reset. Taking you to sign in…
-            </span>
+            <span>Your password has been reset. Taking you to sign in…</span>
           </p>
         </section>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           {error ? (
-            <p role="alert" className="rounded-control bg-error/10 p-3 text-sm text-ink">
+            <p
+              role="alert"
+              className="rounded-control bg-error/10 p-3 text-sm text-ink"
+            >
               {error}
             </p>
           ) : null}
 
           <div>
-            <label htmlFor="token" className="mb-1 block text-sm font-medium text-ink">
+            <label
+              htmlFor="token"
+              className="mb-1 block text-sm font-medium text-ink"
+            >
               Reset token
             </label>
             <input
@@ -116,40 +123,42 @@ export default function ResetPasswordClient() {
               className="tap-target w-full rounded-control bg-card px-3 font-mono text-sm text-ink ring-1 ring-ink/15 focus-visible:ring-2 focus-visible:ring-brand"
             />
             <p className="mt-1 text-xs text-ink-muted">
-              With DEMO_MODE on, this is the token written to the API log after a
-              reset request.
+              With DEMO_MODE on, this is the token written to the API log after
+              a reset request.
             </p>
           </div>
 
           <div>
-            <label htmlFor="password" className="mb-1 block text-sm font-medium text-ink">
+            <label
+              htmlFor="password"
+              className="mb-1 block text-sm font-medium text-ink"
+            >
               New password
             </label>
-            <input
+            <PasswordInput
               id="password"
               name="password"
-              type="password"
               autoComplete="new-password"
               required
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="tap-target w-full rounded-control bg-card px-3 text-ink ring-1 ring-ink/15 focus-visible:ring-2 focus-visible:ring-brand"
             />
           </div>
 
           <div>
-            <label htmlFor="confirm" className="mb-1 block text-sm font-medium text-ink">
+            <label
+              htmlFor="confirm"
+              className="mb-1 block text-sm font-medium text-ink"
+            >
               Confirm password
             </label>
-            <input
+            <PasswordInput
               id="confirm"
               name="confirm"
-              type="password"
               autoComplete="new-password"
               required
               value={confirm}
               onChange={(event) => setConfirm(event.target.value)}
-              className="tap-target w-full rounded-control bg-card px-3 text-ink ring-1 ring-ink/15 focus-visible:ring-2 focus-visible:ring-brand"
             />
           </div>
 

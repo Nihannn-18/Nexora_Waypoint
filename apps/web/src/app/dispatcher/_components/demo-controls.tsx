@@ -78,7 +78,7 @@ export function DemoControls({
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
       <label className="flex items-center gap-2">
-        <span className="text-ink-muted">Jump to</span>
+        <span className="sr-only text-ink-muted sm:not-sr-only">Jump to</span>
         <select
           className="h-9 rounded-control bg-page px-2 text-sm font-medium text-ink ring-1 ring-ink/15"
           value=""

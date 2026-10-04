@@ -22,7 +22,7 @@ export function NewVehicleScreen() {
         actions={
           <button
             type="button"
-            onClick={() => router.push('/dispatcher/vehicles')}
+            onClick={() => router.push('/dispatcher/fleet')}
             className="tap-target rounded-control bg-card px-4 text-sm font-medium text-ink ring-1 ring-ink/15 hover:bg-page"
           >
             Back to vehicles

@@ -11,8 +11,8 @@ import { BrandChip, Card, TempChip } from './ui';
  * record the server returned for the caller's outlet; nothing is inferred.
  *
  * A deferred order is called out explicitly, because "will it come?" is the
- * question the store actually has. The reason the dispatcher recorded is not
- * exposed to the store manager by the API, so the card does not invent one.
+ * question the store actually has: the card leads with the run it moved to when
+ * the server returned the deferral, and never invents a reason.
  */
 export function OrderCard({ order }: { order: CustomerOrder }) {
   return (
@@ -46,8 +46,14 @@ export function OrderCard({ order }: { order: CustomerOrder }) {
 
         {order.status === 'DEFERRED' && (
           <p className="rounded-control bg-warning-bg px-3 py-2 text-xs font-medium text-warning-ink">
-            Not on a route this day — the dispatcher’s deferral log holds the
-            reason.
+            {order.deferral?.deferredToDate ? (
+              <>
+                Moved to <Mono>{formatDay(order.deferral.deferredToDate)}</Mono>{' '}
+                — open for the reason.
+              </>
+            ) : (
+              'Not on a route this day — open for the reason and new date.'
+            )}
           </p>
         )}
         {order.afterCutoff && order.status === 'PLACED' && (

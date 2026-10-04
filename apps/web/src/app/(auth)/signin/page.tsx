@@ -3,10 +3,10 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Mono } from '@waypoint/ui';
 import type { Role } from '@waypoint/shared-types';
 import { api, tokenStore } from '../../../lib/api';
 import { ROLE_ROUTES, routeForRole } from '../../../lib/roles';
+import { PasswordInput } from '../../../components/password-input';
 
 /**
  * G-01 — Sign in.
@@ -18,9 +18,9 @@ import { ROLE_ROUTES, routeForRole } from '../../../lib/roles';
  * GET /api/v1/me who the caller actually is and routes to that server-reported
  * role's workspace. The client never decides its own role.
  *
- * The four seeded demo accounts are documented in the README for judges. The
- * password is deliberately absent from this bundle: it is never injected into
- * the field and never travels from the client until the user types it.
+ * No account, name or email is shown or shipped in this bundle: the seeded demo
+ * accounts are documented in the README for judges, and the user always types
+ * their own credentials.
  */
 export default function SignInPage() {
   const router = useRouter();
@@ -79,7 +79,7 @@ export default function SignInPage() {
           — nothing is filled in for you.
         </p>
 
-        <ul className="grid gap-3 sm:grid-cols-2">
+        <ul className="grid grid-cols-2 gap-3">
           {ROLE_ROUTES.map((route) => {
             const selected = selectedRole === route.role;
             return (
@@ -94,16 +94,10 @@ export default function SignInPage() {
                       : 'ring-ink/10 hover:ring-brand'
                   }`}
                 >
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="font-semibold text-ink">{route.label}</span>
-                    <span className="text-xs text-ink-muted">
-                      {route.persona}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm text-ink-muted">{route.summary}</p>
-                  <Mono className="mt-2 block text-xs text-ink-muted">
-                    {route.email}
-                  </Mono>
+                  <span className="font-semibold text-ink">{route.label}</span>
+                  <p className="mt-1 hidden text-sm text-ink-muted sm:block">
+                    {route.summary}
+                  </p>
                 </button>
               </li>
             );
@@ -147,15 +141,13 @@ export default function SignInPage() {
           >
             Password
           </label>
-          <input
+          <PasswordInput
             id="password"
             name="password"
-            type="password"
             autoComplete="current-password"
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="tap-target w-full rounded-control bg-card px-3 text-ink ring-1 ring-ink/15 focus-visible:ring-2 focus-visible:ring-brand"
           />
           <div className="mt-1.5 text-right">
             <Link

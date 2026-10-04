@@ -60,6 +60,8 @@ describe('S-02 place order', () => {
     const quantity = await screen.findByLabelText('Quantity for Demo ambient');
 
     expect((submit as HTMLButtonElement).disabled).toBe(true);
+    // An untouched form is not an error state.
+    expect(screen.queryByRole('alert')).toBeNull();
     fireEvent.change(quantity, { target: { value: '3' } });
     expect((submit as HTMLButtonElement).disabled).toBe(false);
   });

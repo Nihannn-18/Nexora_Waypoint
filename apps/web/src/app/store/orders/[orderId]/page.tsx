@@ -227,9 +227,7 @@ function ConfirmOrderAction({
   return (
     <Card className="gap-3 border-brand bg-info-bg">
       <div className="flex flex-col gap-1">
-        <h2 className="text-sm font-semibold text-ink">
-          Confirm this order
-        </h2>
+        <h2 className="text-sm font-semibold text-ink">Confirm this order</h2>
         <p className="text-sm text-ink-muted">
           An order is not planned until you confirm it. Confirm to send it to
           the dispatcher’s queue for planning on{' '}
@@ -276,8 +274,15 @@ function DeferredNotice({ order }: { order: CustomerOrder }) {
   const deferral = order.deferral;
   return (
     <Card className="gap-1 border-warning bg-warning-bg">
-      <h2 className="text-sm font-semibold text-warning-ink">
-        This order was deferred
+      {/* S-05: the fact first, then the reason, then who/when. */}
+      <h2 className="text-base font-semibold text-warning-ink">
+        {deferral?.deferredToDate ? (
+          <>
+            Moved to <Mono>{formatDay(deferral.deferredToDate)}</Mono>
+          </>
+        ) : (
+          'This order was deferred'
+        )}
       </h2>
       {deferral ? (
         <>
@@ -288,13 +293,8 @@ function DeferredNotice({ order }: { order: CustomerOrder }) {
                 Blocking rule <Mono>{deferral.constraintCode}</Mono> ·{' '}
               </>
             ) : null}
-            decided <Mono>{formatDay(deferral.decidedAt.slice(0, 10))}</Mono>
-            {deferral.deferredToDate ? (
-              <>
-                {' '}· moving to{' '}
-                <Mono>{formatDay(deferral.deferredToDate)}</Mono>
-              </>
-            ) : null}
+            decided by the dispatcher on{' '}
+            <Mono>{formatDay(deferral.decidedAt.slice(0, 10))}</Mono>
           </p>
         </>
       ) : (

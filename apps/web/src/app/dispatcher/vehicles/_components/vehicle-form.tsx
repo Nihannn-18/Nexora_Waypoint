@@ -2,7 +2,11 @@
 
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Depot, Vehicle, VehicleWriteRequest } from '@waypoint/shared-types';
+import type {
+  Depot,
+  Vehicle,
+  VehicleWriteRequest,
+} from '@waypoint/shared-types';
 import { WaypointApiError } from '@waypoint/api-client';
 import { api } from '../../../../lib/api';
 import { Card, SectionHeading } from '../../_components/ui';
@@ -25,7 +29,10 @@ interface Draft {
   depotId: string;
 }
 
-function draftFrom(vehicle: Vehicle | undefined, depots: readonly Depot[]): Draft {
+function draftFrom(
+  vehicle: Vehicle | undefined,
+  depots: readonly Depot[],
+): Draft {
   return {
     type: vehicle?.type ?? 'TRUCK',
     tempClass: vehicle?.tempClass ?? 'AMBIENT',
@@ -67,7 +74,8 @@ export function VehicleForm({
     const e: Record<string, string> = {};
     const positive = (key: keyof Draft, label: string) => {
       const n = Number(draft[key]);
-      if (!Number.isFinite(n) || n <= 0) e[key] = `${label} must be greater than zero`;
+      if (!Number.isFinite(n) || n <= 0)
+        e[key] = `${label} must be greater than zero`;
     };
     positive('weightCapKg', 'Weight capacity');
     positive('volumeCapM3', 'Volume capacity');
@@ -132,7 +140,12 @@ export function VehicleForm({
 
       <Card className="flex flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Vehicle type" htmlFor="type" required error={errors.type}>
+          <Field
+            label="Vehicle type"
+            htmlFor="type"
+            required
+            error={errors.type}
+          >
             <select
               id="type"
               value={draft.type}
@@ -162,7 +175,9 @@ export function VehicleForm({
             >
               {VEHICLE_TEMP_CLASSES.map((t) => (
                 <option key={t} value={t}>
-                  {t === 'REEFER' ? 'Refrigerated (reefer)' : 'Ambient (dry-box)'}
+                  {t === 'REEFER'
+                    ? 'Refrigerated (reefer)'
+                    : 'Ambient (dry-box)'}
                 </option>
               ))}
             </select>
@@ -202,7 +217,12 @@ export function VehicleForm({
             />
           </Field>
 
-          <Field label="Fuel type" htmlFor="fuelType" required error={errors.fuelType}>
+          <Field
+            label="Fuel type"
+            htmlFor="fuelType"
+            required
+            error={errors.fuelType}
+          >
             <input
               id="fuelType"
               type="text"
@@ -246,7 +266,12 @@ export function VehicleForm({
             />
           </Field>
 
-          <Field label="Home depot" htmlFor="depotId" required error={errors.depotId}>
+          <Field
+            label="Home depot"
+            htmlFor="depotId"
+            required
+            error={errors.depotId}
+          >
             <select
               id="depotId"
               value={draft.depotId}
@@ -265,7 +290,7 @@ export function VehicleForm({
         <FormActions
           submitting={submitting}
           submitLabel={editing ? 'Save changes' : 'Create vehicle'}
-          onCancel={() => router.push('/dispatcher/vehicles')}
+          onCancel={() => router.push('/dispatcher/fleet')}
         />
       </Card>
     </form>
@@ -301,7 +326,9 @@ export function readableMasterError(error: unknown, subject: string): string {
 /** Copies server field errors into the form's error map, marking them inline. */
 export function applyFieldErrors(
   error: unknown,
-  setErrors: (updater: (e: Record<string, string>) => Record<string, string>) => void,
+  setErrors: (
+    updater: (e: Record<string, string>) => Record<string, string>,
+  ) => void,
 ): void {
   if (error instanceof WaypointApiError && error.fieldErrors) {
     const next: Record<string, string> = {};

@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { Suspense } from 'react';
 import { WaypointApiError } from '@waypoint/api-client';
 import { StoreShell } from '../../_components/store-shell';
@@ -75,10 +81,11 @@ describe('S-04 order detail', () => {
     );
     await renderPage();
 
-    expect(await screen.findByText(/this order was deferred/i)).toBeTruthy();
+    // S-05 leads with the fact: where the order moved to.
     expect(
-      screen.getByText(/refrigerated capacity ran out/i),
+      await screen.findByRole('heading', { name: /moved to mon 28 sep/i }),
     ).toBeTruthy();
+    expect(screen.getByText(/refrigerated capacity ran out/i)).toBeTruthy();
     expect(screen.getByText('FRESH_TIME_BUDGET')).toBeTruthy();
   });
 
@@ -115,9 +122,7 @@ describe('S-04 order detail', () => {
       await screen.findByRole('button', { name: /confirm order/i }),
     );
 
-    await waitFor(() =>
-      expect(mocked.confirmOrder).toHaveBeenCalledWith('o1'),
-    );
+    await waitFor(() => expect(mocked.confirmOrder).toHaveBeenCalledWith('o1'));
     expect(await screen.findByText(/order confirmed/i)).toBeTruthy();
   });
 

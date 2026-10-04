@@ -1,8 +1,6 @@
-import type { Metadata } from 'next';
-import { VehiclesScreen } from './vehicles-screen';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Vehicles' };
-
+/** The vehicle list is Fleet (D-09); this path stays valid for old links. */
 export default function VehiclesPage() {
-  return <VehiclesScreen />;
+  redirect('/dispatcher/fleet');
 }

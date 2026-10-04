@@ -190,7 +190,7 @@ export default function PlaceOrderPage() {
           </p>
         </Card>
       ) : (
-        <>
+        <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
           {chilled.length > 0 && (
             <ItemGroup
               title="Chilled"
@@ -209,23 +209,24 @@ export default function PlaceOrderPage() {
               onChange={setQuantity}
             />
           )}
-        </>
+        </div>
       )}
 
-      {draft.error &&
-        (draft.items.length > 0 || (items.data?.length ?? 0) > 0) && (
-          <p
-            role="alert"
-            className="rounded-card border border-error bg-error-bg p-3 text-sm text-error-strong"
-          >
-            {draft.error}
-          </p>
-        )}
+      {/* Only a real conflict (chilled + dry together) is an error. An empty
+          draft is not: the disabled Submit already says nothing is chosen. */}
+      {draft.error && draft.items.length > 0 && (
+        <p
+          role="alert"
+          className="rounded-card border border-error bg-error-bg p-3 text-sm text-error-strong"
+        >
+          {draft.error}
+        </p>
+      )}
 
       {/* Sticky summary + submit, so the running totals and the action stay in
           view while the store scrolls the catalogue. */}
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-card/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-4 gap-y-2 p-3">
+        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
           <dl className="flex flex-1 flex-wrap gap-x-5 gap-y-1">
             <Fact label="Units">
               <Mono>{draft.units}</Mono>
@@ -253,7 +254,7 @@ export default function PlaceOrderPage() {
       {submitError && (
         <p
           role="alert"
-          className="fixed inset-x-0 bottom-24 z-20 mx-auto max-w-4xl rounded-card border border-error bg-error-bg p-3 text-sm text-error-strong"
+          className="fixed inset-x-4 bottom-24 z-20 mx-auto max-w-6xl rounded-card border border-error bg-error-bg p-3 text-sm text-error-strong"
         >
           {submitError}
         </p>

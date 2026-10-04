@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Mono } from '@waypoint/ui';
 import { ORDER_CUTOFF_LABEL } from '@waypoint/shared-types';
 import {
@@ -20,13 +20,15 @@ import {
 } from '../../../components/icons';
 import {
   formatCountdown,
+  msUntilCutoff,
   formatDay,
   formatInstantDay,
 } from '../../../lib/format';
+import { api } from '../../../lib/api';
 import { endSession } from '../../../lib/session';
+import { useApiQuery } from '../../../lib/use-api-query';
 import {
   DispatcherScopeProvider,
-  useApiNow,
   useDispatcherScope,
 } from './dispatcher-context';
 import { DemoControls } from './demo-controls';
@@ -37,7 +39,9 @@ import { DemoControls } from './demo-controls';
  * visible on desktop; below 1024 it becomes a scrolling strip.
  *
  * The nav follows the working day in order: review orders, plan, confirm,
- * watch the routes, account for deferrals, then notifications and audit.
+ * watch the routes, account for deferrals, then master data and audit.
+ * Notifications live behind the bell in the top bar (one entry point, with the
+ * unread badge), not as a second sidebar item to the same page.
  */
 const NAV = [
   { href: '/dispatcher', label: 'Dashboard', screen: 'D-01', icon: GridIcon },
@@ -65,12 +69,8 @@ const NAV = [
     label: 'Fleet',
     screen: 'D-09',
     icon: TruckIcon,
-  },
-  {
-    href: '/dispatcher/vehicles',
-    label: 'Vehicles',
-    screen: null,
-    icon: TruckIcon,
+    // Vehicle detail, create and edit live under /vehicles; they belong to Fleet.
+    also: '/dispatcher/vehicles',
   },
   {
     href: '/dispatcher/outlets',
@@ -91,12 +91,6 @@ const NAV = [
     icon: AssignmentIcon,
   },
   {
-    href: '/dispatcher/notifications',
-    label: 'Notifications',
-    screen: null,
-    icon: BellIcon,
-  },
-  {
     href: '/dispatcher/audit',
     label: 'Audit trail',
     screen: null,
@@ -104,8 +98,14 @@ const NAV = [
   },
 ] as const;
 
-function isActive(pathname: string, href: string): boolean {
-  return href === '/dispatcher' ? pathname === href : pathname.startsWith(href);
+type NavItem = (typeof NAV)[number];
+
+function isActive(pathname: string, item: NavItem): boolean {
+  if (item.href === '/dispatcher') return pathname === item.href;
+  return (
+    pathname.startsWith(item.href) ||
+    ('also' in item && pathname.startsWith(item.also))
+  );
 }
 
 export function DispatcherShell({ children }: { children: ReactNode }) {
@@ -125,7 +125,7 @@ export function DispatcherShell({ children }: { children: ReactNode }) {
 
 function Sidebar() {
   const pathname = usePathname();
-  const { unreadCount } = useDispatcherScope();
+  const me = useApiQuery('me', () => api.me());
   return (
     <nav
       aria-label="Dispatcher"
@@ -149,7 +149,7 @@ function Sidebar() {
       </div>
       <ul className="flex flex-1 flex-col gap-0.5 p-2">
         {NAV.map((item) => {
-          const active = isActive(pathname, item.href);
+          const active = isActive(pathname, item);
           const Icon = item.icon;
           return (
             <li key={item.href}>
@@ -164,12 +164,7 @@ function Sidebar() {
               >
                 <Icon className="shrink-0" />
                 <span className="flex-1">{item.label}</span>
-                {item.href === '/dispatcher/notifications' && unreadCount ? (
-                  <span className="rounded-pill bg-error px-1.5 text-[0.6875rem] font-semibold leading-5 text-card">
-                    {unreadCount}
-                    <span className="sr-only"> unread</span>
-                  </span>
-                ) : item.screen ? (
+                {item.screen ? (
                   <Mono className="text-[0.6875rem] text-ink-muted/70">
                     {item.screen}
                   </Mono>
@@ -180,16 +175,9 @@ function Sidebar() {
         })}
       </ul>
       <div className="border-t border-ink/10 px-4 py-3">
-        <p className="text-xs text-ink-muted">Priyantha W. · Dispatcher</p>
-        <button
-          type="button"
-          onClick={() => {
-            void endSession();
-          }}
-          className="tap-target mt-1 flex w-full items-center rounded-control px-2 text-left text-sm text-ink-muted transition hover:bg-page hover:text-ink"
-        >
-          Sign out
-        </button>
+        <p className="truncate text-xs text-ink-muted">
+          {me.data?.name ?? '…'} · Dispatcher
+        </p>
       </div>
     </nav>
   );
@@ -204,7 +192,7 @@ function MobileNav() {
     >
       <ul className="flex gap-1 overflow-x-auto px-2 py-1.5">
         {NAV.map((item) => {
-          const active = isActive(pathname, item.href);
+          const active = isActive(pathname, item);
           return (
             <li key={item.href} className="shrink-0">
               <Link
@@ -261,7 +249,7 @@ function TopBar() {
       <DemoControls />
 
       <label className="flex items-center gap-2 text-sm">
-        <span className="text-ink-muted">Depot</span>
+        <span className="sr-only text-ink-muted sm:not-sr-only">Depot</span>
         <select
           className="h-9 rounded-control bg-page px-2 text-sm font-medium text-ink ring-1 ring-ink/15"
           value={depot?.depotId ?? ''}
@@ -278,7 +266,9 @@ function TopBar() {
       </label>
 
       <label className="flex items-center gap-2 text-sm">
-        <span className="text-ink-muted">Delivery day</span>
+        <span className="sr-only text-ink-muted sm:not-sr-only">
+          Delivery day
+        </span>
         <input
           type="date"
           className="h-9 rounded-control bg-page px-2 font-mono text-sm text-ink ring-1 ring-ink/15"
@@ -310,14 +300,14 @@ function TopBar() {
             </span>
           ) : null}
         </Link>
-        {/* Sign out is reachable on every surface: the sidebar footer on
-            desktop, and here where the sidebar is collapsed. */}
+        {/* The one Sign out: the top bar shows at every width, while the
+            sidebar is hidden below lg. */}
         <button
           type="button"
           onClick={() => {
             void endSession();
           }}
-          className="tap-target rounded-control px-2 text-sm font-medium text-ink-muted hover:bg-page hover:text-ink"
+          className="tap-target whitespace-nowrap rounded-control px-2 text-sm font-medium text-ink-muted hover:bg-page hover:text-ink"
         >
           Sign out
         </button>
@@ -327,19 +317,19 @@ function TopBar() {
 }
 
 /**
- * Live countdown to today's 16:00 order cutoff on the API clock. After the
- * cutoff, late orders are still accepted for the following operating day, so
- * the pill says that rather than counting into negative time.
+ * Live countdown to today's 16:00 order cutoff on the device's real clock,
+ * ticking every second with no API call. At and after 16:00 it shows the
+ * passed state instead of counting into negative time.
  */
 function CutoffPill() {
-  const { today, meta } = useDispatcherScope();
-  const now = useApiNow();
-  if (!now || !today || !meta) return null;
-  // The API reports `now` with the business timezone's offset; reuse it so the
-  // cutoff instant is 16:00 in Asia/Colombo, not in the browser's zone.
-  const offset = /[+-]\d{2}:\d{2}$/.exec(meta.now)?.[0] ?? 'Z';
-  const cutoff = Date.parse(`${today}T${ORDER_CUTOFF_LABEL}:00${offset}`);
-  const remaining = cutoff - now.getTime();
+  const [remaining, setRemaining] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const update = () => setRemaining(msUntilCutoff(new Date()));
+    update();
+    const id = window.setInterval(update, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (remaining === undefined) return null;
 
   if (remaining <= 0) {
     return (
@@ -348,7 +338,11 @@ function CutoffPill() {
         className="flex items-center gap-1.5 rounded-control bg-page px-2.5 py-1.5 text-xs font-semibold text-ink-muted ring-1 ring-ink/10"
       >
         <ClockIcon />
-        {ORDER_CUTOFF_LABEL} cutoff passed · late orders roll to the next run
+        {ORDER_CUTOFF_LABEL} cutoff passed
+        <span className="hidden sm:inline">
+          {' '}
+          · late orders roll to the next run
+        </span>
       </span>
     );
   }

@@ -46,19 +46,36 @@ describe('Sign in (G-01)', () => {
     expect(screen.getByText('Store manager')).toBeTruthy();
   });
 
-  it('shows each seeded account so a judge never has to hunt for credentials', () => {
-    render(<SignInPage />);
+  it('never displays a specific account name or email', () => {
+    const { container } = render(<SignInPage />);
 
-    for (const route of ROLE_ROUTES) {
-      expect(screen.getByText(route.email)).toBeTruthy();
+    expect(container.textContent).not.toMatch(/@waypoint\.lk/);
+    for (const name of ['Priyantha', 'Nadeesha', 'Kasun', 'Ishara']) {
+      expect(container.textContent).not.toContain(name);
     }
+  });
+
+  it('toggles password visibility without changing the typed value', () => {
+    render(<SignInPage />);
+    const field = screen.getByLabelText('Password') as HTMLInputElement;
+    fireEvent.change(field, { target: { value: 'typed-secret' } });
+    expect(field.type).toBe('password');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+    expect(field.type).toBe('text');
+    expect(field.value).toBe('typed-secret');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide password' }));
+    expect(field.type).toBe('password');
   });
 
   it('selecting a role never populates the email field', () => {
     render(<SignInPage />);
 
     for (const route of ROLE_ROUTES) {
-      fireEvent.click(screen.getByRole('button', { name: new RegExp(route.label, 'i') }));
+      fireEvent.click(
+        screen.getByRole('button', { name: new RegExp(route.label, 'i') }),
+      );
       expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe(
         '',
       );
@@ -69,7 +86,9 @@ describe('Sign in (G-01)', () => {
     render(<SignInPage />);
 
     for (const route of ROLE_ROUTES) {
-      fireEvent.click(screen.getByRole('button', { name: new RegExp(route.label, 'i') }));
+      fireEvent.click(
+        screen.getByRole('button', { name: new RegExp(route.label, 'i') }),
+      );
       expect(
         (screen.getByLabelText('Password') as HTMLInputElement).value,
       ).toBe('');
@@ -89,9 +108,9 @@ describe('Sign in (G-01)', () => {
     expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe(
       'typed@example.lk',
     );
-    expect(
-      (screen.getByLabelText('Password') as HTMLInputElement).value,
-    ).toBe('typed-secret');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe(
+      'typed-secret',
+    );
   });
 
   it('requires an explicit submit and never logs in on role selection', () => {

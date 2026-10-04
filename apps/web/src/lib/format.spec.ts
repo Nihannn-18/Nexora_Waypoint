@@ -6,6 +6,7 @@ import {
   formatInstantDay,
   formatTime,
   humanize,
+  msUntilCutoff,
 } from './format';
 
 describe('format', () => {
@@ -35,5 +36,28 @@ describe('format', () => {
   it('humanizes wire enums', () => {
     expect(humanize('REAR_DOCK')).toBe('Rear dock');
     expect(humanize('IN_WORKSHOP')).toBe('In workshop');
+  });
+});
+
+describe('msUntilCutoff (real-time 16:00 countdown)', () => {
+  // Local wall-clock times on any day: the device's own time zone.
+  const at = (h: number, m: number, sec = 0) => new Date(2026, 9, 4, h, m, sec);
+  const MIN = 60_000;
+
+  it('counts down to 16:00 from the current time', () => {
+    expect(msUntilCutoff(at(14, 30))).toBe(90 * MIN);
+    expect(msUntilCutoff(at(15, 45))).toBe(15 * MIN);
+    expect(msUntilCutoff(at(15, 59))).toBe(1 * MIN);
+  });
+
+  it('keeps seconds exact', () => {
+    expect(msUntilCutoff(at(15, 59, 30))).toBe(30_000);
+    expect(formatCountdown(msUntilCutoff(at(14, 30)))).toBe('01:30:00');
+  });
+
+  it('is exactly zero at 16:00 and never negative after it', () => {
+    expect(msUntilCutoff(at(16, 0))).toBe(0);
+    expect(msUntilCutoff(at(16, 0, 1))).toBe(0);
+    expect(msUntilCutoff(at(23, 59))).toBe(0);
   });
 });
