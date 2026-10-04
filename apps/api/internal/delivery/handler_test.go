@@ -218,8 +218,14 @@ func TestHandlerDriverRoutes(t *testing.T) {
 	if repo.routesArg[0] != "d-peli" {
 		t.Fatalf("depot = %q, want the caller's depot", repo.routesArg[0])
 	}
-	if rec := get(mux, "/api/v1/driver/routes"); rec.Code != http.StatusBadRequest {
-		t.Fatalf("missing date = %d, want 400", rec.Code)
+	// Without a date the service resolves the depot's active run rather than
+	// rejecting the request or guessing a device date.
+	repo.activeDate = "2026-09-26"
+	if rec := get(mux, "/api/v1/driver/routes"); rec.Code != http.StatusOK {
+		t.Fatalf("missing date = %d, want 200 (active run resolved)", rec.Code)
+	}
+	if repo.routesArg[1] != "2026-09-26" {
+		t.Fatalf("active date = %q, want 2026-09-26", repo.routesArg[1])
 	}
 
 	mux2 := http.NewServeMux()

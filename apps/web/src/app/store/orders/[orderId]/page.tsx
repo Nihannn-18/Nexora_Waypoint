@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { use } from 'react';
+import { use, useState } from 'react';
 import { Mono, OrderStatusBadge } from '@waypoint/ui';
+import type { CustomerOrder } from '@waypoint/shared-types';
 import { formatDay, formatKg, formatM3, plural } from '../../../../lib/format';
+import { api } from '../../../../lib/api';
 import { useStoreScope } from '../../_components/store-shell';
 import {
   BrandChip,
@@ -13,6 +15,7 @@ import {
   Fact,
   LoadingState,
   TempChip,
+  buttonClass,
 } from '../../_components/ui';
 import { useMyOrder } from '../../_lib/use-store';
 import { readableStoreError } from '../../_lib/store';
@@ -78,7 +81,11 @@ export default function OrderDetailPage({
         <OrderStatusBadge status={order.status} />
       </header>
 
-      {order.status === 'DEFERRED' && <DeferredNotice />}
+      {order.status === 'DEFERRED' && <DeferredNotice order={order} />}
+      {order.status === 'PLACED' && (
+        <ConfirmOrderAction order={order} onConfirmed={state.reload} />
+      )}
+      {order.status === 'CONFIRMED' && <ConfirmedNotice />}
       {order.afterCutoff && (
         <p className="rounded-card border border-warning bg-warning-bg p-3 text-sm text-warning-ink">
           Placed after the 16:00 cutoff. It was accepted for the next operating
@@ -170,20 +177,132 @@ export default function OrderDetailPage({
 }
 
 /**
- * S-05's notice, honestly scoped. The store cannot yet read the dispatcher's
- * deferral reason or acknowledge it through the API, so this states the fact
- * and where the reason lives instead of inventing either.
+ * S-03/S-04 · Explicit confirmation.
+ *
+ * A placed order is not yet part of the planning queue. The store manager must
+ * confirm it deliberately; only then does the order move PLACED → CONFIRMED and
+ * become visible to the dispatcher's queue and planning run. The button is
+ * disabled while the request is in flight so a double click cannot submit twice,
+ * and the success copy never claims the order is already planned — planning
+ * remains the dispatcher's job.
  */
-function DeferredNotice() {
+function ConfirmOrderAction({
+  order,
+  onConfirmed,
+}: {
+  order: { orderId: string; requestedDeliveryDate: string };
+  onConfirmed: () => void;
+}) {
+  const [status, setStatus] = useState<'idle' | 'confirming' | 'confirmed'>(
+    'idle',
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirm() {
+    setStatus('confirming');
+    setError(null);
+    try {
+      await api.confirmOrder(order.orderId);
+      setStatus('confirmed');
+      onConfirmed();
+    } catch (err) {
+      setStatus('idle');
+      setError(readableStoreError(err, 'This order'));
+    }
+  }
+
+  if (status === 'confirmed') {
+    return (
+      <Card className="gap-1 border-success bg-success-bg">
+        <h2 className="text-sm font-semibold text-success">Order confirmed</h2>
+        <p className="text-sm text-ink">
+          The dispatcher can now include it in planning for{' '}
+          <Mono>{formatDay(order.requestedDeliveryDate)}</Mono>. Its status
+          becomes ALLOCATED once a plan is confirmed.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="gap-3 border-brand bg-info-bg">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-sm font-semibold text-ink">
+          Confirm this order
+        </h2>
+        <p className="text-sm text-ink-muted">
+          An order is not planned until you confirm it. Confirm to send it to
+          the dispatcher’s queue for planning on{' '}
+          <Mono>{formatDay(order.requestedDeliveryDate)}</Mono>.
+        </p>
+      </div>
+      {error && (
+        <p role="alert" className="text-sm text-error-strong">
+          {error}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={confirm}
+        disabled={status === 'confirming'}
+        className={buttonClass('ink', 'w-full sm:w-auto')}
+      >
+        {status === 'confirming' ? 'Confirming…' : 'Confirm order'}
+      </button>
+    </Card>
+  );
+}
+
+/** A confirmed order is queued for planning; it is not yet allocated. */
+function ConfirmedNotice() {
+  return (
+    <Card className="gap-1 border-success bg-success-bg">
+      <h2 className="text-sm font-semibold text-success">Order confirmed</h2>
+      <p className="text-sm text-ink">
+        It is in the dispatcher’s planning queue. It becomes allocated once the
+        dispatcher confirms a plan.
+      </p>
+    </Card>
+  );
+}
+
+/**
+ * S-05's notice. When the server returns the deferral the dispatcher recorded,
+ * the store sees the reason, the binding constraint's code and the run it moved
+ * to. A deferral record that has not reached the read model yet is shown as a
+ * fact with a pointer to the log, never an invented reason.
+ */
+function DeferredNotice({ order }: { order: CustomerOrder }) {
+  const deferral = order.deferral;
   return (
     <Card className="gap-1 border-warning bg-warning-bg">
       <h2 className="text-sm font-semibold text-warning-ink">
         This order was deferred
       </h2>
-      <p className="text-sm text-ink">
-        It could not be served on its planned day and is held for a later run.
-        The dispatcher’s deferral log holds the reason and the new date.
-      </p>
+      {deferral ? (
+        <>
+          <p className="text-sm text-ink">{deferral.reasonText}</p>
+          <p className="text-xs text-ink-muted">
+            {deferral.constraintCode ? (
+              <>
+                Blocking rule <Mono>{deferral.constraintCode}</Mono> ·{' '}
+              </>
+            ) : null}
+            decided <Mono>{formatDay(deferral.decidedAt.slice(0, 10))}</Mono>
+            {deferral.deferredToDate ? (
+              <>
+                {' '}· moving to{' '}
+                <Mono>{formatDay(deferral.deferredToDate)}</Mono>
+              </>
+            ) : null}
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-ink">
+          It could not be served on its planned day and is held for a later run.
+          The dispatcher’s deferral log holds the reason and the new date.
+        </p>
+      )}
     </Card>
   );
 }

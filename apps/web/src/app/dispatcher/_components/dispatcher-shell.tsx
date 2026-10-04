@@ -20,6 +20,7 @@ import {
   formatDay,
   formatInstantDay,
 } from '../../../lib/format';
+import { endSession } from '../../../lib/session';
 import {
   DispatcherScopeProvider,
   useApiNow,
@@ -150,9 +151,18 @@ function Sidebar() {
           );
         })}
       </ul>
-      <p className="border-t border-ink/10 px-4 py-3 text-xs text-ink-muted">
-        Priyantha W. · Dispatcher
-      </p>
+      <div className="border-t border-ink/10 px-4 py-3">
+        <p className="text-xs text-ink-muted">Priyantha W. · Dispatcher</p>
+        <button
+          type="button"
+          onClick={() => {
+            void endSession();
+          }}
+          className="tap-target mt-1 flex w-full items-center rounded-control px-2 text-left text-sm text-ink-muted transition hover:bg-page hover:text-ink"
+        >
+          Sign out
+        </button>
+      </div>
     </nav>
   );
 }
@@ -270,6 +280,17 @@ function TopBar() {
             </span>
           ) : null}
         </Link>
+        {/* Sign out is reachable on every surface: the sidebar footer on
+            desktop, and here where the sidebar is collapsed. */}
+        <button
+          type="button"
+          onClick={() => {
+            void endSession();
+          }}
+          className="tap-target rounded-control px-2 text-sm font-medium text-ink-muted hover:bg-page hover:text-ink"
+        >
+          Sign out
+        </button>
       </div>
     </header>
   );

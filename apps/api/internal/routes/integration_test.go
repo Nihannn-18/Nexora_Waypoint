@@ -8,8 +8,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"waypoint.lk/api/internal/audit"
 	"waypoint.lk/api/internal/store"
 )
+
+// testAudit adapts audit.RecordTx to routes.AuditSink so the integration test
+// can prove the confirmation and its deferrals are audited in the same
+// transaction.
+type testAudit struct{}
+
+func (testAudit) RecordTx(ctx context.Context, tx pgx.Tx, e AuditEvent) error {
+	return audit.RecordTx(ctx, tx, e.Action, e.EntityType, e.EntityID, e.Actor, e.DepotID, e.OutletID, e.Result, e.Detail)
+}
 
 // TestRoutesIntegration exercises the confirmation transaction against a real
 // PostgreSQL when one is reachable, and skips otherwise. It proves the
@@ -87,11 +99,11 @@ func TestRoutesIntegration(t *testing.T) {
 		_, _ = db.Pool().Exec(bg, `DELETE FROM outlet WHERE outlet_id = 'OUTRT1'`)
 	})
 
-	repo := NewPGRepository(db.Pool())
+	repo := NewPGRepository(db.Pool()).WithAudit(testAudit{})
 	readers := NewPGReaders(db.Pool())
 
 	plan := ConfirmationPlan{
-		DepotID: depotID, RouteDate: "2026-09-26", Actor: "",
+		DepotID: depotID, RouteDate: "2026-09-26", Actor: "", PlanningJobID: "job-" + o1,
 		Routes: []Route{{
 			VehicleID: "VEHRT1", DepotID: depotID, RouteDate: "2026-09-26", TripNo: 1,
 			Brand: "FRESH", District: "Colombo", Status: RouteConfirmed,
@@ -146,6 +158,26 @@ func TestRoutesIntegration(t *testing.T) {
 	}
 	if len(defs) != 1 || defs[0].OrderID != o3 || defs[0].ConstraintCode != "FRESH_TIME_BUDGET" {
 		t.Fatalf("deferrals = %+v", defs)
+	}
+
+	// Audit trail: one confirmation row and one row per deferral, written in the
+	// confirmation transaction.
+	var auditRows int
+	if err := db.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM audit_log
+		WHERE action = 'ALLOCATION_CONFIRMED' AND entity_id = $1`, "job-"+o1).Scan(&auditRows); err != nil {
+		t.Fatalf("count allocation audit: %v", err)
+	}
+	if auditRows != 1 {
+		t.Fatalf("ALLOCATION_CONFIRMED audit rows = %d, want 1", auditRows)
+	}
+	if err := db.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM audit_log
+		WHERE action = 'ORDER_DEFERRED' AND entity_id = $1`, o3).Scan(&auditRows); err != nil {
+		t.Fatalf("count deferral audit: %v", err)
+	}
+	if auditRows != 1 {
+		t.Fatalf("ORDER_DEFERRED audit rows = %d, want 1", auditRows)
 	}
 
 	// Idempotency: a second identical confirmation conflicts (no duplicates).

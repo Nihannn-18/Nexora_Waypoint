@@ -53,11 +53,12 @@ type Service struct {
 	catalogue Catalogue
 	outlets   OutletReader
 	clock     Clock
+	calendar  OperatingDayReader
 }
 
-// NewService builds the order service. All four dependencies are required.
-func NewService(repo Repository, catalogue Catalogue, outlets OutletReader, clock Clock) *Service {
-	return &Service{repo: repo, catalogue: catalogue, outlets: outlets, clock: clock}
+// NewService builds the order service. All five dependencies are required.
+func NewService(repo Repository, catalogue Catalogue, outlets OutletReader, clock Clock, calendar OperatingDayReader) *Service {
+	return &Service{repo: repo, catalogue: catalogue, outlets: outlets, clock: clock, calendar: calendar}
 }
 
 // CreateInput is the validated-free request to create an order. Brand is derived
@@ -146,12 +147,30 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Order, error) {
 	orderDate := dateOnly(now)
 	afterCutoff := now.Hour() >= CutoffHour
 
+	// The 16:00 cutoff is a server rule, not a client convention. An order's
+	// delivery day may never be sooner than the next eligible operating run:
+	// before the cutoff that is the next operating day, after it is the one
+	// after that. A client that submits today's date (or one already closed)
+	// has it moved forward rather than accepted as a same-day delivery. The
+	// operating calendar is authoritative, so a holiday or a Sunday shifts the
+	// run exactly as the planner would.
+	delivery := dateOnly(in.RequestedDeliveryDate)
+	if s.calendar != nil {
+		floor, err := s.earliestDeliveryDay(ctx, now, afterCutoff)
+		if err != nil {
+			return Order{}, err
+		}
+		if delivery.Before(floor) {
+			delivery = floor
+		}
+	}
+
 	units, weight, volume := ComputeTotals(lines)
 	order := Order{
 		OutletID:              outlet.OutletID,
 		Brand:                 outlet.Brand,
 		OrderDate:             orderDate,
-		RequestedDeliveryDate: dateOnly(in.RequestedDeliveryDate),
+		RequestedDeliveryDate: delivery,
 		TotalUnits:            units,
 		TotalWeightKg:         weight,
 		TotalVolumeM3:         volume,
@@ -166,6 +185,25 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Order, error) {
 		return Order{}, err
 	}
 	return s.repo.Create(ctx, order)
+}
+
+// earliestDeliveryDay returns the soonest delivery day a newly placed order may
+// target. Before the 16:00 cutoff that is the next operating day; at or after
+// it, the order is for the following operating run, one operating day later.
+// It never invents a date rule: both steps read the authoritative calendar.
+func (s *Service) earliestDeliveryDay(ctx context.Context, now time.Time, afterCutoff bool) (time.Time, error) {
+	next, err := s.calendar.NextOperatingDay(ctx, dateOnly(now))
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !afterCutoff {
+		return next, nil
+	}
+	following, err := s.calendar.NextOperatingDay(ctx, next)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return following, nil
 }
 
 // Get returns an order by id, scoped by the caller's outlet when they are a

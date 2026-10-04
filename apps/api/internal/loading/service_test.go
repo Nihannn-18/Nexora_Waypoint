@@ -4,23 +4,30 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"waypoint.lk/api/internal/domain"
 )
 
 // fakeRepo is an in-memory Repository for service tests.
 type fakeRepo struct {
-	loading   RouteLoading
-	recorded  *[]LineUpdate
-	recordErr error
-	loadErr   error
-	summaries []RouteSummary
-	listedFor struct{ depotID, date string }
+	loading    RouteLoading
+	recorded   *[]LineUpdate
+	recordErr  error
+	loadErr    error
+	summaries  []RouteSummary
+	activeDate string
+	listedFor  struct{ depotID, date string }
 }
 
 func (f *fakeRepo) RoutesForDepot(_ context.Context, depotID, date string) ([]RouteSummary, error) {
 	f.listedFor.depotID, f.listedFor.date = depotID, date
 	return f.summaries, nil
+}
+
+func (f *fakeRepo) ActiveRouteDate(_ context.Context, depotID string, _ time.Time) (string, error) {
+	f.listedFor.depotID = depotID
+	return f.activeDate, nil
 }
 
 func (f *fakeRepo) RouteLoading(context.Context, string) (RouteLoading, error) {
@@ -44,7 +51,7 @@ func serviceFixture() (*Service, *fakeRepo) {
 		RouteID: "R1", DepotID: "d-peli", Status: "CONFIRMED",
 		Lines: []Line{{OrderItemID: "OI1", OrderedQty: 10}},
 	}}
-	return NewService(repo), repo
+	return NewService(repo, nil), repo
 }
 
 func TestServicePickingListScope(t *testing.T) {
@@ -138,10 +145,27 @@ func TestServiceRoutesWithoutDepotReturnsNothing(t *testing.T) {
 
 func TestServiceRoutesRejectsBadDate(t *testing.T) {
 	svc, _ := serviceFixture()
-	for _, date := range []string{"", "26-09-2026", "2026-9-26", "tomorrow"} {
+	for _, date := range []string{"26-09-2026", "2026-9-26", "tomorrow"} {
 		if _, err := svc.Routes(context.Background(), "d-peli", date); !errors.Is(err, ErrInvalid) {
 			t.Errorf("Routes(date=%q) error = %v, want ErrInvalid", date, err)
 		}
+	}
+}
+
+func TestServiceRoutesResolvesActiveRunWhenDateOmitted(t *testing.T) {
+	svc, repo := serviceFixture()
+	repo.activeDate = "2026-09-26"
+	repo.summaries = []RouteSummary{{RouteID: "R1"}}
+
+	got, err := svc.Routes(context.Background(), "d-peli", "")
+	if err != nil {
+		t.Fatalf("Routes() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Routes() returned %d routes, want the active run's 1", len(got))
+	}
+	if repo.listedFor.date != "2026-09-26" {
+		t.Fatalf("queried date = %q, want the resolved active run", repo.listedFor.date)
 	}
 }
 

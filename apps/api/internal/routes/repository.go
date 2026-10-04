@@ -77,11 +77,38 @@ type DeferralEntry struct {
 // PGRepository is the PostgreSQL-backed Repository.
 type PGRepository struct {
 	pool *pgxpool.Pool
+	// audit is an optional sink written in the confirmation transaction, so the
+	// allocation/deferral trail commits or rolls back with the plan.
+	audit AuditSink
+}
+
+// AuditSink records one audit event inside the caller's transaction. It is a
+// narrow interface so this package does not import internal/audit.
+type AuditSink interface {
+	RecordTx(ctx context.Context, tx pgx.Tx, e AuditEvent) error
+}
+
+// AuditEvent is the minimal audit fact the routes package emits.
+type AuditEvent struct {
+	Action     string
+	EntityType string
+	EntityID   string
+	Actor      string
+	DepotID    string
+	OutletID   string
+	Result     string
+	Detail     map[string]any
 }
 
 // NewPGRepository builds a repository over the given pool.
 func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
 	return &PGRepository{pool: pool}
+}
+
+// WithAudit attaches an audit sink. It returns the repository for chaining.
+func (r *PGRepository) WithAudit(sink AuditSink) *PGRepository {
+	r.audit = sink
+	return r
 }
 
 // Confirm writes a confirmation inside one transaction.
@@ -154,7 +181,51 @@ func (r *PGRepository) Confirm(ctx context.Context, plan ConfirmationPlan) (Conf
 		if err := setOrderDeferred(ctx, tx, d.OrderID); err != nil {
 			return ConfirmationResult{}, err
 		}
+		// One audit row per deferral, naming the constraint and reason the
+		// store is owed, written in the same transaction as the decision.
+		if r.audit != nil {
+			if err := r.audit.RecordTx(ctx, tx, AuditEvent{
+				Action:     "ORDER_DEFERRED",
+				EntityType: "ORDER",
+				EntityID:   d.OrderID,
+				Actor:      plan.Actor,
+				DepotID:    plan.DepotID,
+				Result:     "SUCCESS",
+				Detail: map[string]any{
+					"reasonType":     d.ReasonType,
+					"reason":         d.Reason,
+					"constraintCode": string(d.ConstraintCode),
+					"deferredTo":     d.DeferredToDate,
+					"routeDate":      plan.RouteDate,
+				},
+			}); err != nil {
+				return ConfirmationResult{}, fmt.Errorf("audit deferral %s: %w", d.OrderID, err)
+			}
+		}
 		result.DeferredOrders = append(result.DeferredOrders, d.OrderID)
+	}
+
+	// The plan itself is audited once, so the allocation and its deferrals are
+	// one attributable decision. route/leg/allocation rows are already in this
+	// transaction, so the trail cannot outlive a rolled-back plan.
+	if r.audit != nil {
+		if err := r.audit.RecordTx(ctx, tx, AuditEvent{
+			Action:     "ALLOCATION_CONFIRMED",
+			EntityType: "ROUTE",
+			EntityID:   plan.PlanningJobID,
+			Actor:      plan.Actor,
+			DepotID:    plan.DepotID,
+			Result:     "SUCCESS",
+			Detail: map[string]any{
+				"routeDate":       plan.RouteDate,
+				"routeIds":        result.RouteIDs,
+				"allocatedOrders": result.AllocatedOrders,
+				"deferredOrders":  result.DeferredOrders,
+				"planningJobId":   plan.PlanningJobID,
+			},
+		}); err != nil {
+			return ConfirmationResult{}, fmt.Errorf("audit confirmation: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

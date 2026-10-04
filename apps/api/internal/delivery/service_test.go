@@ -4,19 +4,26 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // fakeRepo is an in-memory Repository for service tests.
 type fakeRepo struct {
-	leg       LegContext
-	detail    LegDetail
-	routes    []DriverRoute
-	routesArg [2]string
-	legErr    error
-	results   map[string]EventResult
-	recordErr error
-	recorded  *EventInput
-	status    SyncStatus
+	leg        LegContext
+	detail     LegDetail
+	routes     []DriverRoute
+	routesArg  [2]string
+	activeDate string
+	legErr     error
+	results    map[string]EventResult
+	recordErr  error
+	recorded   *EventInput
+	status     SyncStatus
+}
+
+func (f *fakeRepo) ActiveRouteDate(_ context.Context, depot string, _ time.Time) (string, error) {
+	f.routesArg = [2]string{depot, ""}
+	return f.activeDate, nil
 }
 
 func (f *fakeRepo) LegContext(context.Context, string) (LegContext, error) {
@@ -64,7 +71,7 @@ func fixture() (*Service, *fakeRepo) {
 		},
 		results: map[string]EventResult{},
 	}
-	return NewService(repo), repo
+	return NewService(repo, nil), repo
 }
 
 func TestRecordOneScope(t *testing.T) {

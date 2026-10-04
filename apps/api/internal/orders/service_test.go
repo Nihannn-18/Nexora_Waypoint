@@ -165,6 +165,20 @@ type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
 
+// weekdayCalendar is the deterministic test double for OperatingDayReader. It
+// mirrors the seed convention: operations run Monday–Saturday, so the next
+// operating day is tomorrow, skipping Sunday. It exercises the cutoff shift
+// without a database.
+type weekdayCalendar struct{}
+
+func (weekdayCalendar) NextOperatingDay(_ context.Context, from time.Time) (time.Time, error) {
+	d := from.AddDate(0, 0, 1)
+	for d.Weekday() == time.Sunday {
+		d = d.AddDate(0, 0, 1)
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC), nil
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
@@ -199,7 +213,7 @@ func fixture(now time.Time) (*Service, *fakeRepo, *fakeCatalogue) {
 		"OUT050": {OutletID: "OUT050", Brand: domain.BrandStyle, DepotID: "d1"},
 	}}
 	repo := newFakeRepo()
-	return NewService(repo, cat, outlets, fixedClock{t: now}), repo, cat
+	return NewService(repo, cat, outlets, fixedClock{t: now}, weekdayCalendar{}), repo, cat
 }
 
 // --- tests -----------------------------------------------------------------
@@ -282,6 +296,71 @@ func TestServiceCreate(t *testing.T) {
 		}
 		if !o.AfterCutoff {
 			t.Fatal("16:00 exactly should count as after the cutoff")
+		}
+	})
+
+	t.Run("before the cutoff the next operating day is the earliest allowed", func(t *testing.T) {
+		svc, _, _ := fixture(before) // Fri 25 Sep, 10:00
+		o, err := svc.Create(context.Background(), CreateInput{
+			OutletID:              "OUT001",
+			RequestedDeliveryDate: time.Date(2026, time.September, 25, 0, 0, 0, 0, time.UTC),
+			Lines:                 []LineRequest{{ItemID: "i-amb", Quantity: 1}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := o.RequestedDeliveryDate.Format("2006-01-02"); got != "2026-09-26" {
+			t.Fatalf("delivery = %s, want 2026-09-26 (a same-day request is moved forward)", got)
+		}
+	})
+
+	t.Run("before the cutoff a future operating day is kept", func(t *testing.T) {
+		svc, _, _ := fixture(before)
+		o, err := svc.Create(context.Background(), CreateInput{
+			OutletID:              "OUT001",
+			RequestedDeliveryDate: time.Date(2026, time.September, 28, 0, 0, 0, 0, time.UTC),
+			Lines:                 []LineRequest{{ItemID: "i-amb", Quantity: 1}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := o.RequestedDeliveryDate.Format("2006-01-02"); got != "2026-09-28" {
+			t.Fatalf("delivery = %s, want 2026-09-28 (kept)", got)
+		}
+	})
+
+	t.Run("after the cutoff the following run is enforced", func(t *testing.T) {
+		after := time.Date(2026, time.September, 25, 16, 5, 0, 0, time.UTC)
+		svc, _, _ := fixture(after)
+		o, err := svc.Create(context.Background(), CreateInput{
+			OutletID:              "OUT001",
+			RequestedDeliveryDate: time.Date(2026, time.September, 26, 0, 0, 0, 0, time.UTC),
+			Lines:                 []LineRequest{{ItemID: "i-amb", Quantity: 1}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !o.AfterCutoff {
+			t.Fatal("16:05 should set after_cutoff")
+		}
+		if got := o.RequestedDeliveryDate.Format("2006-01-02"); got != "2026-09-28" {
+			t.Fatalf("delivery = %s, want 2026-09-28 (Sat closed, Sunday not operating)", got)
+		}
+	})
+
+	t.Run("a non-operating next day shifts to the following operating day", func(t *testing.T) {
+		saturday := time.Date(2026, time.September, 26, 9, 0, 0, 0, time.UTC)
+		svc, _, _ := fixture(saturday)
+		o, err := svc.Create(context.Background(), CreateInput{
+			OutletID:              "OUT001",
+			RequestedDeliveryDate: time.Date(2026, time.September, 27, 0, 0, 0, 0, time.UTC), // Sunday
+			Lines:                 []LineRequest{{ItemID: "i-amb", Quantity: 1}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := o.RequestedDeliveryDate.Format("2006-01-02"); got != "2026-09-28" {
+			t.Fatalf("delivery = %s, want 2026-09-28 (Sunday skipped)", got)
 		}
 	})
 

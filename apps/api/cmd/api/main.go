@@ -135,8 +135,8 @@ func run() error {
 
 	// Orders: intake, retrieval and confirmation. The shared API clock drives the
 	// 16:00 cutoff, so the demo day is honoured like every other "now".
-	orderRepo := orders.NewPGRepository(db.Pool())
-	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), clk)
+	orderRepo := orders.NewPGRepository(db.Pool()).WithAudit(ordersAudit{})
+	orderService := orders.NewService(orderRepo, catalogService, orders.NewPGOutletReader(db.Pool()), clk, orders.NewPGOperatingDayReader(db.Pool()))
 	orderHandler := orders.NewHandler(orderService, authMiddleware)
 
 	// Planning: deterministic, constraint-aware proposals. The engine is pure;
@@ -150,7 +150,7 @@ func run() error {
 	// Routes/allocation: turns a confirmed proposal into authoritative route,
 	// route_leg and allocation rows in one transaction. It reuses planning for
 	// proposals and its own readers for order/vehicle/reference facts.
-	routesRepo := routes.NewPGRepository(db.Pool())
+	routesRepo := routes.NewPGRepository(db.Pool()).WithAudit(routesAudit{})
 	routesReaders := routes.NewPGReaders(db.Pool())
 	confirmation := routes.NewConfirmation(routesRepo, planningService, routesReaders, routesReaders, routesReaders, planningLoader, clk)
 	routesHandler := routes.NewHandler(confirmation, routesRepo, authMiddleware)
@@ -159,14 +159,14 @@ func run() error {
 	// route. Expected quantities come from order_item via route_leg; load state
 	// is per order line, upserted against the (route_id, order_item_id) key.
 	loadingRepo := loading.NewPGRepository(db.Pool())
-	loadingService := loading.NewService(loadingRepo)
+	loadingService := loading.NewService(loadingRepo, clk)
 	loadingHandler := loading.NewHandler(loadingService, authMiddleware)
 
 	// Delivery: the driver's outcome, POD and idempotent offline-event sync.
 	// delivery_event is the authoritative record, keyed for idempotency by
 	// client_event_id.
 	deliveryRepo := delivery.NewPGRepository(db.Pool())
-	deliveryService := delivery.NewService(deliveryRepo)
+	deliveryService := delivery.NewService(deliveryRepo, clk)
 	deliveryHandler := delivery.NewHandler(deliveryService, authMiddleware)
 
 	// Audit + notifications: append-only operational trail and in-app alerts.

@@ -39,7 +39,12 @@ func NewHandler(service *Service, authMiddleware *auth.Middleware) *Handler {
 
 // RegisterRoutes mounts the order endpoints on the API mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.Handle("POST /api/v1/orders", h.auth.RequireAuthenticated(http.HandlerFunc(h.Create)))
+	// Only a store manager (for their own outlet) or a dispatcher (acting
+	// across outlets, per docs/api.md) may create an order. Loaders and drivers
+	// have no order-intake role, so they are refused here before any handler
+	// runs — the outlet check inside Create is not the only guard.
+	mux.Handle("POST /api/v1/orders", h.auth.RequireAnyRole(
+		[]domain.Role{domain.RoleStoreManager, domain.RoleDispatcher}, http.HandlerFunc(h.Create)))
 	// Listing is for the roles that work with orders as orders. Loaders and
 	// drivers reach their orders through their routes instead.
 	mux.Handle("GET /api/v1/orders", h.auth.RequireAnyRole(
@@ -93,6 +98,16 @@ type orderResponse struct {
 	AfterCutoff            bool                `json:"afterCutoff"`
 	Notes                  string              `json:"notes,omitempty"`
 	Lines                  []orderLineResponse `json:"lines"`
+	Deferral               *deferralResponse   `json:"deferral,omitempty"`
+}
+
+// deferralResponse is the store-facing reason an order was deferred, from the
+// latest deferral_log row.
+type deferralResponse struct {
+	ReasonText     string `json:"reasonText"`
+	ConstraintCode string `json:"constraintCode,omitempty"`
+	DecidedAt      string `json:"decidedAt"`
+	DeferredToDate string `json:"deferredToDate,omitempty"`
 }
 
 func toResponse(o Order) orderResponse {
@@ -125,6 +140,19 @@ func toResponse(o Order) orderResponse {
 		AfterCutoff:            o.AfterCutoff,
 		Notes:                  o.Notes,
 		Lines:                  lines,
+		Deferral:               toDeferralResponse(o.Deferral),
+	}
+}
+
+func toDeferralResponse(d *Deferral) *deferralResponse {
+	if d == nil {
+		return nil
+	}
+	return &deferralResponse{
+		ReasonText:     d.ReasonText,
+		ConstraintCode: d.ConstraintCode,
+		DecidedAt:      d.DecidedAt.Format(time.RFC3339),
+		DeferredToDate: d.DeferredToDate,
 	}
 }
 

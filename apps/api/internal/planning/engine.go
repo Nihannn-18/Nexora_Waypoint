@@ -9,20 +9,21 @@ import (
 // Engine turns loaded inputs into a feasible, deterministic proposal. It holds
 // no state and performs no I/O, so a run is a pure function of its Input.
 //
-// DESIGN — no optimization objective is implemented. Feasibility is the only
-// filter; among feasible options the engine takes a documented, stable order and
-// nothing else. There is no distance, fuel, utilisation, priority or fairness
-// score. The prioritisation policy (docs/prioritisation-policy.md) is a soft
-// ordering the dispatcher may apply during review; it is not a feasibility rule
-// and does not select between feasible vehicles here.
+// DESIGN — feasibility is the only filter on whether an order can be served;
+// the documented prioritisation policy (docs/prioritisation-policy.md) decides
+// the order in which feasible orders are considered, so that on a constrained
+// day the right outlets are served and the right ones deferred. The policy is a
+// deterministic lexicographic key (planning/priority.go), never a numeric score,
+// and it can never override a hard rule. See lessOrder for the exact sequence.
 //
 // The algorithm:
 //
 //  1. Filter to eligible orders (CONFIRMED, for the planning date, operating day).
 //  2. Group by (depot, brand, district) — a trip holds one brand and one
 //     district only, so this is the finest compatible group.
-//  3. Within a group, order deterministically by outlet id, then order number,
-//     then input sequence.
+//  3. Within a group, order by the documented prioritisation policy: previously
+//     deferred, starved, chilled, narrow-window, largest, Fresh first, with a
+//     stable identity tie-break. This ordering is not a feasibility rule.
 //  4. Walk the group's available depot vehicles in vehicle-id order; greedily
 //     extend the vehicle's open trip, else open trip 1, else trip 2.
 //  5. Each candidate is checked by CheckTrip. An order that does not fit is left
@@ -306,14 +307,7 @@ func groupOrders(orders []Order) map[string][]Order {
 	}
 	for k := range groups {
 		sort.SliceStable(groups[k], func(i, j int) bool {
-			a, b := groups[k][i], groups[k][j]
-			if a.OutletID != b.OutletID {
-				return a.OutletID < b.OutletID
-			}
-			if a.OrderNumber != b.OrderNumber {
-				return a.OrderNumber < b.OrderNumber
-			}
-			return a.Sequence < b.Sequence
+			return lessOrder(groups[k][i], groups[k][j])
 		})
 	}
 	return groups
@@ -324,7 +318,12 @@ func sortedGroupKeys(groups map[string][]Order) []string {
 	for k := range groups {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	// Groups are planned in prioritised order too, so an outlet that was
+	// deferred yesterday (or is starved, or is carrying the chilled goods) is
+	// not left behind because it happens to sort late on district name.
+	sort.Slice(keys, func(i, j int) bool {
+		return lessGroup(groups[keys[i]], groups[keys[j]], keys[i], keys[j])
+	})
 	return keys
 }
 

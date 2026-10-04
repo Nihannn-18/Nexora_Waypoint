@@ -68,11 +68,39 @@ const defaultListLimit = 200
 // PGRepository is the PostgreSQL-backed Repository.
 type PGRepository struct {
 	pool *pgxpool.Pool
+	// audit is an optional sink written in the same transaction as a business
+	// mutation, so a rolled-back close leaves no audit record.
+	audit AuditSink
+}
+
+// AuditSink records one audit event inside the caller's transaction. It is a
+// narrow interface so this package does not import internal/audit.
+type AuditSink interface {
+	RecordTx(ctx context.Context, tx pgx.Tx, e AuditEvent) error
+}
+
+// AuditEvent is the minimal audit fact the order package emits.
+type AuditEvent struct {
+	Action     string
+	EntityType string
+	EntityID   string
+	Actor      string
+	DepotID    string
+	OutletID   string
+	Result     string
+	Detail     map[string]any
 }
 
 // NewPGRepository builds a repository over the given pool.
 func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
 	return &PGRepository{pool: pool}
+}
+
+// WithAudit attaches an audit sink. It returns the repository for chaining at
+// the composition root.
+func (r *PGRepository) WithAudit(sink AuditSink) *PGRepository {
+	r.audit = sink
+	return r
 }
 
 // orderColumns is the header projection shared by every read.
@@ -169,7 +197,34 @@ func (r *PGRepository) loadWithLines(ctx context.Context, row pgx.Row, ref strin
 		return Order{}, err
 	}
 	o.Lines = lines
+	// The latest deferral, so a store manager reading their own order sees why
+	// it was deferred without dispatcher-only access.
+	if err := r.attachLatestDeferral(ctx, &o); err != nil {
+		return Order{}, err
+	}
 	return o, nil
+}
+
+// attachLatestDeferral loads the most recent deferral_log row for an order, if
+// any. deferral_log is append-only across runs, so the latest decision is the
+// one the store is owed.
+func (r *PGRepository) attachLatestDeferral(ctx context.Context, o *Order) error {
+	var d Deferral
+	err := r.pool.QueryRow(ctx, `
+		SELECT d.reason, COALESCE(d.constraint_code, ''), d.decided_at,
+		       COALESCE(d.deferred_to_date::text, '')
+		FROM deferral_log d
+		WHERE d.order_id = $1
+		ORDER BY d.decided_at DESC, d.deferral_id DESC
+		LIMIT 1`, o.OrderID).Scan(&d.ReasonText, &d.ConstraintCode, &d.DecidedAt, &d.DeferredToDate)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load latest deferral: %w", err)
+	}
+	o.Deferral = &d
+	return nil
 }
 
 func (r *PGRepository) linesFor(ctx context.Context, orderID string) ([]OrderLine, error) {
@@ -343,10 +398,17 @@ func (r *PGRepository) UpdateStatus(ctx context.Context, orderID string, status 
 // already-closed brand changes nothing and does not count, so the caller can
 // distinguish a first close from a repeat.
 func (r *PGRepository) CloseQueue(ctx context.Context, date time.Time, depotID string, brands []string, actor string) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin close queue tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	closed := 0
+	newlyClosed := make([]string, 0, len(brands))
 	for _, brand := range brands {
 		var inserted bool
-		err := r.pool.QueryRow(ctx, `
+		err := tx.QueryRow(ctx, `
 			INSERT INTO order_queue_close (queue_date, depot_id, brand, closed_by)
 			VALUES ($1::date, $2, $3, $4)
 			ON CONFLICT (queue_date, depot_id, brand) DO NOTHING
@@ -356,11 +418,37 @@ func (r *PGRepository) CloseQueue(ctx context.Context, date time.Time, depotID s
 			continue
 		}
 		if err != nil {
-			return closed, fmt.Errorf("close queue %s/%s: %w", depotID, brand, err)
+			return 0, fmt.Errorf("close queue %s/%s: %w", depotID, brand, err)
 		}
 		if inserted {
 			closed++
+			newlyClosed = append(newlyClosed, brand)
 		}
+	}
+
+	// The audit row joins the same transaction as the closure, so a close and
+	// its trail commit together or not at all.
+	if r.audit != nil {
+		if err := r.audit.RecordTx(ctx, tx, AuditEvent{
+			Action:     "QUEUE_CLOSED",
+			EntityType: "QUEUE",
+			EntityID:   date.Format("2006-01-02") + "|" + depotID,
+			Actor:      actor,
+			DepotID:    depotID,
+			Result:     "SUCCESS",
+			Detail: map[string]any{
+				"date":        date.Format("2006-01-02"),
+				"brands":      brands,
+				"newlyClosed": newlyClosed,
+				"closed":      closed,
+			},
+		}); err != nil {
+			return 0, fmt.Errorf("audit close queue: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit close queue: %w", err)
 	}
 	return closed, nil
 }

@@ -59,8 +59,20 @@ type Order struct {
 	// the planning policy; orders exposes them verbatim and does not aggregate.
 	DeferredYesterday   bool
 	DaysSinceLastServed *int
+	// Deferral is the latest deferral decision, loaded on a scoped read so the
+	// store manager can see why their order was deferred. Nil when the order has
+	// never been deferred.
+	Deferral *Deferral
 	// Lines are the order's lines. Populated on read; required on create.
 	Lines []OrderLine
+}
+
+// Deferral is the store-facing view of the latest deferral_log row for an order.
+type Deferral struct {
+	ReasonText     string
+	ConstraintCode string
+	DecidedAt      time.Time
+	DeferredToDate string
 }
 
 // OrderLine is one SKU on an order, in the quantity requested. The snapshot

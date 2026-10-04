@@ -9,9 +9,13 @@ A delivery planning system for Waypoint Group: 120 outlets, 60 vehicles, two dep
 On a typical day the fleet cannot serve everyone, so the system's real job is not only
 to build a plan but to say **which orders were deferred and why**.
 
-> **Status: scaffold.** The workspace, build pipeline, shared domain contract, Docker
-> stack and route shells are in place and verified. The database, the planning engine and
-> the role screens are being built on top of this. See [Build status](#build-status).
+> **Status: feature-complete for the judge walkthrough.** All four role workspaces are
+> built and wired to the Go API, with one constraint engine, transactional confirmation,
+> Go-owned sessions and idempotent offline sync. A small number of submitted behaviours
+> remain documented departures — see
+> [Implemented, partial and departed](#implemented-partial-and-departed), which is the
+> authoritative status list. `README.md` and the code are kept in step; where they differ,
+> the code wins.
 
 ---
 
@@ -25,7 +29,7 @@ to build a plan but to say **which orders were deferred and why**.
 - [Architecture](#architecture)
 - [Workspace layout](#workspace-layout)
 - [Common commands](#common-commands)
-- [Departures from the Day 5 design and the specification](#departures-from-the-day-5-design-and-the-specification)
+- [Implemented, partial and departed](#implemented-partial-and-departed)
 - [Build status](#build-status)
 - [Documentation](#documentation)
 
@@ -156,7 +160,7 @@ One account per role, matching the Designathon personas. All use the password
 | Driver        | `kasun.p@waypoint.lk`     | Kasun P.     | Phone, 402                   |
 | Store manager | `ishara.s@waypoint.lk`    | Ishara S.    | Desktop or phone             |
 
-The sign-in screen lists all four, so there is no need to type an address.
+The sign-in screen lists all four roles so a judge knows which account to use. Choosing a role only highlights the workspace — the email and password fields are never filled in; the judge types the seeded credentials above. The password is not present in the client bundle.
 
 **Seeded demo day.** Planning day **Friday 25 September 2026**, delivery day
 **Saturday 26 September 2026** — the Task 2B peak-day scenario S1, Peliyagoda: **85 confirmed
@@ -322,112 +326,79 @@ behave exactly as they do when run by hand in `apps/api`, and Nx still provides 
 
 ---
 
-## Departures from the Day 5 design and the specification
+## Implemented, partial and departed
 
-The competition requires significant departures to be recorded. These are ours.
+This is the authoritative status list. "Departure" means a submitted Day 5 behaviour that
+is intentionally not built; each has its reason, and the screen says what it does instead of
+faking the missing behaviour.
+
+### Implemented
+
+- **Go backend instead of Spring Boot** (see below). One authoritative constraint validator,
+  transactional confirmation, optimistic route versions, Go-owned opaque sessions.
+- **Authentication and RBAC.** Argon2id passwords, opaque server-side sessions, login /
+  logout / me, role and depot/outlet scope enforced on every handler. All four roles sign out.
+- **Orders.** Place (SKU-based, server-computed totals, snapshot dimensions), explicit
+  **Confirm order**, the 16:00 cutoff enforced server-side with the delivery day rolled to the
+  next operating run, and the confirmed order queue.
+- **Dispatcher.** KPI dashboard with the cutoff countdown, unified order queue, **close queue**
+  per brand (idempotent), async planning proposal and review, mandatory deferral reasons with
+  bulk apply, transactional confirm/publish, routes and trip tracker, deferral history with
+  repeat-skip highlighting, fleet, notifications and audit trail.
+- **Planning engine.** Every hard constraint with the official trip-time formula, the
+  documented [prioritisation policy](docs/prioritisation-policy.md) (deferred-yesterday,
+  starved outlets, chilled-first, narrow windows, largest order, Fresh before Style/Tech),
+  and full revalidation inside the confirmation transaction.
+- **Loader.** Depot-scoped trips, picking list in **reverse stop order**, per-line check-off,
+  and order-line shortfall flags (missing/damaged + optional photo) that notify the
+  dispatcher and are audited.
+- **Driver.** Run-sheet cockpit, Delivered/Failed/Delayed outcomes with reasons, POD
+  (receiver + signature or photo), a local-first IndexedDB outbox, idempotent
+  `client_event_id` sync, and visible pending/synced/conflict states. Offline is neutral grey.
+- **Store manager.** Store home, place order, live/completed order list, order detail with the
+  arrival window, and the **deferral reason** on a deferred order.
+- **Audit trail** for delivery, loading, queue close, allocation confirmation and deferral,
+  written in the same transaction as the mutation.
+- **Demo clock** (`DEMO_MODE`) so the seeded past delivery day is "today" for the walkthrough.
+
+### Partial
+
+- **D-03 plan board** reviews and confirms the engine's proposal but has no drag-and-drop and
+  no `POST /allocations/validate` / `recalculate` probe, so a candidate move is not previewed.
+  Deferral reasons are given inline rather than in the D-04 modal. A `POLICY` override UI is
+  not exposed.
+- **D-06 tracker** shows progress from each stop's recorded status; per-trip driver, ETA and
+  live offline/sync status need `GET /routes/live`, which is not implemented.
+- **Loader "Mark trip loaded"** is intentionally not built: there is no route-level `LOADED`
+  transition endpoint, so the screen ends at "Save counts" and shows server-side
+  `routeReady` instead.
+- **L-02a live plan changes** are not detected: the `route` table has `route_version`, but no
+  code increments it and there is no server-side reorder endpoint, so polling would never
+  see a change. The picking list holds the loader's unsaved counts.
+
+### Departed (documented, not built)
+
+- **D-08 forecast.** `GET /forecast/demand` is not implemented and forecasting belongs to the
+  Datathon; the screen is not in the navigation.
+- **DG-C breakdown recovery.** No mark-broken-down action or requeue drawer; a breakdown is
+  currently handled as an explicit deferral.
+- **S-06 receipt / GRN.** `POST /orders/{id}/receipt` and `GET /orders/{id}/eta` are not
+  implemented, so no receipt form or per-order ETA is offered. The order detail shows the
+  outlet's real delivery window and the deferral reason instead.
+- **Driver account screen.** The header sign-out button ends the session; there is no separate
+  account page (the two disabled tabs, Deliveries and Vehicle, have no API yet).
 
 ### Backend language: Go instead of Spring Boot
 
 Our specification named Spring Boot. We build in **Go 1.24**. Everything the specification
 requires of the backend is unchanged — one authoritative constraint validator, DTOs at the
 boundary, transactional confirmation, optimistic locking on route edits, a Go-owned session
-with server-side depot and outlet scope, idempotent offline sync, an immutable audit trail. Only
-the language and framework differ.
-
-The reasons: a static binary starts in milliseconds and produces a far smaller container,
-which matters for a judge running `docker compose up` on an unknown machine; and the team's
-throughput over three days is higher in Go.
-
-Where the specification names a Spring concept, read the Go equivalent:
-
-| Specification                               | This implementation                                               |
-| ------------------------------------------- | ----------------------------------------------------------------- |
-| `@Transactional` on allocation confirmation | explicit `pgx` transaction around the revalidate-and-persist step |
-| JPA entities with DTO mapping               | plain structs; persistence types never cross the HTTP boundary    |
-| Spring `@Service` beans                     | packages under `internal/`, constructor-injected                  |
-| Flyway migrations                           | SQL migrations run by the API at start-up                         |
-| Spring AMQP listener                        | `amqp091-go` consumer in `cmd/worker`                             |
-| Bean-validation annotations                 | explicit validation in each handler, strict JSON decoding         |
-
-### Frontend: unchanged
-
-Next.js with TypeScript and Tailwind, as specified. Tailwind v4 with the Day 5 tokens as
-CSS custom properties, so a colour is defined once.
+with server-side depot and outlet scope, idempotent offline sync, an immutable audit trail.
 
 ### Fonts self-hosted rather than loaded from a CDN
 
-Inter and Cousine ship with the app via Fontsource instead of Google Fonts. The Driver
-surface has to render correctly with no connectivity, and a CDN stylesheet is one more
-thing that fails on a hill-country route.
-
-### Dispatcher workspace
-
-The dispatcher screens follow the Day 5 frames' layout and language (KPI cards that link to
-the screen that resolves them, mono section headings, trip cards with weight / volume /
-time-budget meters, the overcapacity banner, the rule panel with E-0x ids). Where a frame
-needs data or an action the API does not have, the screen says so instead of faking it:
-
-- **Deferral reasons are given inline, not in the D-04 modal.** Confirmation only accepts
-  the engine's own DEFER proposals, so the dispatcher's decision is the _reason_, not the
-  deferral. Each deferral has its own reason field, Confirm stays disabled until every one
-  is filled, and one click applies the engine's explanation to every order blocked by the
-  same rule (DG-A's bulk apply).
-- **No drag-and-drop or "feasible alternative in one click" on D-03.** Confirmation accepts
-  only the engine's vehicle and trip for each order, and `POST /allocations/validate` /
-  `recalculate` are not implemented, so the plan is reviewed and confirmed as proposed.
-- **No "Close queue" on D-02** (`POST /orders/close` is not implemented) and **no "Notify N
-  stores"** on confirm (confirmation does not notify stores).
-- **D-06 shows progress from each stop's recorded status.** Driver, ETA and offline/sync
-  status per trip need `GET /routes/live`, which is not implemented.
-- **D-08 forecast is not in the navigation.** `GET /forecast/demand` is not implemented and
-  forecasting belongs to the Datathon.
-- **Added: Audit trail and Notifications.** Not Day 5 screens; they surface the audit and
-  in-app notification APIs.
-- **Dropped from the frames:** driver names, plate numbers, live temperatures, stop ETAs,
-  "Optimal match" suggestions and System Settings. Nothing in the data supports them, and
-  CLAUDE.md rules out settings pages.
-- **Surfaces use the shared tokens** (grey `page`, white `card`) rather than the frame's
-  white page and grey sidebar, so the dispatcher matches the other three workspaces.
-
-### Loader workspace
-
-L-01 (today's trips), L-02 (the picking list, reverse stop order, per-order check-off) and
-L-03 (flag damaged/missing with an optional photo) are built. Two L-02 behaviours are **not**
-implemented because the backend has no path for them, and the screen says what it does
-instead of faking it:
-
-- **No "Mark trip loaded".** There is no route-level `LOADED` status or transition endpoint,
-  and no dispatch endpoint exists. The order lifecycle has `ALLOCATED → LOADED`, but nothing
-  exposes it to the loader, so the screen ends at "Save counts". Server-side readiness
-  (`routeReady`) is still computed and shown.
-- **No live plan-change detection (L-02a).** The `route` table has `route_version`, but no
-  code ever increments it and there is no server-side route-edit endpoint
-  (`PATCH /routes/{id}/legs/reorder` is documented but not implemented), so polling the
-  version would never detect a change. The picking list loads once and holds the loader's
-  unsaved counts.
-
-### Store manager workspace
-
-S-01 (store home), S-02/S-03 (place an order) and S-04/S-05/S-07 (order list and detail) are
-built against the existing order APIs. The workspace is scoped to the caller by the server:
-the header outlet comes from `GET /outlets`, which the Go API pins to
-`app_user.outlet_id`, and the order list calls `GET /orders` with no outlet or depot filter at
-all. There is no outlet picker anywhere, so a store manager cannot widen scope through the
-UI or the query string. Where the API does not expose a piece of S-04/S-05/S-06, the screen
-says so rather than faking it:
-
-- **No per-order ETA or arrival minute.** `GET /orders/{id}/eta` is not implemented. The
-  detail screen shows the outlet's own delivery window (real reference data) and does not
-  invent a planned arrival time.
-- **No deferral reason or acknowledgement (S-05).** The deferral history is dispatcher-only
-  (`GET /deferrals`), and the order record carries no reason or `deferredToDate`, so a
-  deferred order is shown as deferred with a pointer to the dispatcher's log. There is no
-  acknowledge endpoint to call.
-- **No receipt / GRN (S-06).** `POST /orders/{id}/receipt` is not implemented, so no receipt
-  form or proof of delivery is offered to the store manager.
-- **Chilled and dry are enforced as separate orders in the form.** The backend derives one
-  temperature per order, so the S-02 form groups items and blocks a draft that mixes chilled
-  and dry lines rather than silently merging them.
+Inter and Cousine ship with the app via Fontsource instead of Google Fonts, so the Driver
+surface renders with no connectivity.
 
 ### Any further departures
 
@@ -438,25 +409,20 @@ under _fidelity to the Day 5 design_; a documented one does not.
 
 ## Build status
 
-Verified on this scaffold:
+Verified for this submission:
 
-- `nx build web` — 6 routes, standalone output, all Day 5 design tokens present in the
-  compiled CSS
-- `nx build api` — static binary; serves `/healthz`, `/readyz` and `/api/v1/meta`, logs
-  structurally and shuts down gracefully
-- `nx run-many -t test` — 34 tests green (21 shared-types, 9 api-client, 4 ui) plus the Go
-  suite, including the booklet's worked example in both languages
-- `nx run-many -t lint` — clean across all five projects
+- `npx nx run-many -t test` — the Jest suites (web, shared-types, api-client, ui) and the Go
+  suite, including the constraint boundaries and the booklet's worked example in both
+  languages
+- `npx nx run-many -t lint` and `go vet ./...` — clean across every project
+- `npx nx run-many -t build` — production web build and the static Go binary
 - `tsc --noEmit` — clean under `strict` with `noUncheckedIndexedAccess`
-- `docker compose config` — valid
+- `docker compose config` — valid; CI builds both images and smoke-tests the API container
 
-Not yet verified: **the Docker image builds**. The scaffold was prepared in an environment
-without a Docker daemon, so `docker compose up --build` has not been executed end to end.
-Run it once locally before relying on it.
-
-Not yet built: the four role screen sets beyond their shells, the planning worker transport,
-the offline outbox, and realtime progress. Authentication (Go-owned opaque sessions with
-Argon2id passwords, login/logout/me and media scope) **is** implemented; see `docs/api.md`.
+`docker compose up --build` starts PostgreSQL, RabbitMQ, the Go API and the web app, and
+seeds the reference data and the S1 demo day. The PostgreSQL integration tests
+(`TestSeedIntegration`, `TestRoutesIntegration`, `TestCloseQueueAuditIntegration`) are not
+part of CI; run them with `WAYPOINT_TEST_DATABASE_URL` set (see `docs/ai-disclosure.md`).
 
 ---
 

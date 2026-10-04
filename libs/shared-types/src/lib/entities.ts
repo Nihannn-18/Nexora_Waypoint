@@ -161,6 +161,22 @@ export interface CustomerOrder {
   readonly afterCutoff: boolean;
   readonly notes?: string;
   readonly lines?: readonly OrderLine[];
+  /**
+   * The latest deferral decision for this order, when it has been deferred.
+   * Store-facing: the reason the dispatcher recorded and the run it moved to,
+   * so the store can understand what happened without dispatcher access.
+   */
+  readonly deferral?: OrderDeferralSummary;
+}
+
+/** The store's view of why an order was deferred, from deferral_log. */
+export interface OrderDeferralSummary {
+  readonly reasonText: string;
+  /** The binding constraint's code, e.g. FRESH_TIME_BUDGET, when applicable. */
+  readonly constraintCode?: string;
+  readonly decidedAt: IsoDateTime;
+  /** The run the order moves to, when known. */
+  readonly deferredToDate?: IsoDate;
 }
 
 /** Response of GET /orders: one page plus the total matching the filter. */

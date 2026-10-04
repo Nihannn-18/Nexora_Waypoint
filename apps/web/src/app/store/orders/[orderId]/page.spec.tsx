@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Suspense } from 'react';
 import { WaypointApiError } from '@waypoint/api-client';
 import { StoreShell } from '../../_components/store-shell';
@@ -14,6 +14,7 @@ jest.mock('../../../../lib/api', () => ({
     getOutlets: jest.fn(),
     meta: jest.fn(),
     getOrder: jest.fn(),
+    confirmOrder: jest.fn(),
   },
   tokenStore: { get: () => null, set: jest.fn(), clear: jest.fn() },
 }));
@@ -22,6 +23,7 @@ const mocked = api as unknown as {
   getOutlets: jest.Mock;
   meta: jest.Mock;
   getOrder: jest.Mock;
+  confirmOrder: jest.Mock;
 };
 
 const renderPage = async () => {
@@ -59,7 +61,28 @@ describe('S-04 order detail', () => {
     await waitFor(() => expect(mocked.getOrder).toHaveBeenCalledWith('o1'));
   });
 
-  it('explains a deferred order without inventing a reason', async () => {
+  it('explains a deferred order with the recorded reason when available', async () => {
+    mocked.getOrder.mockResolvedValue(
+      makeOrder({
+        status: 'DEFERRED',
+        deferral: {
+          reasonText: 'Refrigerated capacity ran out for this district.',
+          constraintCode: 'FRESH_TIME_BUDGET',
+          decidedAt: '2026-09-25T16:20:00+05:30',
+          deferredToDate: '2026-09-28',
+        },
+      }),
+    );
+    await renderPage();
+
+    expect(await screen.findByText(/this order was deferred/i)).toBeTruthy();
+    expect(
+      screen.getByText(/refrigerated capacity ran out/i),
+    ).toBeTruthy();
+    expect(screen.getByText('FRESH_TIME_BUDGET')).toBeTruthy();
+  });
+
+  it('does not invent a reason when the deferral record is absent', async () => {
     mocked.getOrder.mockResolvedValue(makeOrder({ status: 'DEFERRED' }));
     await renderPage();
 
@@ -72,6 +95,42 @@ describe('S-04 order detail', () => {
     await renderPage();
 
     expect(screen.getByText(/loading this order/i)).toBeTruthy();
+  });
+
+  it('offers an explicit confirm action for a placed order', async () => {
+    await renderPage();
+
+    const confirm = await screen.findByRole('button', {
+      name: /confirm order/i,
+    });
+    expect(confirm).toBeTruthy();
+    expect(mocked.confirmOrder).not.toHaveBeenCalled();
+  });
+
+  it('confirms the order only on explicit click and reports success', async () => {
+    mocked.confirmOrder.mockResolvedValue(makeOrder({ status: 'CONFIRMED' }));
+    await renderPage();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /confirm order/i }),
+    );
+
+    await waitFor(() =>
+      expect(mocked.confirmOrder).toHaveBeenCalledWith('o1'),
+    );
+    expect(await screen.findByText(/order confirmed/i)).toBeTruthy();
+  });
+
+  it('disables the confirm action while the request is in flight', async () => {
+    mocked.confirmOrder.mockReturnValue(new Promise(() => undefined));
+    await renderPage();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /confirm order/i }),
+    );
+
+    const pending = await screen.findByRole('button', { name: /confirming/i });
+    expect((pending as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('shows an error when the order is out of scope or missing', async () => {

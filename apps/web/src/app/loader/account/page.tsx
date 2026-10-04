@@ -1,10 +1,10 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { AuthenticatedUser } from '@waypoint/shared-types';
 import { Mono } from '@waypoint/ui';
-import { api, tokenStore } from '../../../lib/api';
+import { api } from '../../../lib/api';
+import { endSession } from '../../../lib/session';
 import {
   Card,
   ErrorState,
@@ -22,9 +22,9 @@ import { readableError } from '../_lib/use-loading';
  * be able to clear it deliberately rather than by closing the browser.
  */
 export default function LoaderAccountPage() {
-  const router = useRouter();
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -38,14 +38,9 @@ export default function LoaderAccountPage() {
   }, []);
 
   const signOut = async () => {
-    try {
-      await api.logout();
-    } catch {
-      // The session is being abandoned either way; clearing the local token is
-      // what actually ends it on this device.
-    }
-    tokenStore.clear();
-    router.push('/signin');
+    setSigningOut(true);
+    // endSession revokes server-side, clears the local token, and redirects.
+    await endSession();
   };
 
   if (error) {
@@ -72,8 +67,13 @@ export default function LoaderAccountPage() {
         </p>
       </Card>
 
-      <button type="button" onClick={signOut} className={buttonClass('outline')}>
-        Sign out
+      <button
+        type="button"
+        onClick={signOut}
+        disabled={signingOut}
+        className={buttonClass('outline')}
+      >
+        {signingOut ? 'Signing out…' : 'Sign out'}
       </button>
     </div>
   );

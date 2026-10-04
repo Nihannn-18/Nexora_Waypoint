@@ -163,9 +163,13 @@ export function useRoutes(): RoutesState {
     const done = (s: RoutesState) => live && setState(s);
     (async () => {
       try {
-        // `now` carries the Asia/Colombo offset, so its date part is the business date.
-        const date = (await api.meta()).now.slice(0, 10);
-        const routes = await api.getDriverRoutes(date);
+        // No date: the server resolves the depot's active run from the routes
+        // themselves, so the cockpit opens on the planned run rather than a
+        // date taken from the phone. The API clock is only a fallback used to
+        // label an empty run sheet.
+        const routes = await api.getDriverRoutes();
+        const date =
+          routes[0]?.routeDate ?? (await api.meta()).now.slice(0, 10);
         await cacheRoutes({ date, routes });
         done({ status: 'ready', date, routes, cached: false });
       } catch (err) {

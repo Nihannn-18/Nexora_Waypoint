@@ -114,6 +114,30 @@ func TestHandlerCreate(t *testing.T) {
 		}
 	})
 
+	t.Run("a loader cannot create an order", func(t *testing.T) {
+		h, _ := handlerFor(t, auth.Identity{UserID: "u-load", Role: domain.RoleLoader, DepotID: "d1"}, before)
+		rec := postJSON(t, h, "/api/v1/orders", map[string]any{
+			"outletId":              "OUT001",
+			"requestedDeliveryDate": "2026-09-26",
+			"items":                 []map[string]any{{"itemId": "i-amb", "quantity": 1}},
+		})
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+	})
+
+	t.Run("a driver cannot create an order", func(t *testing.T) {
+		h, _ := handlerFor(t, auth.Identity{UserID: "u-driver", Role: domain.RoleDriver, DepotID: "d1"}, before)
+		rec := postJSON(t, h, "/api/v1/orders", map[string]any{
+			"outletId":              "OUT001",
+			"requestedDeliveryDate": "2026-09-26",
+			"items":                 []map[string]any{{"itemId": "i-amb", "quantity": 1}},
+		})
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+	})
+
 	t.Run("bad delivery date is a 400", func(t *testing.T) {
 		h, _ := handlerFor(t, storeManager(), before)
 		rec := postJSON(t, h, "/api/v1/orders", map[string]any{
@@ -216,7 +240,7 @@ func TestHandlerGetAndConfirm(t *testing.T) {
 // TestHandlerRequiresAuthentication proves the routes sit behind the auth
 // middleware: with the fail-closed verifier the request is refused.
 func TestHandlerRequiresAuthentication(t *testing.T) {
-	svc := NewService(newFakeRepo(), &fakeCatalogue{items: map[string]catalog.Item{}}, fakeOutlets{}, fixedClock{})
+	svc := NewService(newFakeRepo(), &fakeCatalogue{items: map[string]catalog.Item{}}, fakeOutlets{}, fixedClock{}, weekdayCalendar{})
 	mux := http.NewServeMux()
 	failClosed := auth.NewMiddleware(auth.NewIdentityLoader(auth.SessionTokenVerifier{}, nil), auth.NewAuthorizer())
 	NewHandler(svc, failClosed).RegisterRoutes(mux)

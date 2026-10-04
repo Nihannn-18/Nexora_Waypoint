@@ -3,31 +3,35 @@
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { Mono } from '@waypoint/ui';
+import type { Role } from '@waypoint/shared-types';
 import { api, tokenStore } from '../../../lib/api';
 import { ROLE_ROUTES, routeForRole } from '../../../lib/roles';
 
 /**
  * G-01 — Sign in.
  *
- * The Go API owns authentication. Choosing a role card pre-fills the demo
- * account (a judge never has to hunt for credentials); the submit posts to
- * POST /api/v1/auth/login, stores the returned opaque session token in the
- * existing API-client token store, then asks GET /api/v1/me who the caller
- * actually is and routes to that role's workspace. The client never decides its
- * own role: the redirect comes from the server-verified identity.
+ * The Go API owns authentication. Choosing a role card only changes contextual
+ * UI (which workspace the judge is heading to); it NEVER fills the email or
+ * password fields and it is never an authentication mechanism. The user types
+ * their own credentials and submits the form explicitly; the client then asks
+ * GET /api/v1/me who the caller actually is and routes to that server-reported
+ * role's workspace. The client never decides its own role.
+ *
+ * The four seeded demo accounts are documented in the README for judges. The
+ * password is deliberately absent from this bundle: it is never injected into
+ * the field and never travels from the client until the user types it.
  */
-const DEMO_PASSWORD = 'waypoint2026';
-
 export default function SignInPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  function selectRole(roleEmail: string) {
-    setEmail(roleEmail);
-    setPassword(DEMO_PASSWORD);
+  function selectRole(role: Role) {
+    // Contextual UI only. Never touches the credential fields.
+    setSelectedRole(role);
     setError(null);
   }
 
@@ -65,32 +69,44 @@ export default function SignInPage() {
       <section aria-labelledby="choose-role">
         <h2
           id="choose-role"
-          className="mb-3 text-sm font-medium text-ink-muted"
+          className="mb-1 text-sm font-medium text-ink-muted"
         >
           Choose a role to continue
         </h2>
+        <p className="mb-3 text-xs text-ink-muted">
+          This only highlights your workspace. Enter your own credentials below
+          — nothing is filled in for you.
+        </p>
 
         <ul className="grid gap-3 sm:grid-cols-2">
-          {ROLE_ROUTES.map((route) => (
-            <li key={route.role}>
-              <button
-                type="button"
-                onClick={() => selectRole(route.email)}
-                className="tap-target block w-full rounded-card bg-card p-4 text-left ring-1 ring-ink/10 transition hover:ring-brand focus-visible:ring-2 focus-visible:ring-brand"
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-semibold text-ink">{route.label}</span>
-                  <span className="text-xs text-ink-muted">
-                    {route.persona}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-ink-muted">{route.summary}</p>
-                <Mono className="mt-2 block text-xs text-ink-muted">
-                  {route.email}
-                </Mono>
-              </button>
-            </li>
-          ))}
+          {ROLE_ROUTES.map((route) => {
+            const selected = selectedRole === route.role;
+            return (
+              <li key={route.role}>
+                <button
+                  type="button"
+                  onClick={() => selectRole(route.role)}
+                  aria-pressed={selected}
+                  className={`tap-target block w-full rounded-card bg-card p-4 text-left ring-1 transition focus-visible:ring-2 focus-visible:ring-brand ${
+                    selected
+                      ? 'ring-2 ring-brand'
+                      : 'ring-ink/10 hover:ring-brand'
+                  }`}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-semibold text-ink">{route.label}</span>
+                    <span className="text-xs text-ink-muted">
+                      {route.persona}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-ink-muted">{route.summary}</p>
+                  <Mono className="mt-2 block text-xs text-ink-muted">
+                    {route.email}
+                  </Mono>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       </section>
 

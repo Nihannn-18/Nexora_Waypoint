@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,6 +21,10 @@ type Repository interface {
 	// RoutesForDepot lists the confirmed routes a loader at depotID may load on a
 	// date, with the progress counts the route list shows.
 	RoutesForDepot(ctx context.Context, depotID, date string) ([]RouteSummary, error)
+	// ActiveRouteDate returns the depot's current loading run: the earliest
+	// confirmed route date on or after `today`, or the most recent one when no
+	// run is upcoming. Empty when the depot has no confirmed routes at all.
+	ActiveRouteDate(ctx context.Context, depotID string, today time.Time) (string, error)
 }
 
 // PGRepository is the PostgreSQL-backed Repository.
@@ -178,6 +183,33 @@ func (r *PGRepository) RoutesForDepot(ctx context.Context, depotID, date string)
 		return nil, fmt.Errorf("iterate loader routes: %w", err)
 	}
 	return summaries, nil
+}
+
+// ActiveRouteDate implements Repository. It never guesses a date: it returns
+// the earliest confirmed run that has not passed, or the latest one when every
+// run is in the past, so the loader sees the work that is actually actionable.
+func (r *PGRepository) ActiveRouteDate(ctx context.Context, depotID string, today time.Time) (string, error) {
+	var date string
+	err := r.pool.QueryRow(ctx, `
+		SELECT d::text FROM (
+			SELECT route_date AS d, 0 AS pref
+			FROM route
+			WHERE depot_id = $1 AND status = 'CONFIRMED' AND route_date >= $2::date
+			UNION ALL
+			SELECT MAX(route_date) AS d, 1 AS pref
+			FROM route
+			WHERE depot_id = $1 AND status = 'CONFIRMED'
+		) runs
+		WHERE d IS NOT NULL
+		ORDER BY pref, d
+		LIMIT 1`, depotID, today.Format("2006-01-02")).Scan(&date)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve active loader route date: %w", err)
+	}
+	return date, nil
 }
 
 // RecordShortfalls implements Repository.
