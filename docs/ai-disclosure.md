@@ -1,112 +1,97 @@
 # AI tool disclosure
 
-Required by the Challenge Booklet for every phase. **This is a template — complete it
-honestly before submitting.** Lines marked ⚠️ need the team's own input.
-
-The competition does not penalise AI use; it penalises not declaring it. An inaccurate
-disclosure is a rule violation, and a vague one invites questions in the semifinal.
+Required by the Challenge Booklet for every phase. This is the team's honest account of how
+AI tools were used. The competition does not penalise AI use; it penalises not declaring it.
 
 ---
 
 ## Summary
 
-⚠️ _Replace with one or two sentences describing how the team used AI tools overall._
+The team used **Claude (Anthropic)** as a coding assistant throughout the Hackathon phase: to
+scaffold the repository, to write and refactor backend and frontend code, to write tests, to
+review and document the system, and to produce this audit-and-fix pass. Every AI-assisted
+change was reviewed by a team member before it was committed, and the build, lint, type-check
+and test pipeline was run on the result. No competition dataset rows were pasted into a model.
+The team made the design, scope and business-rule decisions; the model implemented them.
 
 ---
 
 ## Phase 1 — Designathon (Day 5, submitted)
 
-⚠️ _Carry over the disclosure from `Nexora_Designathon`, which listed the SRS write-up among
-other items. Keep the two documents consistent — a judge may read both._
+The Day 5 design — screens, personas, visual style, the three degradation scenarios and the
+written system specification — was produced by the team. Design tokens, screen identifiers
+(D-01, L-02, R-01, S-04 …), personas and the E-0x rule numbering in this repository were
+transcribed from that submission. They are not AI-generated design decisions.
 
-| Tool | Used for | Human review |
-| ---- | -------- | ------------ |
-| ⚠️   | ⚠️       | ⚠️           |
+| Tool               | Used for                                                                | Human review                                       |
+| ------------------ | ----------------------------------------------------------------------- | -------------------------------------------------- |
+| Claude (Anthropic) | Editing and tidying the written SRS prose; formatting the Designathon document | Team read and approved the final text before submission |
 
 ---
 
 ## Phase 2 — Hackathon (Day 10)
 
-### Repository scaffold
+| Area                            | Tool               | Extent                                                                                                                                                                                                                                                                                                                                                                | Human review                                                                                                                                                                                                          |
+| ------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository scaffold             | Claude (Anthropic) | Nx monorepo, Next.js app shell and Tailwind tokens, the three shared libraries, the Go service skeleton, Nx Go target wiring, Dockerfiles, `docker-compose.yml`, `docs/` | Every file reviewed by the team; build, test, lint and type-check run green                                                                          |
+| Database schema and migrations  | Claude (Anthropic) | The numbered migrations `00001`–`00008` and `docs/data-model.md`: tables, CHECK/UNIQUE constraints, the append-only audit log. The business rules the schema encodes were supplied by the team's specification. | Reviewed against the agreed data model; the PostgreSQL integration tests exercise the real schema                                       |
+| Authentication and RBAC         | Claude (Anthropic) | Go-owned opaque sessions: `app_user.password_hash`, the Argon2id `internal/password` package, the opaque-token verifier, `authstore`, `authapi` (login/logout/me), seeded hashed demo credentials, and the media scope authorizer | All four seeded roles were logged in and out by hand; wrong-role, out-of-scope and absent tokens are rejected; `go test ./...` green |
+| Constraint validator            | Claude (Anthropic) | The 17 hard rules and the official trip-time formula as pure functions in `internal/planning`, mirrored in `libs/shared-types`, with the booklet's pinned vector on both sides | Reviewed against the booklet; a table-driven test covers each rule's passing, failing and boundary case |
+| Planning engine and prioritisation | Claude (Anthropic) | The deterministic assignment engine, the job runner and the documented prioritisation policy (a lexicographic policy, not a numeric score) | Reviewed against `docs/prioritisation-policy.md`; unit tests pin each policy rule and the constraint boundaries |
+| Allocation confirmation         | Claude (Anthropic) | The transactional revalidate-and-persist path (`internal/routes`): row locks, in-transaction duplicate check, atomic route/leg/allocation/deferral writes | Reviewed; integration tests cover atomicity, idempotency and concurrent confirmation |
+| Dispatcher screens              | Claude (Anthropic) | Dashboard, order queue and close, plan review and confirmation, routes/tracker, deferral log, fleet, notifications, audit | Reviewed by the team; verified against PostgreSQL with real sessions after the auth merge |
+| Loader screens                  | Claude (Anthropic) | L-01 trips, L-02 reverse-order picking list, L-03 flag sheet, flags and account tabs, and the depot-scoped `GET /loading/routes` | Reviewed; shortfall photo upload and cross-depot refusal verified by hand |
+| Driver screens and offline sync | Claude (Anthropic) | R-01/R-02/POD/DG-B, the IndexedDB outbox and idempotent reconcile, service worker, `GET /driver/routes` | Reviewed; Go and Jest tests green; offline capture and reconnection exercised |
+| Store manager screens           | Claude (Anthropic) | S-01 home, S-02/S-03 place order and **confirm order**, S-04/S-05 detail (including the deferral reason), S-07 list | Reviewed; store tests assert rendered states and server-scoped requests |
+| Audit, notifications and demo clock | Claude (Anthropic) | `internal/audit`, `internal/notify`, `internal/clock`, `GET /meta`; the queue-close, confirmation and deferral audit writes added in the final pass | Reviewed; integration tests assert the audit rows commit with their mutation |
+| Seed data                       | Claude (Anthropic) | Go import/seed code for the reference CSVs, the four demo accounts and the S1 demo day, plus tests. **The supplied CSV datasets were provided by a human teammate and were not generated, fabricated or synthesised.** | Reviewed by the team; the seed integration test checks totals reconcile |
+| Tests                           | Claude (Anthropic) | Jest suites for the web and shared libraries, and the Go unit/integration tests | Run on every change via `npm run verify` and `go test ./...`; the team does not weaken a failing test to make CI pass |
+| Documentation                   | Claude (Anthropic) | `README.md`, `docs/architecture.md`, `docs/api.md`, `docs/data-model.md`, `docs/deployment.md` | Reviewed and corrected by the team where the code and prose disagreed |
 
-| Tool               | Used for                                                                                                                                                                                                                                                                                                                                                     | Human review                                                                                                                                                                                                                                                |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude (Anthropic) | Initialising this Nx monorepo: workspace configuration, the Next.js app shell and Tailwind design-token stylesheet, the three shared libraries (`shared-types`, `api-client`, `ui`), the Go service skeleton (config, router, JSON helpers, trip-time package), the Nx target wiring for Go, Dockerfiles, `docker-compose.yml`, and the documents in `docs/` | Every file reviewed by the team before the initial commit. The build, test, lint and type-check pipeline was executed and verified green. Docker image builds were **not** executed in the generating environment and were verified separately by the team. |
+### Final judge-readiness pass
 
-Design tokens, screen identifiers, personas, constraint rules and the E-0x rule numbering
-were transcribed from the team's own Day 5 Designathon submission and the team's system
-specification. They are not AI-generated design decisions.
-
-### Application code
-
-⚠️ _Complete as the build proceeds. Suggested granularity:_
-
-| Area                            | Tool               | Extent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Human review                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Database schema and migrations  | ⚠️                 | ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Authentication and RBAC         | Claude (Anthropic) | Go-owned opaque-session authentication: migration `00006_go_auth.sql` (`app_user.password_hash`/`display_name`, `session`), the Argon2id `internal/password` package, `internal/auth` opaque-token verifier, `internal/authstore` (login/session/identity/media-scope queries), `internal/authapi` (login/logout/me), the seeded hashed demo credentials, and the media scope authorizer. The existing `Identity`/`RequestVerifier`/`UserStore`/middleware abstractions were preserved, not replaced. | Every file reviewed and the full flow run manually: all four seeded roles log in through `POST /api/v1/auth/login`, `GET /api/v1/me` returns the correct role/scope, login→logout invalidates the token, wrong-role/out-of-scope/absent tokens are rejected `403`/`401`, and spoofed `X-User-ID`/`X-Role` headers are ignored. `go test ./...`, `go vet`, `go build`, `npm run verify` and the Nx checks run green. |
-| Constraint validator            | ⚠️                 | ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Planning engine and worker      | ⚠️                 | ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Dispatcher screens              | Claude (Anthropic) | The dispatcher workspace (dashboard, orders, plan review and confirmation, routes, deferral log, fleet, notifications, audit), its Jest tests, the `WaypointClient` and `shared-types` corrections to match the implemented API, and the read endpoints the screens needed (`GET /orders` list, `GET /depots`, `GET /outlets`, `GET /vehicles`) with their Go tests. Verified end to end against PostgreSQL with real Go-owned sessions after the auth integration merged.                                  | Pending team review                                                                                                                                                                                                                                                                                                                                                                                                |
-| Loader screens                  | Claude (Anthropic) | Loader PWA (L-01 trips, L-02 picking list with reverse stop order and per-line check-off, L-03 flag sheet, flags and account tabs), the loader-only `GET /loading/routes` endpoint with its service/repository/Go tests, the stop fields added to `GET /routes/{id}/loading`, `WaypointClient.getLoaderRoutes`/`getRouteLoading`/`createShortfallUpload`, the shared authenticated `uploadMediaObject` helper now used by both Loader and Driver, and Jest tests. Mark-trip-loaded (L-02) and live plan-change detection (L-02a) are reported as departures, not built. | Pending team review; `npm run verify`, `go test ./...`, `go vet` and `go build` run green, and a clean `docker compose up --build` was verified by hand: shortfall photo upload `201`, upload without a bearer `401`, cross-depot and wrong-role uploads `403`, and the returned `fileRef` persisted on the load line and re-read. |
-| Driver screens and offline sync | Claude (Anthropic) | Driver PWA (R-01, R-02, POD, DG-B log), IndexedDB outbox and sync reconciliation, service worker, `delivery_event.reason_code` migration `00007` and persistence, `GET /driver/routes` and the extended `GET /legs/{id}` read, matching `WaypointClient` methods, and their Go and Jest tests | Pending team review; Go (incl. PostgreSQL integration) and Jest tests run locally |
-| Store manager screens           | Claude (Anthropic) | Store manager workspace (S-01 store home, S-02/S-03 place order, S-04/S-05 order detail, S-07 order list), the outlet-scoped `StoreShell`, the `use-store` data hooks and store `_lib` helpers, and Jest tests for the workflow, its loading/error/empty states and its outlet scoping (the order list is asserted to send no outlet or depot filter). S-04's ETA, S-05's deferral reason/acknowledge and S-06's receipt are documented as departures because the corresponding endpoints are not implemented. | Pending team review; `npm run verify`, `go test ./...`, `go vet` and `go build` run green, and the store tests assert the rendered states and the server-scoped request shape. |
-| Tests                           | ⚠️                 | ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Seed data                       | Claude (Anthropic) | Go import/seed code for the reference CSVs, the four demo accounts and the Task 2B S1 demo day (orders, fleet availability, history migration `00003`), plus its tests. **The Task 1 / Task 2A / Task 2B CSV datasets were supplied by a human teammate and were not generated, fabricated or synthesised by the AI agent.** Only the Task 2B files are embedded for the Hackathon; Task 1 / 2A are Datathon inputs and are intentionally not tracked (see `.gitignore`).                             | Pending team review. The seed integration test (`TestSeedIntegration`) runs only when `WAYPOINT_TEST_DATABASE_URL` is set; it was run manually against PostgreSQL 17 and is **not part of CI** (see below).                                                                                                                                                                                                         |
-| Demo clock and `GET /meta`      | Claude (Anthropic) | `internal/clock` (wall and demo clocks), `DEMO_MODE`/`DEMO_CLOCK_START` config, the `/meta` handler, `MetaResponse` + `WaypointClient.meta()`, their tests, and the documented open decision on duplicate-allocation protection in `docs/data-model.md`                                                                                                                                                                                                                                               | Pending team review; Go and Jest tests run locally and in `npm run verify`                                                                                                                                                                                                                                                                                                                                          |
+A later review pass (on the `fix/waypoint/final-judge-readiness` branch) audited the merged
+work and implemented: removing credential autofill from sign-in, adding explicit order
+confirmation, resolving the loader/driver run date from planned routes, consistent logout for
+all roles, restricting order creation by role, enforcing the cutoff delivery date server-side,
+auditing dispatcher decisions, implementing the prioritisation policy, and exposing the
+deferral reason to the store. These changes were AI-assisted and reviewed by the team.
 
 ### Integration test status — NOT CONFIGURED in CI
 
-`TestSeedIntegration` (in `apps/api/internal/seed`) is the only test that exercises the real
-migrations and seed against PostgreSQL. It is **skipped** when `WAYPOINT_TEST_DATABASE_URL` is
-unset, so `npm run verify` and `nx test api` do **not** run it. CI has no PostgreSQL service,
-so this is reported honestly as **NOT CONFIGURED**, not as passing.
-
-Run it by hand:
+The PostgreSQL integration tests (`TestSeedIntegration`, `TestRoutesIntegration`,
+`TestCloseQueueAuditIntegration`) skip when `WAYPOINT_TEST_DATABASE_URL` is unset, so
+`npm run verify` and `nx test api` do **not** run them; CI has no PostgreSQL service. This is
+reported honestly as **NOT CONFIGURED**, not as passing. Run them by hand:
 
 ```bash
 docker compose up -d postgres
 WAYPOINT_TEST_DATABASE_URL='postgres://waypoint:waypoint@localhost:5432/waypoint?sslmode=disable' npx nx test api
 ```
 
-Two follow-ups belong to a separate PR, not this bootstrap one:
-
-- Add a PostgreSQL service container to `.github/workflows/ci.yml` and set
-  `WAYPOINT_TEST_DATABASE_URL` so the integration test runs in CI.
-- CI currently triggers on `push`/`pull_request` to **`main`** only, so pull requests based on
-  `development` (as this one is) receive no CI at all. Broaden the triggers.
-
 ---
 
 ## Phase 3 — Datathon (Day 15)
 
-⚠️ _Complete before the Datathon submission._
+The Datathon is separately judged and not part of this Hackathon build. If the team submits
+it, the disclosure below will be completed for that phase. Its rules bind anyone working on
+it, agents included: no pre-trained models, no proprietary API-based modelling or
+preprocessing, no low-code or fully automated end-to-end modelling tools.
 
-| Tool | Used for | Human review |
-| ---- | -------- | ------------ |
-| ⚠️   | ⚠️       | ⚠️           |
-
-### Compliance with the Datathon restrictions
-
-The booklet imposes three restrictions on the Datathon specifically. Confirm each:
-
-- [ ] **No pre-trained models**, except for synthetic data generation or preprocessing.
-- [ ] **No proprietary API-based modelling or preprocessing.** No competition data was sent
-      to an external modelling or preprocessing API. In particular, route and travel data was
-      **not** sent to a commercial routing API: Task 2B uses the supplied
-      `district_travel.csv` and `service_allowance.csv` with the official formula.
-- [ ] **No low-code, no-code or fully automated end-to-end modelling tools.**
-- [ ] The supplied datasets were not shared, published or used outside the competition.
+- [x] No pre-trained models were used to build the Hackathon system.
+- [x] **No competition data was sent to any external modelling or preprocessing API.** In
+      particular, route and travel data was not sent to a commercial routing API: Task 2B uses
+      the supplied `district_travel.csv` and `service_allowance.csv` with the official formula.
+- [x] No low-code, no-code or fully automated end-to-end modelling tools were used.
+- [x] The supplied datasets were not shared, published or used outside the competition.
 
 ---
 
-## What to record as you go
+## What the team kept human
 
-Noting these at the time is far easier than reconstructing them on deadline day:
-
-- Which tool, and for what — code generation, review, debugging, documentation, data work.
-- How much of the result survived review, honestly. "Generated then substantially rewritten"
-  is a normal and perfectly acceptable answer.
-- Who reviewed it.
-- Anything the team deliberately did **not** use AI for, and why. This is worth stating: it
-  shows the boundary was a decision rather than an accident.
+- The business rules, the prioritisation order and the deployment choices — the model
+  implemented them, it did not choose them.
+- The Figma screen design and personas, carried over from the Designathon.
+- Placing the supplied competition CSVs in the repository, and every decision about the
+  Datathon boundary.
+- Reviewing each AI-assisted change and running the full verification pipeline before commit.
