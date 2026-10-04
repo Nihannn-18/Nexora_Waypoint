@@ -50,6 +50,9 @@ const (
 	ActionDriverUnassigned  Action = "DRIVER_UNASSIGNED"
 	ActionManagerAssigned   Action = "MANAGER_ASSIGNED"
 	ActionManagerUnassigned Action = "MANAGER_UNASSIGNED"
+	// Demo mode (judge walkthrough only)
+	ActionDemoClockSet Action = "DEMO_CLOCK_SET"
+	ActionDemoReset    Action = "DEMO_RESET"
 )
 
 // EntityType is the business entity an action concerns.
@@ -69,6 +72,7 @@ const (
 	// vehicle id, with the operating date in the detail.
 	EntityAssignment EntityType = "DRIVER_VEHICLE_ASSIGNMENT"
 	EntityOutletMgr  EntityType = "OUTLET_MANAGER"
+	EntityDemo       EntityType = "DEMO"
 )
 
 // Result is the outcome an audit record reports.

@@ -149,3 +149,41 @@ describe('WaypointClient dispatcher reads', () => {
     });
   });
 });
+
+describe('WaypointClient demo controls', () => {
+  it('posts the stage to /demo/clock with the session token', async () => {
+    const body = {
+      stage: 'LOADING',
+      now: '2026-09-26T03:30:00+05:30',
+      demoMode: true,
+      timezone: 'Asia/Colombo',
+    };
+    const { client, fetchImpl } = clientReturning(body);
+    await expect(client.setDemoClock({ stage: 'LOADING' })).resolves.toEqual(
+      body,
+    );
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('http://api.test/api/v1/demo/clock');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ stage: 'LOADING' });
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer token',
+    );
+  });
+
+  it('posts /demo/reset and returns the reset summary', async () => {
+    const body = {
+      now: '2026-09-25T15:40:00+05:30',
+      demoMode: true,
+      timezone: 'Asia/Colombo',
+      cleared: { customer_order: 3 },
+      demoOrders: 85,
+      demoVehicleDays: 60,
+    };
+    const { client, fetchImpl } = clientReturning(body);
+    await expect(client.resetDemo()).resolves.toEqual(body);
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('http://api.test/api/v1/demo/reset');
+    expect(init.method).toBe('POST');
+  });
+});

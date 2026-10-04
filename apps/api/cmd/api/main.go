@@ -36,6 +36,7 @@ import (
 	"waypoint.lk/api/internal/clock"
 	"waypoint.lk/api/internal/config"
 	"waypoint.lk/api/internal/delivery"
+	"waypoint.lk/api/internal/demo"
 	"waypoint.lk/api/internal/httpx"
 	"waypoint.lk/api/internal/loading"
 	"waypoint.lk/api/internal/media"
@@ -192,6 +193,17 @@ func run() error {
 	loadingRepo.WithSinks(loadingAudit{}, loadingNotify{})
 	deliveryRepo.WithSinks(deliveryAudit{}, deliveryNotify{})
 
+	registrars := []httpx.RouteRegistrar{authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, networkHandler.RegisterMasterDataRoutes, assignmentHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes}
+
+	// Demo controls: jump the clock to a walkthrough stage and reset the demo
+	// data. Mounted only under DEMO_MODE, so a real deployment can never move
+	// its clock or wipe its operational data.
+	if settable, ok := clk.(clock.Settable); cfg.DemoMode && ok {
+		demoService := demo.NewService(settable, demo.NewPGRepository(db.Pool()), cfg.Location(), cfg.DemoClockStart)
+		registrars = append(registrars, demo.NewHandler(demoService, authMiddleware, cfg.Timezone).RegisterRoutes)
+		slog.Info("demo controls mounted", "stages", demo.Stages())
+	}
+
 	checks := []httpx.Check{
 		{Name: "database", Fn: db.Pool().Ping},
 		{Name: "queue", Fn: queueCheck(cfg.RabbitURL)},
@@ -201,7 +213,7 @@ func run() error {
 	started := time.Now()
 	server := &http.Server{
 		Addr:    cfg.Addr(),
-		Handler: httpx.Router(cfg, clk, started, checks, authHandler.RegisterRoutes, mediaHandler.RegisterRoutes, catalogHandler.RegisterRoutes, networkHandler.RegisterRoutes, networkHandler.RegisterMasterDataRoutes, assignmentHandler.RegisterRoutes, orderHandler.RegisterRoutes, planningHandler.RegisterRoutes, routesHandler.RegisterRoutes, loadingHandler.RegisterRoutes, deliveryHandler.RegisterRoutes, auditHandler.RegisterRoutes, notifyHandler.RegisterRoutes),
+		Handler: httpx.Router(cfg, clk, started, checks, registrars...),
 		// A slow or malicious client must not be able to hold a connection open
 		// indefinitely. Write timeout is generous because a planning board
 		// response can be large.

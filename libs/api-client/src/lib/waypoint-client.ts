@@ -25,6 +25,9 @@ import type {
   DeferralRequest,
   DeliveryEventRequest,
   DemandForecastPoint,
+  DemoClockRequest,
+  DemoClockResponse,
+  DemoResetResponse,
   DemandForecastQuery,
   Depot,
   DockType,
@@ -247,6 +250,18 @@ export class WaypointClient {
   /** The API clock and demo mode. Public: needed before sign-in for countdowns. */
   meta(): Promise<MetaResponse> {
     return this.http.get<MetaResponse>('/meta', { anonymous: true });
+  }
+
+  /* --- Demo mode (dispatcher; 404 unless the API runs with DEMO_MODE) ---- */
+
+  /** Jump the API clock to a walkthrough stage. */
+  setDemoClock(body: DemoClockRequest): Promise<DemoClockResponse> {
+    return this.http.post<DemoClockResponse>('/demo/clock', body);
+  }
+
+  /** Clear operational data, re-seed the demo day and rewind the clock. */
+  resetDemo(): Promise<DemoResetResponse> {
+    return this.http.post<DemoResetResponse>('/demo/reset');
   }
 
   /* --- Store Manager ----------------------------------------------------- */
