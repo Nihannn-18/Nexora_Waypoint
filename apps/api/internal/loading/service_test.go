@@ -14,6 +14,13 @@ type fakeRepo struct {
 	recorded  *[]LineUpdate
 	recordErr error
 	loadErr   error
+	summaries []RouteSummary
+	listedFor struct{ depotID, date string }
+}
+
+func (f *fakeRepo) RoutesForDepot(_ context.Context, depotID, date string) ([]RouteSummary, error) {
+	f.listedFor.depotID, f.listedFor.date = depotID, date
+	return f.summaries, nil
 }
 
 func (f *fakeRepo) RouteLoading(context.Context, string) (RouteLoading, error) {
@@ -109,3 +116,48 @@ func TestServiceRecordShortfalls(t *testing.T) {
 }
 
 var _ = domain.RoleLoader
+
+// A loader with no depot must see nothing rather than every depot's work: the
+// loader endpoints fail closed, and a route list is the one place where a
+// missing scope would otherwise leak the whole network.
+func TestServiceRoutesWithoutDepotReturnsNothing(t *testing.T) {
+	svc, repo := serviceFixture()
+	repo.summaries = []RouteSummary{{RouteID: "R1"}}
+
+	got, err := svc.Routes(context.Background(), "", "2026-09-26")
+	if err != nil {
+		t.Fatalf("Routes() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Routes() returned %d routes for an unscoped caller, want 0", len(got))
+	}
+	if repo.listedFor.depotID != "" {
+		t.Errorf("repository was queried for depot %q; it should not be reached", repo.listedFor.depotID)
+	}
+}
+
+func TestServiceRoutesRejectsBadDate(t *testing.T) {
+	svc, _ := serviceFixture()
+	for _, date := range []string{"", "26-09-2026", "2026-9-26", "tomorrow"} {
+		if _, err := svc.Routes(context.Background(), "d-peli", date); !errors.Is(err, ErrInvalid) {
+			t.Errorf("Routes(date=%q) error = %v, want ErrInvalid", date, err)
+		}
+	}
+}
+
+func TestServiceRoutesPassesScopeToRepository(t *testing.T) {
+	svc, repo := serviceFixture()
+	repo.summaries = []RouteSummary{{RouteID: "R1", Lines: 2, LinesComplete: 2}}
+
+	got, err := svc.Routes(context.Background(), "d-peli", "2026-09-26")
+	if err != nil {
+		t.Fatalf("Routes() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Routes() returned %d routes, want 1", len(got))
+	}
+	if repo.listedFor.depotID != "d-peli" || repo.listedFor.date != "2026-09-26" {
+		t.Errorf("repository queried for (%q, %q), want (d-peli, 2026-09-26)",
+			repo.listedFor.depotID, repo.listedFor.date)
+	}
+}

@@ -13,6 +13,7 @@ import (
 // and writes are scoped to the caller's depot (a loader's routes are its depot's
 // routes).
 //
+//	GET  /api/v1/loading/routes?date=   -> 200 the depot's confirmed routes
 //	GET  /api/v1/routes/{id}/loading    -> 200 picking list with load state
 //	POST /api/v1/routes/{id}/shortfalls -> 200 route load state after recording
 //
@@ -33,6 +34,8 @@ func NewHandler(service *Service, authMiddleware *auth.Middleware) *Handler {
 // RegisterRoutes mounts the loader endpoints behind loader authorization.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	loader := domain.RoleLoader
+	mux.Handle("GET /api/v1/loading/routes",
+		h.auth.RequireRole(loader, http.HandlerFunc(h.Routes)))
 	mux.Handle("GET /api/v1/routes/{id}/loading",
 		h.auth.RequireRole(loader, http.HandlerFunc(h.PickingList)))
 	mux.Handle("POST /api/v1/routes/{id}/shortfalls",
@@ -53,6 +56,31 @@ type lineResponse struct {
 	PhotoRef     string `json:"photoRef,omitempty"`
 	RecordedBy   string `json:"recordedBy,omitempty"`
 	RecordedAt   string `json:"recordedAt,omitempty"`
+
+	Seq             int     `json:"seq"`
+	OutletID        string  `json:"outletId"`
+	OutletName      string  `json:"outletName"`
+	OrderNumber     string  `json:"orderNumber"`
+	DockType        string  `json:"dockType"`
+	TempRequirement string  `json:"tempRequirement"`
+	WeightKg        float64 `json:"weightKg"`
+	VolumeM3        float64 `json:"volumeM3"`
+}
+
+type routeSummaryResponse struct {
+	RouteID       string `json:"routeId"`
+	VehicleID     string `json:"vehicleId"`
+	DepotID       string `json:"depotId"`
+	RouteDate     string `json:"routeDate"`
+	TripNo        int    `json:"tripNo"`
+	Brand         string `json:"brand"`
+	District      string `json:"district"`
+	Status        string `json:"status"`
+	Stops         int    `json:"stops"`
+	Lines         int    `json:"lines"`
+	LinesComplete int    `json:"linesComplete"`
+	ShortfallQty  int    `json:"shortfallQty"`
+	Ready         bool   `json:"routeReady"`
 }
 
 type routeLoadingResponse struct {
@@ -66,6 +94,14 @@ type routeLoadingResponse struct {
 	Status    string         `json:"status"`
 	Ready     bool           `json:"routeReady"`
 	Lines     []lineResponse `json:"lines"`
+
+	VehicleType    string  `json:"vehicleType"`
+	VehicleTemp    string  `json:"vehicleTemp"`
+	WeightCapKg    float64 `json:"weightCapKg"`
+	VolumeCapM3    float64 `json:"volumeCapM3"`
+	LoadedWeightKg float64 `json:"loadedWeightKg"`
+	LoadedVolumeM3 float64 `json:"loadedVolumeM3"`
+	Stops          int     `json:"stops"`
 }
 
 type shortfallRequest struct {
@@ -78,6 +114,30 @@ type lineUpdateRequest struct {
 	DamagedQty  int    `json:"damagedQty"`
 	MissingQty  int    `json:"missingQty"`
 	PhotoRef    string `json:"photoRef,omitempty"`
+}
+
+// Routes handles GET /api/v1/loading/routes?date=YYYY-MM-DD.
+func (h *Handler) Routes(w http.ResponseWriter, r *http.Request) {
+	identity, err := auth.MustIdentity(r.Context())
+	if err != nil {
+		httpx.WriteErrorCode(w, http.StatusUnauthorized, httpx.CodeUnauthenticated, "Authentication required")
+		return
+	}
+	summaries, err := h.service.Routes(r.Context(), identity.DepotID, r.URL.Query().Get("date"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := make([]routeSummaryResponse, 0, len(summaries))
+	for _, s := range summaries {
+		out = append(out, routeSummaryResponse{
+			RouteID: s.RouteID, VehicleID: s.VehicleID, DepotID: s.DepotID,
+			RouteDate: s.RouteDate, TripNo: s.TripNo, Brand: string(s.Brand),
+			District: s.District, Status: s.Status, Stops: s.Stops, Lines: s.Lines,
+			LinesComplete: s.LinesComplete, ShortfallQty: s.ShortfallQty, Ready: s.Ready(),
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"routes": out})
 }
 
 // PickingList handles GET /api/v1/routes/{id}/loading.
@@ -130,12 +190,19 @@ func toResponse(rl RouteLoading) routeLoadingResponse {
 			SKU: l.SKU, Name: l.Name, OrderedQty: l.OrderedQty, LoadedQty: l.LoadedQty,
 			DamagedQty: l.DamagedQty, MissingQty: l.MissingQty, ShortfallQty: l.ShortfallQty(),
 			PhotoRef: l.PhotoRef, RecordedBy: l.RecordedBy, RecordedAt: l.RecordedAt,
+			Seq: l.Seq, OutletID: l.OutletID, OutletName: l.OutletName, OrderNumber: l.OrderNumber,
+			DockType: l.DockType, TempRequirement: l.TempRequirement,
+			WeightKg: l.WeightKg, VolumeM3: l.VolumeM3,
 		})
 	}
 	return routeLoadingResponse{
 		RouteID: rl.RouteID, VehicleID: rl.VehicleID, DepotID: rl.DepotID, RouteDate: rl.RouteDate,
 		TripNo: rl.TripNo, Brand: string(rl.Brand), District: rl.District, Status: rl.Status,
 		Ready: rl.Ready(), Lines: lines,
+		VehicleType: rl.VehicleType, VehicleTemp: rl.VehicleTemp,
+		WeightCapKg: rl.WeightCapKg, VolumeCapM3: rl.VolumeCapM3,
+		LoadedWeightKg: rl.LoadedWeightKg(), LoadedVolumeM3: rl.LoadedVolumeM3(),
+		Stops: rl.Stops(),
 	}
 }
 

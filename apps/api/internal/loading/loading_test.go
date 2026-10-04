@@ -103,3 +103,57 @@ func TestRouteLoadingReady(t *testing.T) {
 }
 
 var _ = domain.RoleLoader
+
+func TestRouteSummaryReady(t *testing.T) {
+	cases := []struct {
+		name    string
+		summary RouteSummary
+		want    bool
+	}{
+		{"every line reconciles", RouteSummary{Lines: 3, LinesComplete: 3}, true},
+		{"one line outstanding", RouteSummary{Lines: 3, LinesComplete: 2}, false},
+		{"nothing counted yet", RouteSummary{Lines: 3, LinesComplete: 0}, false},
+		// A route with no lines is not ready: an empty truck has not been loaded,
+		// it has nothing to load. This mirrors RouteLoading.Ready.
+		{"no lines at all", RouteSummary{Lines: 0, LinesComplete: 0}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.summary.Ready(); got != c.want {
+				t.Errorf("Ready() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// The payload meters must reflect what is physically on the truck, so a line
+// that was short loads less weight than it ordered.
+func TestLineLoadedWeightAndVolumeProrateByLoadedQty(t *testing.T) {
+	line := Line{OrderedQty: 10, LoadedQty: 8, DamagedQty: 1, MissingQty: 1,
+		WeightKg: 100, VolumeM3: 2}
+
+	if got := line.LoadedWeightKg(); got != 80 {
+		t.Errorf("LoadedWeightKg() = %v, want 80", got)
+	}
+	if got := line.LoadedVolumeM3(); got != 1.6 {
+		t.Errorf("LoadedVolumeM3() = %v, want 1.6", got)
+	}
+}
+
+func TestLineLoadedWeightWithoutOrderedQty(t *testing.T) {
+	// Guards the division: an ordered quantity of zero must not panic or produce
+	// NaN on a screen the loader reads mid-shift.
+	line := Line{OrderedQty: 0, LoadedQty: 0, WeightKg: 100}
+	if got := line.LoadedWeightKg(); got != 0 {
+		t.Errorf("LoadedWeightKg() = %v, want 0", got)
+	}
+}
+
+func TestRouteLoadingStopsCountsDistinctOutlets(t *testing.T) {
+	rl := RouteLoading{Lines: []Line{
+		{OutletID: "OUT001"}, {OutletID: "OUT001"}, {OutletID: "OUT002"},
+	}}
+	if got := rl.Stops(); got != 2 {
+		t.Errorf("Stops() = %d, want 2", got)
+	}
+}

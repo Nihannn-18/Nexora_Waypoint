@@ -17,6 +17,9 @@ type Repository interface {
 	// RecordShortfalls applies a full set of line updates for a route in one
 	// transaction, upserting each load_item, and returns the resulting state.
 	RecordShortfalls(ctx context.Context, routeID, actor string, updates []LineUpdate) (RouteLoading, error)
+	// RoutesForDepot lists the confirmed routes a loader at depotID may load on a
+	// date, with the progress counts the route list shows.
+	RoutesForDepot(ctx context.Context, depotID, date string) ([]RouteSummary, error)
 }
 
 // PGRepository is the PostgreSQL-backed Repository.
@@ -71,9 +74,14 @@ func (r *PGRepository) WithSinks(a AuditSink, n NotifySink) *PGRepository {
 func (r *PGRepository) RouteLoading(ctx context.Context, routeID string) (RouteLoading, error) {
 	var rl RouteLoading
 	err := r.pool.QueryRow(ctx, `
-		SELECT route_id, vehicle_id, depot_id, route_date::text, trip_no, brand, district, status
-		FROM route WHERE route_id = $1`, routeID).
-		Scan(&rl.RouteID, &rl.VehicleID, &rl.DepotID, &rl.RouteDate, &rl.TripNo, &rl.Brand, &rl.District, &rl.Status)
+		SELECT r.route_id, r.vehicle_id, r.depot_id, r.route_date::text, r.trip_no,
+		       r.brand, r.district, r.status,
+		       v.type, v.temp, v.weight_cap_kg, v.volume_cap_m3
+		FROM route r
+		JOIN vehicle v ON v.vehicle_id = r.vehicle_id
+		WHERE r.route_id = $1`, routeID).
+		Scan(&rl.RouteID, &rl.VehicleID, &rl.DepotID, &rl.RouteDate, &rl.TripNo, &rl.Brand, &rl.District, &rl.Status,
+			&rl.VehicleType, &rl.VehicleTemp, &rl.WeightCapKg, &rl.VolumeCapM3)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RouteLoading{}, fmt.Errorf("%w: route %s", ErrNotFound, routeID)
 	}
@@ -86,8 +94,12 @@ func (r *PGRepository) RouteLoading(ctx context.Context, routeID string) (RouteL
 		       COALESCE(li.load_item_id::text, ''), COALESCE(li.loaded_qty, 0),
 		       COALESCE(li.damaged_qty, 0), COALESCE(li.missing_qty, 0),
 		       COALESCE(li.photo_ref, ''), COALESCE(li.recorded_by, ''),
-		       COALESCE(to_char(li.recorded_at, 'YYYY-MM-DD"T"HH24:MI:SSOF'), '')
+		       COALESCE(to_char(li.recorded_at, 'YYYY-MM-DD"T"HH24:MI:SSOF'), ''),
+		       rl.seq, o.outlet_id, ot.name, o.order_number, ot.dock_type, o.temp_requirement,
+		       oi.total_weight_kg, oi.total_volume_m3
 		FROM route_leg rl
+		JOIN customer_order o ON o.order_id = rl.order_id
+		JOIN outlet ot ON ot.outlet_id = o.outlet_id
 		JOIN order_item oi ON oi.order_id = rl.order_id
 		JOIN item it ON it.item_id = oi.item_id
 		LEFT JOIN load_item li ON li.route_id = rl.route_id AND li.order_item_id = oi.order_item_id
@@ -103,7 +115,8 @@ func (r *PGRepository) RouteLoading(ctx context.Context, routeID string) (RouteL
 		var l Line
 		if err := rows.Scan(&l.OrderItemID, &l.OrderID, &l.ItemID, &l.SKU, &l.Name, &l.OrderedQty,
 			&l.LoadItemID, &l.LoadedQty, &l.DamagedQty, &l.MissingQty, &l.PhotoRef,
-			&l.RecordedBy, &l.RecordedAt); err != nil {
+			&l.RecordedBy, &l.RecordedAt, &l.Seq, &l.OutletID, &l.OutletName, &l.OrderNumber,
+			&l.DockType, &l.TempRequirement, &l.WeightKg, &l.VolumeM3); err != nil {
 			return RouteLoading{}, fmt.Errorf("scan picking line: %w", err)
 		}
 		l.RouteID = routeID
@@ -114,6 +127,57 @@ func (r *PGRepository) RouteLoading(ctx context.Context, routeID string) (RouteL
 	}
 	rl.Lines = lines
 	return rl, nil
+}
+
+// RoutesForDepot implements Repository.
+//
+// A loader needs to find the work before they can do it: the picking list is
+// keyed by route id, and nothing else exposes a route to a loader (GET /routes
+// is dispatcher-only). This is that list, and it is depot-scoped for the same
+// reason the picking list is — a loader at Peliyagoda has no business seeing
+// Kandy's dock.
+//
+// Only CONFIRMED routes appear. A DRAFT route is still being planned, and a
+// DISPATCHED one has left; neither is loadable, and showing them would invite a
+// loader to start work the server would then refuse.
+func (r *PGRepository) RoutesForDepot(ctx context.Context, depotID, date string) ([]RouteSummary, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT r.route_id, r.vehicle_id, r.depot_id, r.route_date::text, r.trip_no,
+		       r.brand, r.district, r.status,
+		       COUNT(DISTINCT leg.leg_id)      AS stops,
+		       COUNT(oi.order_item_id)         AS lines,
+		       COUNT(*) FILTER (
+		           WHERE li.order_item_id IS NOT NULL
+		             AND li.loaded_qty + li.damaged_qty + li.missing_qty = oi.quantity
+		       )                               AS lines_complete,
+		       COALESCE(SUM(COALESCE(li.damaged_qty, 0) + COALESCE(li.missing_qty, 0)), 0) AS shortfall_qty
+		FROM route r
+		JOIN route_leg leg ON leg.route_id = r.route_id
+		JOIN order_item oi ON oi.order_id = leg.order_id
+		LEFT JOIN load_item li ON li.route_id = r.route_id AND li.order_item_id = oi.order_item_id
+		WHERE r.depot_id = $1 AND r.route_date = $2::date AND r.status = 'CONFIRMED'
+		GROUP BY r.route_id, r.vehicle_id, r.depot_id, r.route_date, r.trip_no,
+		         r.brand, r.district, r.status
+		ORDER BY r.trip_no, r.vehicle_id`, depotID, date)
+	if err != nil {
+		return nil, fmt.Errorf("list loader routes: %w", err)
+	}
+	defer rows.Close()
+
+	summaries := make([]RouteSummary, 0)
+	for rows.Next() {
+		var s RouteSummary
+		if err := rows.Scan(&s.RouteID, &s.VehicleID, &s.DepotID, &s.RouteDate, &s.TripNo,
+			&s.Brand, &s.District, &s.Status, &s.Stops, &s.Lines, &s.LinesComplete,
+			&s.ShortfallQty); err != nil {
+			return nil, fmt.Errorf("scan loader route: %w", err)
+		}
+		summaries = append(summaries, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate loader routes: %w", err)
+	}
+	return summaries, nil
 }
 
 // RecordShortfalls implements Repository.
