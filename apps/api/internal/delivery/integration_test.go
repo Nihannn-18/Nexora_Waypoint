@@ -100,6 +100,16 @@ func TestDeliveryIntegration(t *testing.T) {
 	})
 
 	repo := NewPGRepository(db.Pool())
+
+	// Active-run resolution: the depot's driveable run is the one on/after today.
+	active, err := repo.ActiveRouteDate(ctx, depotID, time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("active route date: %v", err)
+	}
+	if active != "2026-09-26" {
+		t.Fatalf("active route date = %q, want 2026-09-26", active)
+	}
+
 	leg, err := repo.LegContext(ctx, legID)
 	if err != nil {
 		t.Fatalf("leg context: %v", err)

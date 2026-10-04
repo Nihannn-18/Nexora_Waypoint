@@ -191,7 +191,7 @@ func (r *PGRepository) RoutesForDepot(ctx context.Context, depotID, date string)
 func (r *PGRepository) ActiveRouteDate(ctx context.Context, depotID string, today time.Time) (string, error) {
 	var date string
 	err := r.pool.QueryRow(ctx, `
-		SELECT d FROM (
+		SELECT d::text FROM (
 			SELECT route_date AS d, 0 AS pref
 			FROM route
 			WHERE depot_id = $1 AND status = 'CONFIRMED' AND route_date >= $2::date

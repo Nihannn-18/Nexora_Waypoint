@@ -103,6 +103,24 @@ func TestLoadingIntegration(t *testing.T) {
 
 	repo := NewPGRepository(db.Pool())
 
+	// Active-run resolution: with no date the depot's confirmed run is the one
+	// on/after today. Before the run date it is 2026-09-26; a date after the run
+	// still returns the latest run rather than an empty list.
+	active, err := repo.ActiveRouteDate(ctx, depotID, time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("active route date: %v", err)
+	}
+	if active != "2026-09-26" {
+		t.Fatalf("active route date = %q, want 2026-09-26", active)
+	}
+	past, err := repo.ActiveRouteDate(ctx, depotID, time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("active route date (past run): %v", err)
+	}
+	if past != "2026-09-26" {
+		t.Fatalf("active route date after the run = %q, want the latest run 2026-09-26", past)
+	}
+
 	// Picking list reads the ordered quantity from order_item, not the client.
 	rl, err := repo.RouteLoading(ctx, routeID)
 	if err != nil {
