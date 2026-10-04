@@ -16,6 +16,7 @@ import (
 	"waypoint.lk/api/internal/orders"
 	"waypoint.lk/api/internal/routes"
 )
+
 // ordersAudit adapts audit.RecordTx to orders.AuditSink, so a queue close and
 // its audit row commit in one transaction.
 type ordersAudit struct{}
